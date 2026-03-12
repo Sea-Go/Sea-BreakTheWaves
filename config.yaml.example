@@ -1,0 +1,114 @@
+# =========================
+# 推荐系统配置（统一入口）
+# 按你的要求：不使用 .env / getenv，所有配置都在这里维护。
+# =========================
+
+log:
+  path: "./log/推荐服务.log"
+  level: "debug"
+  service_name: "推荐服务"
+
+otel:
+  enable: true
+  service_name: "推荐服务"
+  # docker-compose 里 jaeger 暴露为 34317 -> 4317（OTLP gRPC）
+  otlp_grpc_address: "localhost:34317"
+  insecure: true
+
+postgres:
+  # 需要你在本机/容器里启动 Postgres，并创建数据库 reco
+  # 例：postgres://用户名:密码@主机:端口/数据库名?sslmode=disable
+  dsn: "postgres://postgres:postgres@localhost:35432/reco?sslmode=disable"
+  max_open_conns: 50
+  max_idle_conns: 10
+  conn_max_lifetime_seconds: 300
+
+milvus:
+  address: "localhost:19530"
+  username: ""
+  password: ""
+  dbname: "test"
+  collections:
+    coarse: "recall_coarse"
+    fine: "recall_fine"
+    dim: 2048
+    metric: "COSINE"
+
+ali:
+  apikey: ""
+  baseurl:  "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  multimodal_baseurl: "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+  text_model: "text-embedding-v4"
+  multimodal_model: "qwen2.5-vl-embedding"
+  dimensions: 2048
+  rerank_url: "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
+  rerank_model: "qwen3-rerank"
+  rerank_instruct: "Retrieve semantically similar text."
+  rerank_topn_cap: 100
+Kafka:
+  address: "localhost:39092"
+  topic: "article-hot-events"
+  group: "sea-breakthewaves-consumer"
+
+neo4j:
+  address: "neo4j://localhost:37687"
+  username: "neo4j"
+  password: "Sea-TryGo"
+
+services:
+  httpAddr: "0.0.0.0"
+  httpPort: "20721"
+
+# =========================
+# 候选池子策略（长期/短期/周期）
+# =========================
+pools:
+  long_term:
+    min_size: 200
+    refill_size: 500
+  short_term:
+    min_size: 100
+    refill_size: 300
+  periodic:
+    min_size: 100
+    refill_size: 300
+  recommend:
+    take_size: 20
+    remove_after_recommend: true
+
+# =========================
+# Agent 参数
+# =========================
+agent:
+  model: "qwen3.5-plus"
+  temperature: 0.2
+  max_tool_calls: 6
+
+# =========================
+# 文档切分参数
+# =========================
+split:
+  chunk_max_tokens: 320
+  chunk_overlap_tokens: 40
+  keyword_topk: 20
+
+  # 记忆 tokenize 分块（用于 user_memory_chunks）
+  memory_chunk_max_tokens: 600
+  memory_chunk_overlap_tokens: 60
+
+# =========================
+# 排序参数
+# - similarity_weight / score_weight: 兼容旧的手工粗排
+# - recommend_coarse_linear_decay: 推荐接口 coarse recall 阶段使用 Milvus linear decay
+# =========================
+ranking:
+  similarity_weight: 0.7
+  score_weight: 0.3
+
+  recommend_coarse_linear_decay:
+    enabled: true
+    field_name: "created_at_unix"
+    # 所有时间参数都用秒；origin 固定为当前搜索时刻。
+    offset_seconds: 86400
+    scale_seconds: 2592000
+    decay: 0.5

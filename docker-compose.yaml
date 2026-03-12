@@ -1,0 +1,318 @@
+version: "3.8"
+
+services:
+  # --- 服务发现 & 配置中心 ---
+  etcd:
+    container_name: etcd
+    image: quay.io/coreos/etcd:v3.5.25
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
+    command: >
+      etcd
+      -advertise-client-urls=http://etcd:2379
+      -listen-client-urls http://0.0.0.0:2379
+      --data-dir /etcd
+    ports:
+      - "32379:2379"
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # --- 关系型数据库 ---
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    ports:
+      - "35432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Sea-TryGo
+      POSTGRES_DB: first_db
+    restart: unless-stopped
+
+  # --- 缓存 & 键值存储 ---
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "36379:6379"
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  redis_insight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    ports:
+      - "35540:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # --- 图数据库 (Neo4j) ---
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j
+    ports:
+      - "37474:7474"   # Web UI
+      - "37687:7687"   # Bolt
+      - "32004:2004"   # Prometheus metrics（需要启用配置，见下方 volumes/conf）
+    environment:
+      - NEO4J_AUTH=neo4j/Sea-TryGo
+      - NEO4J_dbms_logs_debug_level=INFO
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+      - ./data/neo4j/import:/var/lib/neo4j/import
+      - ./data/neo4j/plugins:/plugins
+      - ./data/neo4j/conf:/var/lib/neo4j/conf
+    restart: unless-stopped
+
+  neodash:
+    image: nielsdejong/neodash:latest
+    container_name: neodash
+    ports:
+      - "35005:5005"
+    depends_on:
+      - neo4j
+    restart: unless-stopped
+  # --- Kafka ---
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - "39092:9092"
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+    restart: unless-stopped
+
+  # --- Kafka UI ---
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "38080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=Sea-TryGo-Cluster
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+      - DYNAMIC_CONFIG_ENABLED=true
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  # --- 对象存储 (MinIO) ---
+  minio:
+    container_name: minio
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    ports:
+      - "39000:9000"
+      - "39001:9001"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # --- 向量数据库 (Milvus standalone) ---
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.6.8
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MQ_TYPE: woodpecker
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "39091:9091"
+    depends_on:
+      - etcd
+      - minio
+    restart: unless-stopped
+
+  # --- 日志收集 (Elasticsearch) ---
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.3
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      # 为了让 exporter 直接连（开发环境更省事）
+      - xpack.security.enabled=false
+    ports:
+      - "39200:9200"
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.2.3
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "35601:5601"
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+
+  # ===================== Observability Stack =====================
+
+  # --- Prometheus ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./prometheus/settings.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "39090:9090"
+    restart: unless-stopped
+
+  # --- Grafana ---
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "33000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # --- Jaeger (all-in-one) ---
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"     # UI
+      - "36831:6831/udp"   # agent thrift compact
+      - "36832:6832/udp"   # agent thrift binary
+      - "14268:14268"     # collector http
+      - "14250:14250"     # collector grpc
+      - "34317:4317"       # OTLP gRPC
+      - "34318:4318"       # OTLP HTTP
+    restart: unless-stopped
+
+  # --- Host metrics (node-exporter) ---
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      # 去掉 rslave，避免 “not a shared or slave mount” 报错（Docker Desktop 常见）
+      - /:/host:ro
+    ports:
+      - "39100:9100"
+    restart: unless-stopped
+
+  # --- Container metrics (cAdvisor) ---
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "38082:8080"
+    restart: unless-stopped
+
+  # ===================== Exporters for your components =====================
+
+  # --- Postgres exporter ---
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://admin:Sea-TryGo@postgres:5432/first_db?sslmode=disable"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # --- Redis exporter ---
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    command:
+      - "--redis.addr=redis://redis:6379"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # --- Kafka exporter ---
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    command:
+      - "--kafka.server=kafka:9092"
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  # --- Elasticsearch exporter ---
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:latest
+    container_name: elasticsearch-exporter
+    command:
+      - "--es.uri=http://elasticsearch:9200"
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  redisinsight_data:
+networks:
+  default:
+    name: Sea-TryGo

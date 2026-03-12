@@ -1,0 +1,17 @@
+# IDE
+.idea/
+.vscode/
+
+# 日志
+log/
+ChatTest/log/
+*.log
+
+# 本地临时文件
+*.tmp
+*.swp
+.DS_Store
+/data
+# 如果你不想把包含密钥的配置提交到仓库，请改用 config.local.yaml 并在这里忽略
+config.yaml
+breakthewaves
