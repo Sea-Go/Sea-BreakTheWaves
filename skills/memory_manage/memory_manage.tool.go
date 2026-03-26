@@ -162,38 +162,9 @@ func (t *ToolUserMemoryUpsert) Invoke(ctx context.Context, argsRaw json.RawMessa
 		return nil, err
 	}
 
-	chunkCount := 0
-	if mt == storage.MemoryLongTerm || mt == storage.MemoryPeriodic {
-		maxT := config.Cfg.Split.MemoryChunkMaxTokens
-		overlapT := config.Cfg.Split.MemoryChunkOverlapTokens
-		if maxT <= 0 {
-			maxT = 600
-		}
-		if overlapT < 0 {
-			overlapT = 0
-		}
-
-		chunks := chunk.SplitByTokenBudget(args.Content, maxT, overlapT)
-		vectors := make([][]float32, 0, len(chunks))
-		finalChunks := make([]string, 0, len(chunks))
-
-		for _, c := range chunks {
-			c = strings.TrimSpace(c)
-			if c == "" {
-				continue
-			}
-			vec, err := service.TextVector(ctx, c)
-			if err != nil {
-				return nil, err
-			}
-			finalChunks = append(finalChunks, c)
-			vectors = append(vectors, vec)
-		}
-
-		chunkCount = len(finalChunks)
-		if err := t.chunkRepo.ReplaceChunks(ctx, args.UserID, mt, args.PeriodBucket, updatedAt, finalChunks, vectors); err != nil {
-			return nil, err
-		}
+	chunkCount, err := replaceMemoryChunks(ctx, t.chunkRepo, args.UserID, mt, args.PeriodBucket, updatedAt, args.Content)
+	if err != nil {
+		return nil, err
 	}
 
 	_, sp := zlog.StartSpan(ctx, "side_effect.user_memory_upsert")
@@ -222,10 +193,11 @@ type ToolMemoryMaintainWindow struct {
 	historyRepo *storage.UserHistoryRepo
 	articleRepo *storage.ArticleRepo
 	memoryRepo  *storage.MemoryRepo
+	chunkRepo   *storage.MemoryChunkRepo
 }
 
-func NewMaintainWindow(historyRepo *storage.UserHistoryRepo, articleRepo *storage.ArticleRepo, memoryRepo *storage.MemoryRepo) *ToolMemoryMaintainWindow {
-	return &ToolMemoryMaintainWindow{historyRepo: historyRepo, articleRepo: articleRepo, memoryRepo: memoryRepo}
+func NewMaintainWindow(historyRepo *storage.UserHistoryRepo, articleRepo *storage.ArticleRepo, memoryRepo *storage.MemoryRepo, chunkRepo *storage.MemoryChunkRepo) *ToolMemoryMaintainWindow {
+	return &ToolMemoryMaintainWindow{historyRepo: historyRepo, articleRepo: articleRepo, memoryRepo: memoryRepo, chunkRepo: chunkRepo}
 }
 
 func (t *ToolMemoryMaintainWindow) Name() string { return "memory_maintain_window" }
@@ -256,6 +228,10 @@ type maintainArgs struct {
 }
 
 func (t *ToolMemoryMaintainWindow) Invoke(ctx context.Context, argsRaw json.RawMessage) (any, error) {
+	if time.Now().Unix() >= 0 {
+		return t.invokeV2(ctx, argsRaw)
+	}
+
 	var args maintainArgs
 	if err := json.Unmarshal(argsRaw, &args); err != nil {
 		return nil, err
@@ -463,6 +439,172 @@ func parseWindow(s string) (time.Duration, error) {
 //   - 使用 Milvus Go SDK HybridSearch + Function(RERANK) weighted reranker
 //   - 对齐官方 Python 示例：FunctionType.RERANK + reranker=weighted + weights + norm_score
 // -----------------------------------------------------------------------------
+
+func (t *ToolMemoryMaintainWindow) invokeV2(ctx context.Context, argsRaw json.RawMessage) (any, error) {
+	var args maintainArgs
+	if err := json.Unmarshal(argsRaw, &args); err != nil {
+		return nil, err
+	}
+	if t.historyRepo == nil || t.articleRepo == nil || t.memoryRepo == nil || t.chunkRepo == nil {
+		return nil, errors.New("依赖未注入（historyRepo/articleRepo/memoryRepo/chunkRepo）")
+	}
+
+	mt, err := parseMemoryType(args.TargetMemoryType)
+	if err != nil {
+		return nil, err
+	}
+	if mt != storage.MemoryPeriodic {
+		args.PeriodBucket = ""
+	}
+	args.UserID = strings.TrimSpace(args.UserID)
+	args.PeriodBucket = strings.TrimSpace(args.PeriodBucket)
+	if args.UserID == "" {
+		return nil, errors.New("user_id 不能为空")
+	}
+	if args.TopK <= 0 {
+		args.TopK = 5
+	}
+	win, err := parseWindow(args.Window)
+	if err != nil {
+		return nil, err
+	}
+
+	hist, err := t.historyRepo.ListRecent(ctx, args.UserID, 500)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := time.Now().Add(-win)
+	filtered := make([]storage.UserHistoryItem, 0, len(hist))
+	articleSet := map[string]struct{}{}
+	clickedCnt := 0
+	for _, it := range hist {
+		if it.TS.Before(cutoff) {
+			continue
+		}
+		filtered = append(filtered, it)
+		articleSet[it.ArticleID] = struct{}{}
+		if it.Clicked {
+			clickedCnt++
+		}
+	}
+
+	if len(filtered) == 0 {
+		content := fmt.Sprintf("过去 %s 内暂无可用行为记录。", args.Window)
+		updatedAt := time.Now()
+		chunkCount, err := upsertMemoryContent(ctx, t.memoryRepo, t.chunkRepo, args.UserID, mt, args.PeriodBucket, content, updatedAt)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"ok":                 true,
+			"empty":              true,
+			"window":             args.Window,
+			"target_memory_type": string(mt),
+			"period_bucket":      args.PeriodBucket,
+			"content":            content,
+			"updated_at":         updatedAt,
+			"chunk_count":        chunkCount,
+		}, nil
+	}
+
+	ids := make([]string, 0, len(articleSet))
+	for id := range articleSet {
+		ids = append(ids, id)
+	}
+	metas, err := t.articleRepo.GetArticlesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	metaByID := make(map[string]storage.ArticleMeta, len(metas))
+	for _, meta := range metas {
+		metaByID[meta.ArticleID] = meta
+	}
+
+	typeCnt := map[string]int{}
+	tagCnt := map[string]int{}
+	articleCnt := map[string]int{}
+	recentTitles := make([]string, 0, minInt(6, len(filtered)))
+	seenTitle := map[string]struct{}{}
+	for _, it := range filtered {
+		meta, ok := metaByID[it.ArticleID]
+		if !ok {
+			continue
+		}
+		if title := strings.TrimSpace(meta.Title); title != "" {
+			articleCnt[title]++
+			if _, ok := seenTitle[title]; !ok && len(recentTitles) < 6 {
+				seenTitle[title] = struct{}{}
+				recentTitles = append(recentTitles, title)
+			}
+		}
+		if !it.Clicked {
+			continue
+		}
+		weight := maxInt(1, int(it.Preference)+1)
+		for _, tt := range splitCSV(meta.TypeTags) {
+			typeCnt[tt] += weight
+		}
+		for _, tg := range splitCSV(meta.Tags) {
+			tagCnt[tg] += weight
+		}
+	}
+
+	recentFocus := topKCountPairs(articleCnt, minInt(args.TopK, 5))
+	preferTypes := topKCountPairs(typeCnt, args.TopK)
+	preferTags := topKCountPairs(tagCnt, args.TopK)
+	content := buildWindowSummaryV2(args.Window, len(filtered), clickedCnt, recentTitles, recentFocus, preferTypes, preferTags)
+
+	updatedAt := time.Now()
+	chunkCount, err := upsertMemoryContent(ctx, t.memoryRepo, t.chunkRepo, args.UserID, mt, args.PeriodBucket, content, updatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"ok":                 true,
+		"empty":              false,
+		"window":             args.Window,
+		"history_count":      len(filtered),
+		"clicked_count":      clickedCnt,
+		"recent_titles":      recentTitles,
+		"recent_focus":       recentFocus,
+		"preferred_types":    preferTypes,
+		"preferred_tags":     preferTags,
+		"target_memory_type": string(mt),
+		"period_bucket":      args.PeriodBucket,
+		"content":            content,
+		"updated_at":         updatedAt,
+		"chunk_count":        chunkCount,
+	}, nil
+}
+
+func buildWindowSummaryV2(window string, historyCnt, clickedCnt int, recentTitles, recentFocus, types, tags []string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("过去 %s 的压缩用户画像：\n", window))
+	b.WriteString(fmt.Sprintf("- 行为历史：共 %d 条记录，点击 %d 条。\n", historyCnt, clickedCnt))
+	if len(recentTitles) > 0 {
+		b.WriteString("- 最近关注：")
+		b.WriteString(strings.Join(recentTitles, "、"))
+		b.WriteString("\n")
+	}
+	if len(recentFocus) > 0 {
+		b.WriteString("- 最近高频内容：")
+		b.WriteString(strings.Join(recentFocus, "、"))
+		b.WriteString("\n")
+	}
+	if len(types) > 0 {
+		b.WriteString("- 长期偏好类型：")
+		b.WriteString(strings.Join(types, "、"))
+		b.WriteString("\n")
+	}
+	if len(tags) > 0 {
+		b.WriteString("- 长期偏好标签：")
+		b.WriteString(strings.Join(tags, "、"))
+		b.WriteString("\n")
+	}
+	b.WriteString("- 检索提示：优先召回与最近关注、长期偏好类型和标签都重合的内容。")
+	return strings.TrimSpace(b.String())
+}
 
 type ToolUserMemoryChunkHybridSearch struct {
 	memoryRepo *storage.MemoryRepo
@@ -759,6 +901,94 @@ func topKCounts(m map[string]int, k int) []string {
 		res = append(res, it.K)
 	}
 	return res
+}
+
+func topKCountPairs(m map[string]int, k int) []string {
+	base := topKCounts(m, k)
+	if len(base) == 0 {
+		return nil
+	}
+	res := make([]string, 0, len(base))
+	for _, key := range base {
+		res = append(res, fmt.Sprintf("%s(+%d)", key, m[key]))
+	}
+	return res
+}
+
+func upsertMemoryContent(
+	ctx context.Context,
+	repo *storage.MemoryRepo,
+	chunkRepo *storage.MemoryChunkRepo,
+	userID string,
+	mt storage.MemoryType,
+	periodBucket string,
+	content string,
+	updatedAt time.Time,
+) (int, error) {
+	if err := repo.Upsert(ctx, storage.UserMemory{
+		UserID:       userID,
+		MemoryType:   mt,
+		PeriodBucket: periodBucket,
+		Content:      content,
+		UpdatedAt:    updatedAt,
+	}); err != nil {
+		return 0, err
+	}
+	return replaceMemoryChunks(ctx, chunkRepo, userID, mt, periodBucket, updatedAt, content)
+}
+
+func replaceMemoryChunks(
+	ctx context.Context,
+	chunkRepo *storage.MemoryChunkRepo,
+	userID string,
+	mt storage.MemoryType,
+	periodBucket string,
+	updatedAt time.Time,
+	content string,
+) (int, error) {
+	maxT := config.Cfg.Split.MemoryChunkMaxTokens
+	overlapT := config.Cfg.Split.MemoryChunkOverlapTokens
+	if maxT <= 0 {
+		maxT = 600
+	}
+	if overlapT < 0 {
+		overlapT = 0
+	}
+
+	chunks := chunk.SplitByTokenBudget(content, maxT, overlapT)
+	vectors := make([][]float32, 0, len(chunks))
+	finalChunks := make([]string, 0, len(chunks))
+	for _, c := range chunks {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		vec, err := service.TextVector(ctx, c)
+		if err != nil {
+			return 0, err
+		}
+		finalChunks = append(finalChunks, c)
+		vectors = append(vectors, vec)
+	}
+
+	if err := chunkRepo.ReplaceChunks(ctx, userID, mt, periodBucket, updatedAt, finalChunks, vectors); err != nil {
+		return 0, err
+	}
+	return len(finalChunks), nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func esc(s string) string {
