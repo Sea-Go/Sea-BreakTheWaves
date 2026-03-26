@@ -31,6 +31,7 @@ milvus:
   collections:
     coarse: "recall_coarse"
     fine: "recall_fine"
+    image: "recall_image"
     dim: 2048
     metric: "COSINE"
 
@@ -49,6 +50,8 @@ Kafka:
   address: "localhost:39092"
   topic: "article-hot-events"
   group: "sea-breakthewaves-consumer"
+  retry_topic: "article-ingest-retry"
+  retry_group: "sea-breakthewaves-retry"
 
 neo4j:
   address: "neo4j://localhost:37687"
@@ -112,3 +115,11 @@ ranking:
     offset_seconds: 86400
     scale_seconds: 2592000
     decay: 0.5
+
+search:
+  coarse_recall_k: 80
+  fine_recall_k: 40
+  max_article_candidates: 20
+  min_rerank_score: 0.10
+  min_pass_score: 0.55
+  support_bonus: 0.03
