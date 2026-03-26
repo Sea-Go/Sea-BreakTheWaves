@@ -13,8 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// NewRouter 创建 HTTP 路由。
-// 约定：所有 HTTP 相关注册（mode / middleware / metrics / routes）都集中在这里，main.go 只负责装配与启动。
 func NewRouter(reg *skillsys.Registry, reco *agent.RecoAgent, contentSearch *agent.ContentSearchAgent) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
@@ -22,15 +20,11 @@ func NewRouter(reg *skillsys.Registry, reco *agent.RecoAgent, contentSearch *age
 	r.Use(gin.Recovery())
 	r.Use(middleware.TraceMiddleware())
 
-	// metrics
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
-
-	// health
 	r.GET("/health", func(c *gin.Context) {
 		OK(c, gin.H{"status": "ok"})
 	})
 
-	// 文档入库：切分 -> 向量化 -> Milvus + PG (+ GraphRAG/Neo4j)
 	r.POST("/api/v1/docs/ingest", func(c *gin.Context) {
 		body, err := c.GetRawData()
 		if err != nil {
@@ -40,7 +34,7 @@ func NewRouter(reg *skillsys.Registry, reco *agent.RecoAgent, contentSearch *age
 
 		_, out, err := reg.Invoke(c.Request.Context(), "doc_ingest", body)
 		if err != nil {
-			zlog.L().Error("文档入库失败", zap.Error(err))
+			zlog.L().Error("document ingest failed", zap.Error(err))
 			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), "")
 			return
 		}
@@ -78,7 +72,6 @@ func NewRouter(reg *skillsys.Registry, reco *agent.RecoAgent, contentSearch *age
 		OK(c, resp)
 	})
 
-	// 调试：列出工具
 	r.GET("/api/v1/tools", func(c *gin.Context) {
 		OK(c, gin.H{"tools": reg.List()})
 	})
