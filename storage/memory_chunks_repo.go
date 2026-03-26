@@ -147,7 +147,7 @@ func (r *MemoryChunkRepo) SearchMemoryChunks(ctx context.Context, userID string,
 		r.collection,
 		topK,
 		[]entity.Vector{entity.FloatVector(query)},
-	).WithANNSField("vector").WithFilter(filter)
+	).WithANNSField("vector").WithFilter(filter).WithOutputFields("content", "chunk_index")
 
 	rs, err := r.cli.Search(ctx, opt)
 	if err != nil {
@@ -157,33 +157,73 @@ func (r *MemoryChunkRepo) SearchMemoryChunks(ctx context.Context, userID string,
 		return nil, nil
 	}
 
-	// 仅用 ID 无法可靠取回 content（不同版本 SDK 输出列 API 差异大），因此这里回 PG 取原文。
-	// ID 里带 chunk_index，解析后按 chunk_index 批量查询。
 	set := rs[0]
-	idxs := make([]int, 0, set.ResultCount)
+	contentCol := set.GetColumn("content")
+	chunkIdxCol := set.GetColumn("chunk_index")
+	ordered := make([]string, set.ResultCount)
+	missingIdxByPos := make(map[int]int, set.ResultCount)
+
 	for i := 0; i < set.ResultCount; i++ {
+		content := ""
+		if contentCol != nil {
+			if v, err := contentCol.Get(i); err == nil {
+				switch vv := v.(type) {
+				case string:
+					content = strings.TrimSpace(vv)
+				case []byte:
+					content = strings.TrimSpace(string(vv))
+				}
+			}
+		}
+		if content != "" {
+			ordered[i] = content
+			continue
+		}
+
+		if chunkIdxCol != nil {
+			if v, err := chunkIdxCol.Get(i); err == nil {
+				switch vv := v.(type) {
+				case int64:
+					missingIdxByPos[i] = int(vv)
+					continue
+				case int32:
+					missingIdxByPos[i] = int(vv)
+					continue
+				case int:
+					missingIdxByPos[i] = vv
+					continue
+				}
+			}
+		}
+
 		id, _ := set.IDs.GetAsString(i)
-		// id = user|memType|period|chunkIndex|version
 		parts := strings.Split(id, "|")
 		if len(parts) < 5 {
 			continue
 		}
 		var ci int
 		_, _ = fmt.Sscanf(parts[3], "%d", &ci)
-		idxs = append(idxs, ci)
-	}
-	if len(idxs) == 0 {
-		return nil, nil
+		missingIdxByPos[i] = ci
 	}
 
-	// 按 idxs 顺序取回内容（尽量保持 Milvus 返回顺序）
-	contentByIdx, err := r.getChunkContentsByIndexes(ctx, userID, memType, periodBucket, idxs)
-	if err != nil {
-		return nil, err
+	if len(missingIdxByPos) > 0 {
+		missingIdxs := make([]int, 0, len(missingIdxByPos))
+		for _, idx := range missingIdxByPos {
+			missingIdxs = append(missingIdxs, idx)
+		}
+		contentByIdx, err := r.getChunkContentsByIndexes(ctx, userID, memType, periodBucket, missingIdxs)
+		if err != nil {
+			return nil, err
+		}
+		for pos, ci := range missingIdxByPos {
+			if c, ok := contentByIdx[ci]; ok && strings.TrimSpace(c) != "" {
+				ordered[pos] = c
+			}
+		}
 	}
-	res := make([]string, 0, len(idxs))
-	for _, ci := range idxs {
-		if c, ok := contentByIdx[ci]; ok {
+	res := make([]string, 0, len(ordered))
+	for _, c := range ordered {
+		if strings.TrimSpace(c) != "" {
 			res = append(res, c)
 		}
 	}
