@@ -82,10 +82,14 @@ func EmbeddingTxt(txt string) (*openai.CreateEmbeddingResponse, error) {
 // EmbeddingImage creates embedding from a single image URL using qwen2.5-vl-embedding
 func EmbeddingImage(imageURL string) (*openai.CreateEmbeddingResponse, error) {
 	aliConfig := getEmbeddingConfig()
+	normalizedImageURL, err := normalizeImageInput(imageURL)
+	if err != nil {
+		return nil, err
+	}
 	req := MultimodalRequest{
 		Model: aliConfig.MultimodalModel,
 		Input: MultimodalInput{
-			Contents: []interface{}{ImageContent{Image: imageURL}},
+			Contents: []interface{}{ImageContent{Image: normalizedImageURL}},
 		},
 		Parameters: struct {
 			Dimension string `json:"dimension"`
@@ -99,10 +103,14 @@ func EmbeddingImage(imageURL string) (*openai.CreateEmbeddingResponse, error) {
 // EmbeddingMultiImages creates embedding from multiple image URLs using qwen2.5-vl-embedding
 func EmbeddingMultiImages(imageURLs []string) (*openai.CreateEmbeddingResponse, error) {
 	aliConfig := getEmbeddingConfig()
+	normalizedImageURLs, err := normalizeImageInputs(imageURLs)
+	if err != nil {
+		return nil, err
+	}
 	req := MultimodalRequest{
 		Model: aliConfig.MultimodalModel,
 		Input: MultimodalInput{
-			Contents: []interface{}{MultiImageContent{MultiImages: imageURLs}},
+			Contents: []interface{}{MultiImageContent{MultiImages: normalizedImageURLs}},
 		},
 		Parameters: struct {
 			Dimension string `json:"dimension"`
