@@ -226,14 +226,18 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		if err == nil && len(vec) > 0 {
 			st2 := time.Now()
 			longChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctxProfile, req.UserID, storage.MemoryLongTerm, "", longMem.UpdatedAt, vec, 5)
+			shortChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctxProfile, req.UserID, storage.MemoryShortTerm, "", shortMem.UpdatedAt, vec, 5)
 			periodChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctxProfile, req.UserID, storage.MemoryPeriodic, req.PeriodBucket, periodicMem.UpdatedAt, vec, 5)
 			searchMs = time.Since(st2).Milliseconds()
 
-			retrievedCnt = len(longChunks) + len(periodChunks)
+			retrievedCnt = len(longChunks) + len(shortChunks) + len(periodChunks)
 
 			// SearchMemoryChunks 返回的是内容字符串切片，直接拼接即可。
 			if len(longChunks) > 0 {
 				longHint = strings.Join(longChunks, "\n")
+			}
+			if len(shortChunks) > 0 {
+				shortHint = strings.Join(shortChunks, "\n")
 			}
 			if len(periodChunks) > 0 {
 				periodicHint = strings.Join(periodChunks, "\n")
