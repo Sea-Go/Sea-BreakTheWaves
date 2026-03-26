@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+
 	"sea/zlog"
 
 	"go.uber.org/zap"
@@ -10,17 +11,20 @@ import (
 
 var Cfg Config
 
-// Config 是整个服务的配置入口。
-// ⚠️ 按你的要求：项目里不使用 .env / getenv，一切配置都从 config.yaml 读取。
 type Config struct {
 	Log      LogConfig      `mapstructure:"log" yaml:"log"`
 	Otel     OtelConfig     `mapstructure:"otel" yaml:"otel"`
 	Postgres PostgresConfig `mapstructure:"postgres" yaml:"postgres"`
 
-	Milvus   MilvusConfig   `mapstructure:"milvus" yaml:"milvus"`
-	Cohere   CohereConfig   `mapstructure:"cohere" yaml:"cohere"`
-	Ali      AliConfig      `mapstructure:"ali" yaml:"ali"`
-	Kafka    KafkaConfig    `mapstructure:"Kafka" yaml:"Kafka"` // 注意：你 YAML 里是 "Kafka"
+	Milvus MilvusConfig `mapstructure:"milvus" yaml:"milvus"`
+	Cohere CohereConfig `mapstructure:"cohere" yaml:"cohere"`
+	Ali    AliConfig    `mapstructure:"ali" yaml:"ali"`
+	Kafka  KafkaConfig  `mapstructure:"Kafka" yaml:"Kafka"`
+
+	ArticleSyncKafka       KafkaEndpointConfig `mapstructure:"article_sync_kafka" yaml:"article_sync_kafka"`
+	ArticleSyncResultKafka KafkaEndpointConfig `mapstructure:"article_sync_result_kafka" yaml:"article_sync_result_kafka"`
+	ArticleSyncRetryKafka  KafkaEndpointConfig `mapstructure:"article_sync_retry_kafka" yaml:"article_sync_retry_kafka"`
+
 	Neo4j    Neo4jConfig    `mapstructure:"neo4j" yaml:"neo4j"`
 	Services ServicesConfig `mapstructure:"services" yaml:"services"`
 
@@ -28,6 +32,7 @@ type Config struct {
 	Agent   AgentConfig   `mapstructure:"agent" yaml:"agent"`
 	Split   SplitConfig   `mapstructure:"split" yaml:"split"`
 	Ranking RankingConfig `mapstructure:"ranking" yaml:"ranking"`
+	Search  SearchConfig  `mapstructure:"search" yaml:"search"`
 }
 
 type LogConfig struct {
@@ -52,7 +57,7 @@ type PostgresConfig struct {
 
 type ServicesConfig struct {
 	HTTPAddr string `mapstructure:"httpAddr" yaml:"httpAddr"`
-	HTTPPort string `mapstructure:"httpPort" yaml:"httpPort"` // 你 YAML 里是字符串 "20721"，这里用 string 最稳
+	HTTPPort string `mapstructure:"httpPort" yaml:"httpPort"`
 }
 
 type MilvusConfig struct {
@@ -66,8 +71,9 @@ type MilvusConfig struct {
 type MilvusCollectionsCfg struct {
 	Coarse string `mapstructure:"coarse" yaml:"coarse"`
 	Fine   string `mapstructure:"fine" yaml:"fine"`
+	Image  string `mapstructure:"image" yaml:"image"`
 	Dim    int    `mapstructure:"dim" yaml:"dim"`
-	Metric string `mapstructure:"metric" yaml:"metric"` // COSINE / IP / L2
+	Metric string `mapstructure:"metric" yaml:"metric"`
 }
 
 type CohereConfig struct {
@@ -91,6 +97,14 @@ type AliConfig struct {
 }
 
 type KafkaConfig struct {
+	Address    string `mapstructure:"address" yaml:"address"`
+	Topic      string `mapstructure:"topic" yaml:"topic"`
+	Group      string `mapstructure:"group" yaml:"group"`
+	RetryTopic string `mapstructure:"retry_topic" yaml:"retry_topic"`
+	RetryGroup string `mapstructure:"retry_group" yaml:"retry_group"`
+}
+
+type KafkaEndpointConfig struct {
 	Address string `mapstructure:"address" yaml:"address"`
 	Topic   string `mapstructure:"topic" yaml:"topic"`
 	Group   string `mapstructure:"group" yaml:"group"`
@@ -102,12 +116,10 @@ type Neo4jConfig struct {
 	Password string `mapstructure:"password" yaml:"password"`
 }
 
-// PoolsConfig 维护多个“候选池子”的补充阈值与批量大小（长期/短期/周期）。
 type PoolsConfig struct {
-	LongTerm  PoolPolicy `mapstructure:"long_term" yaml:"long_term"`
-	ShortTerm PoolPolicy `mapstructure:"short_term" yaml:"short_term"`
-	Periodic  PoolPolicy `mapstructure:"periodic" yaml:"periodic"`
-
+	LongTerm  PoolPolicy      `mapstructure:"long_term" yaml:"long_term"`
+	ShortTerm PoolPolicy      `mapstructure:"short_term" yaml:"short_term"`
+	Periodic  PoolPolicy      `mapstructure:"periodic" yaml:"periodic"`
 	Recommend RecommendPolicy `mapstructure:"recommend" yaml:"recommend"`
 }
 
@@ -121,39 +133,26 @@ type RecommendPolicy struct {
 	RemoveAfterRecommend bool `mapstructure:"remove_after_recommend" yaml:"remove_after_recommend"`
 }
 
-// AgentConfig 推荐 Agent 的基本运行参数（模型、预算、温度等）。
 type AgentConfig struct {
 	Model        string  `mapstructure:"model" yaml:"model"`
 	Temperature  float64 `mapstructure:"temperature" yaml:"temperature"`
 	MaxToolCalls int     `mapstructure:"max_tool_calls" yaml:"max_tool_calls"`
 }
 
-// SplitConfig 文档切分相关参数（避免切太碎/切太长）。
 type SplitConfig struct {
-	ChunkMaxTokens     int `mapstructure:"chunk_max_tokens" yaml:"chunk_max_tokens"`
-	ChunkOverlapTokens int `mapstructure:"chunk_overlap_tokens" yaml:"chunk_overlap_tokens"`
-	KeywordTopK        int `mapstructure:"keyword_topk" yaml:"keyword_topk"`
-
-	// 记忆 tokenize 分块参数（用于 user_memory_chunks）
+	ChunkMaxTokens           int `mapstructure:"chunk_max_tokens" yaml:"chunk_max_tokens"`
+	ChunkOverlapTokens       int `mapstructure:"chunk_overlap_tokens" yaml:"chunk_overlap_tokens"`
+	KeywordTopK              int `mapstructure:"keyword_topk" yaml:"keyword_topk"`
 	MemoryChunkMaxTokens     int `mapstructure:"memory_chunk_max_tokens" yaml:"memory_chunk_max_tokens"`
 	MemoryChunkOverlapTokens int `mapstructure:"memory_chunk_overlap_tokens" yaml:"memory_chunk_overlap_tokens"`
 }
 
-// RankingConfig 排序策略相关参数。
-//
-// 说明：
-//   - SimilarityWeight / ScoreWeight 保留给旧的手工粗排逻辑兼容使用。
-//   - RecommendCoarseLinearDecay 用于推荐接口的粗排：在 Milvus coarse search 阶段直接应用
-//     linear decay reranker（基于 created_at_unix）。
 type RankingConfig struct {
 	SimilarityWeight           float64           `mapstructure:"similarity_weight" yaml:"similarity_weight"`
 	ScoreWeight                float64           `mapstructure:"score_weight" yaml:"score_weight"`
 	RecommendCoarseLinearDecay LinearDecayConfig `mapstructure:"recommend_coarse_linear_decay" yaml:"recommend_coarse_linear_decay"`
 }
 
-// LinearDecayConfig 是 Milvus linear decay reranker 的配置。
-// 所有时间参数都使用与 collection 字段一致的单位；当前 coarse collection 的
-// created_at_unix 以秒为单位，因此这里也全部使用秒。
 type LinearDecayConfig struct {
 	Enabled       bool    `mapstructure:"enabled" yaml:"enabled"`
 	FieldName     string  `mapstructure:"field_name" yaml:"field_name"`
@@ -162,16 +161,24 @@ type LinearDecayConfig struct {
 	Decay         float64 `mapstructure:"decay" yaml:"decay"`
 }
 
-// Load 从指定路径读取 YAML 配置并反序列化到全局变量 Cfg。
+type SearchConfig struct {
+	CoarseRecallK        int     `mapstructure:"coarse_recall_k" yaml:"coarse_recall_k"`
+	FineRecallK          int     `mapstructure:"fine_recall_k" yaml:"fine_recall_k"`
+	MaxArticleCandidates int     `mapstructure:"max_article_candidates" yaml:"max_article_candidates"`
+	MinRerankScore       float64 `mapstructure:"min_rerank_score" yaml:"min_rerank_score"`
+	MinPassScore         float64 `mapstructure:"min_pass_score" yaml:"min_pass_score"`
+	SupportBonus         float64 `mapstructure:"support_bonus" yaml:"support_bonus"`
+}
+
 func Load(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		zlog.L().Error("读取配置文件失败", zap.Error(err), zap.String("path", path))
+		zlog.L().Error("read config file failed", zap.Error(err), zap.String("path", path))
 		return err
 	}
 
 	if err := yaml.Unmarshal(data, &Cfg); err != nil {
-		zlog.L().Error("解析配置文件失败", zap.Error(err), zap.String("path", path))
+		zlog.L().Error("unmarshal config file failed", zap.Error(err), zap.String("path", path))
 		return err
 	}
 
