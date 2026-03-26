@@ -12,6 +12,7 @@ import (
 	"sea/config"
 	"sea/embedding/service"
 	"sea/infra"
+	"sea/retrieval"
 	"sea/skillsys"
 	"sea/storage"
 	"sea/zlog"
@@ -27,11 +28,13 @@ import (
 //   - 不依赖用户记忆；只对用户输入做意图分析。
 //   - RecallK 表示向量召回候选 chunk 数；TopK 表示最终返回文章数。
 type ContentSearchRequest struct {
-	SearchRequestID string `json:"search_request_id,omitempty"`
-	Query           string `json:"query" binding:"required"`
-	TopK            int    `json:"topk,omitempty"`
-	RecallK         int    `json:"recall_k,omitempty"`
-	Explain         bool   `json:"explain,omitempty"`
+	SearchRequestID string  `json:"search_request_id,omitempty"`
+	Query           string  `json:"query" binding:"required"`
+	TopK            int     `json:"topk,omitempty"`
+	RecallK         int     `json:"recall_k,omitempty"`
+	CoarseRecallK   int     `json:"coarse_recall_k,omitempty"`
+	MinPassScore    float32 `json:"min_pass_score,omitempty"`
+	Explain         bool    `json:"explain,omitempty"`
 }
 
 // ContentSearchIntent 表示“问题 -> 检索意图”的结构化结果。
@@ -56,6 +59,7 @@ type ContentSearchItem struct {
 	ArticleScore float32 `json:"article_score,omitempty"`
 	VectorScore  float32 `json:"vector_score,omitempty"`
 	RerankScore  float32 `json:"rerank_score,omitempty"`
+	MatchScore   float32 `json:"match_score,omitempty"`
 }
 
 // ContentSearchResponse 内容搜索接口响应。
@@ -139,13 +143,28 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		req.TopK = 50
 	}
 	if req.RecallK <= 0 {
-		req.RecallK = maxInt(req.TopK*5, 30)
+		req.RecallK = config.Cfg.Search.FineRecallK
+		if req.RecallK <= 0 {
+			req.RecallK = maxInt(req.TopK*4, 40)
+		}
 	}
 	if req.RecallK < req.TopK {
 		req.RecallK = req.TopK
 	}
 	if req.RecallK > 100 {
 		req.RecallK = 100
+	}
+	if req.CoarseRecallK <= 0 {
+		req.CoarseRecallK = config.Cfg.Search.CoarseRecallK
+		if req.CoarseRecallK <= 0 {
+			req.CoarseRecallK = maxInt(req.TopK*8, 80)
+		}
+	}
+	if req.MinPassScore <= 0 {
+		req.MinPassScore = float32(config.Cfg.Search.MinPassScore)
+		if req.MinPassScore <= 0 {
+			req.MinPassScore = 0.55
+		}
 	}
 
 	ctx = zlog.NewTrace(ctx, req.SearchRequestID, "content_search", "content_search_agent", "", "", nil)
@@ -164,6 +183,8 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"search_request_id": req.SearchRequestID,
 		"topk":              req.TopK,
 		"recall_k":          req.RecallK,
+		"coarse_recall_k":   req.CoarseRecallK,
+		"min_pass_score":    req.MinPassScore,
 	})
 
 	zlog.L().Info("invoke_agent",
@@ -223,31 +244,38 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"latency_ms":     embedMs,
 	})
 
-	ctxRecall, spRecall := zlog.StartSpan(ctx, "retrieval.vector_recall")
-	recallStart := time.Now()
-	candidates, err := a.recallVectorCandidates(ctxRecall, vec, req.RecallK)
-	recallMs := time.Since(recallStart).Milliseconds()
+	ranker := retrieval.NewPrecisionRanker(a.articleRepo, a.registry)
+
+	ctxCoarse, spCoarse := zlog.StartSpan(ctx, "retrieval.coarse_recall")
+	coarseStart := time.Now()
+	coarseCandidates, err := ranker.RecallCoarseArticleCandidates(ctxCoarse, vec, req.CoarseRecallK)
+	coarseMs := time.Since(coarseStart).Milliseconds()
 	if err != nil {
-		spRecall.End(zlog.StatusError, err, zap.Int64("latency_ms", recallMs))
-		expl.Add("retrieval.vector_recall.error", map[string]any{"error": err.Error(), "latency_ms": recallMs})
+		spCoarse.End(zlog.StatusError, err, zap.Int64("latency_ms", coarseMs))
+		expl.Add("retrieval.coarse_recall.error", map[string]any{"error": err.Error(), "latency_ms": coarseMs})
 		respOut.Explanation = expl.Text()
 		if req.Explain {
 			respOut.ExplainTrace = expl.Trace()
 		}
 		return respOut, err
 	}
-	spRecall.End(zlog.StatusOK, nil,
-		zap.Int64("latency_ms", recallMs),
-		zap.Int("candidate_count", len(candidates)),
+	spCoarse.End(zlog.StatusOK, nil,
+		zap.Int64("latency_ms", coarseMs),
+		zap.Int("candidate_count", len(coarseCandidates)),
 	)
-	expl.Add("retrieval.vector_recall", map[string]any{
-		"candidate_count": len(candidates),
-		"top_chunk_ids":   takeCandidateChunkIDs(candidates, 8),
-		"top_article_ids": takeCandidateArticleIDs(candidates, 8),
-		"latency_ms":      recallMs,
+	coarseCandidates = retrieval.BoostCoarseCandidatesByKeywords(coarseCandidates, semanticQuery, intent.Keywords)
+	expl.Add("retrieval.coarse_recall", map[string]any{
+		"candidate_count":    len(coarseCandidates),
+		"top_article_ids":    takeCoarseArticleIDs(coarseCandidates, 8),
+		"top_keyword_scores": takeCoarseKeywordScores(coarseCandidates, 8),
+		"latency_ms":         coarseMs,
 	})
 
-	if len(candidates) == 0 {
+	articleIDs, coarseRankByArticle := retrieval.PickArticleCandidates(
+		coarseCandidates,
+		config.Cfg.Search.MaxArticleCandidates,
+	)
+	if len(articleIDs) == 0 {
 		respOut.Status = "ok"
 		respOut.Explanation = expl.Text()
 		if req.Explain {
@@ -256,20 +284,62 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		return respOut, nil
 	}
 
-	vectorScoreByChunk := make(map[string]float32, len(candidates))
-	candidateIDs := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		candidateIDs = append(candidateIDs, c.ID)
-		if c.ChunkID != "" {
-			vectorScoreByChunk[c.ChunkID] = c.VectorScore
+	ctxFine, spFine := zlog.StartSpan(ctx, "retrieval.fine_recall")
+	fineStart := time.Now()
+	fineCandidates, err := ranker.RecallFineCandidatesByArticleIDs(ctxFine, vec, articleIDs, req.RecallK)
+	fineMs := time.Since(fineStart).Milliseconds()
+	if err != nil {
+		spFine.End(zlog.StatusError, err, zap.Int64("latency_ms", fineMs))
+		expl.Add("retrieval.fine_recall.error", map[string]any{"error": err.Error(), "latency_ms": fineMs})
+		respOut.Explanation = expl.Text()
+		if req.Explain {
+			respOut.ExplainTrace = expl.Trace()
+		}
+		return respOut, err
+	}
+	spFine.End(zlog.StatusOK, nil,
+		zap.Int64("latency_ms", fineMs),
+		zap.Int("candidate_count", len(fineCandidates)),
+	)
+	expl.Add("retrieval.fine_recall", map[string]any{
+		"candidate_count": len(fineCandidates),
+		"top_chunk_ids":   takeFineChunkIDs(fineCandidates, 8),
+		"top_article_ids": takeFineArticleIDs(fineCandidates, 8),
+		"latency_ms":      fineMs,
+	})
+	if len(fineCandidates) == 0 {
+		respOut.Status = "ok"
+		respOut.Explanation = expl.Text()
+		if req.Explain {
+			respOut.ExplainTrace = expl.Trace()
+		}
+		return respOut, nil
+	}
+
+	vectorScoreByChunk := make(map[string]float32, len(fineCandidates))
+	fineRankByChunk := make(map[string]int, len(fineCandidates))
+	supportByArticle := make(map[string]int, len(articleIDs))
+	candidateIDs := make([]string, 0, len(fineCandidates))
+	for i, c := range fineCandidates {
+		chunkID := strings.TrimSpace(c.ChunkID)
+		if chunkID == "" {
+			chunkID = strings.TrimSpace(c.ID)
+		}
+		if chunkID == "" {
 			continue
 		}
-		vectorScoreByChunk[c.ID] = c.VectorScore
+		candidateIDs = append(candidateIDs, chunkID)
+		vectorScoreByChunk[chunkID] = c.VectorScore
+		fineRankByChunk[chunkID] = i + 1
+		if c.ArticleID != "" {
+			supportByArticle[c.ArticleID]++
+		}
 	}
 
 	ctxRerank, spRerank := zlog.StartSpan(ctx, "rerank.dashscope_skill")
 	rerankStart := time.Now()
-	rerankedHits, skillMeta, err := a.rerankCandidates(ctxRerank, semanticQuery, candidateIDs, req.TopK)
+	rerankTopK := minInt(req.RecallK, maxInt(req.TopK*3, 20))
+	rerankedHits, skillMeta, err := ranker.RerankCandidates(ctxRerank, semanticQuery, candidateIDs, rerankTopK)
 	rerankMs := time.Since(rerankStart).Milliseconds()
 	if err != nil {
 		spRerank.End(zlog.StatusError, err, zap.Int64("latency_ms", rerankMs))
@@ -291,11 +361,36 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"request_id":    skillMeta.RequestID,
 		"total_tokens":  skillMeta.TotalTokens,
 		"hit_count":     len(rerankedHits),
-		"top_chunk_ids": takeRerankChunkIDs(rerankedHits, 8),
+		"top_chunk_ids": takeMatchedChunkIDs(rerankedHits, 8),
 		"latency_ms":    rerankMs,
 	})
 
-	items, err := a.buildResponseItems(ctx, rerankedHits, vectorScoreByChunk, req.TopK)
+	passedHits := retrieval.FilterPassedHits(
+		rerankedHits,
+		coarseRankByArticle,
+		fineRankByChunk,
+		supportByArticle,
+		float32(config.Cfg.Search.MinRerankScore),
+		req.MinPassScore,
+		float32(config.Cfg.Search.SupportBonus),
+	)
+	expl.Add("rank.pass_filter", map[string]any{
+		"candidate_in":     len(rerankedHits),
+		"candidate_out":    len(passedHits),
+		"min_rerank_score": config.Cfg.Search.MinRerankScore,
+		"min_pass_score":   req.MinPassScore,
+	})
+	if len(passedHits) == 0 {
+		respOut.Status = "ok"
+		respOut.Items = []ContentSearchItem{}
+		respOut.Explanation = expl.Text()
+		if req.Explain {
+			respOut.ExplainTrace = expl.Trace()
+		}
+		return respOut, nil
+	}
+
+	items, err := a.buildResponseItems(ctx, passedHits, vectorScoreByChunk, req.TopK)
 	if err != nil {
 		expl.Add("assemble.response.error", map[string]any{"error": err.Error()})
 		respOut.Explanation = expl.Text()
@@ -526,13 +621,13 @@ type storageChunkView struct {
 	Content   string
 }
 
-func (a *ContentSearchAgent) buildResponseItems(ctx context.Context, hits []contentRerankHit, vectorScoreByChunk map[string]float32, topK int) ([]ContentSearchItem, error) {
+func (a *ContentSearchAgent) buildResponseItems(ctx context.Context, hits []retrieval.RerankHit, vectorScoreByChunk map[string]float32, topK int) ([]ContentSearchItem, error) {
 	if len(hits) == 0 || topK <= 0 {
 		return []ContentSearchItem{}, nil
 	}
 
 	orderedArticleIDs := make([]string, 0, topK)
-	bestHitByArticle := make(map[string]contentRerankHit, len(hits))
+	bestHitByArticle := make(map[string]retrieval.RerankHit, len(hits))
 	for _, hit := range hits {
 		if strings.TrimSpace(hit.ArticleID) == "" {
 			continue
@@ -579,11 +674,15 @@ func (a *ContentSearchAgent) buildResponseItems(ctx context.Context, hits []cont
 			ArticleScore: meta.Score,
 			VectorScore:  vectorScore,
 			RerankScore:  hit.RerankScore,
+			MatchScore:   hit.MatchScore,
 		})
 	}
 
 	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].RerankScore > items[j].RerankScore
+		if items[i].MatchScore == items[j].MatchScore {
+			return items[i].RerankScore > items[j].RerankScore
+		}
+		return items[i].MatchScore > items[j].MatchScore
 	})
 	return items, nil
 }
@@ -702,12 +801,56 @@ func takeCandidateArticleIDs(in []contentVectorCandidate, n int) []string {
 	return out
 }
 
-func takeRerankChunkIDs(in []contentRerankHit, n int) []string {
+func takeMatchedChunkIDs(in []retrieval.RerankHit, n int) []string {
 	out := make([]string, 0, minInt(n, len(in)))
 	for i := 0; i < len(in) && i < n; i++ {
 		if in[i].ChunkID != "" {
 			out = append(out, in[i].ChunkID)
 		}
+	}
+	return out
+}
+
+func takeCoarseArticleIDs(in []retrieval.CoarseArticleCandidate, n int) []string {
+	out := make([]string, 0, minInt(n, len(in)))
+	for i := 0; i < len(in) && i < n; i++ {
+		if in[i].ArticleID != "" {
+			out = append(out, in[i].ArticleID)
+		}
+	}
+	return out
+}
+
+func takeCoarseKeywordScores(in []retrieval.CoarseArticleCandidate, n int) []float32 {
+	out := make([]float32, 0, minInt(n, len(in)))
+	for i := 0; i < len(in) && i < n; i++ {
+		out = append(out, in[i].KeywordScore)
+	}
+	return out
+}
+
+func takeFineChunkIDs(in []retrieval.VectorCandidate, n int) []string {
+	out := make([]string, 0, minInt(n, len(in)))
+	for i := 0; i < len(in) && i < n; i++ {
+		if in[i].ChunkID != "" {
+			out = append(out, in[i].ChunkID)
+		}
+	}
+	return out
+}
+
+func takeFineArticleIDs(in []retrieval.VectorCandidate, n int) []string {
+	out := make([]string, 0, minInt(n, len(in)))
+	seen := map[string]struct{}{}
+	for i := 0; i < len(in) && len(out) < n; i++ {
+		if in[i].ArticleID == "" {
+			continue
+		}
+		if _, ok := seen[in[i].ArticleID]; ok {
+			continue
+		}
+		seen[in[i].ArticleID] = struct{}{}
+		out = append(out, in[i].ArticleID)
 	}
 	return out
 }
