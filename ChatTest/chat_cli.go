@@ -56,17 +56,17 @@ func main() {
 
 	reg := skillsys.NewRegistry()
 	reg.Register(milvus_search.New())
-	reg.Register(doc_ingest.New(articleRepo))
+	reg.Register(doc_ingest.New(articleRepo, infra.NewAIClient()))
 	reg.Register(pool_manage.NewPoolGetSize(poolRepo))
-	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo))
+	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo, reg))
 	reg.Register(pool_manage.NewPoolPopTopK(poolRepo))
 	reg.Register(user_history.NewAdd(historyRepo))
 	reg.Register(user_history.NewRecent(historyRepo))
 	reg.Register(user_history.NewSimilar(historyRepo))
 	reg.Register(memory_manage.NewGet(memoryRepo))
 	reg.Register(memory_manage.NewUpsert(memoryRepo, memoryChunkRepo))
-	reg.Register(memory_manage.NewMaintainWindow(historyRepo, articleRepo, memoryRepo))
-	reg.Register(rerank.New(articleRepo, memoryRepo))
+	reg.Register(memory_manage.NewMaintainWindow(historyRepo, articleRepo, memoryRepo, memoryChunkRepo))
+	reg.Register(rerank.New(articleRepo, memoryRepo, memoryChunkRepo))
 
 	client := infra.NewAIClient()
 
