@@ -52,6 +52,11 @@ func (r *ArticleRepo) UpsertChunks(ctx context.Context, chunks []chunk.Chunk) er
 	return nil
 }
 
+func (r *ArticleRepo) DeleteArticle(ctx context.Context, articleID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM articles WHERE article_id = $1`, articleID)
+	return err
+}
+
 // GetChunksByIDs 根据 chunk_id 批量取回内容（用于生成/引用/验证）。
 func (r *ArticleRepo) GetChunksByIDs(ctx context.Context, ids []string) ([]chunk.Chunk, error) {
 	if len(ids) == 0 {
