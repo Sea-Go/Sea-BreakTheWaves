@@ -1,39 +1,57 @@
 package kafka
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestParseMessage(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected ArticleHotEvent
+		expected ArticleSyncEvent
 		wantErr  bool
 	}{
 		{
-			name:  "JSON完整消息",
-			input: `{"article_id":"a_001","article_tag":"游戏评测","content":"文章正文","cover_url":"http://xxx.jpg"}`,
-			expected: ArticleHotEvent{
-				ArticleID:  "a_001",
-				ArticleTag: "游戏评测",
-				Content:    "文章正文",
-				CoverUrl:   "http://xxx.jpg",
+			name:  "full payload",
+			input: `{"event_scope":"article_sync","event_id":"evt-1","article_id":"a_001","op":"upsert","reason":"create","author_id":"42","status":"PUBLISHED","version_ms":123,"title":"demo","brief":"brief","cover_url":"http://xxx.jpg","manual_type_tag":"game-review","secondary_tags":["tech","demo"],"markdown":"# demo"}`,
+			expected: ArticleSyncEvent{
+				EventScope:    "article_sync",
+				EventID:       "evt-1",
+				ArticleID:     "a_001",
+				Op:            "upsert",
+				Reason:        "create",
+				AuthorID:      "42",
+				Status:        "PUBLISHED",
+				VersionMs:     123,
+				Title:         "demo",
+				Brief:         "brief",
+				CoverURL:      "http://xxx.jpg",
+				ManualTypeTag: "game-review",
+				SecondaryTags: []string{"tech", "demo"},
+				Markdown:      "# demo",
 			},
-			wantErr: false,
 		},
 		{
-			name:  "JSON只有article_id和article_tag",
-			input: `{"article_id":"a_002","article_tag":"科技"}`,
-			expected: ArticleHotEvent{
+			name:  "minimal valid payload",
+			input: `{"event_id":"evt-2","article_id":"a_002","op":"delete"}`,
+			expected: ArticleSyncEvent{
+				EventScope: ArticleSyncScope,
+				EventID:    "evt-2",
 				ArticleID:  "a_002",
-				ArticleTag: "科技",
+				Op:         "delete",
 			},
-			wantErr: false,
 		},
 		{
-			name:    "JSON格式错误",
+			name:    "invalid json",
 			input:   `{invalid json}`,
+			wantErr: true,
+		},
+		{
+			name:    "missing article id",
+			input:   `{"event_id":"evt-3","op":"upsert"}`,
+			wantErr: true,
+		},
+		{
+			name:    "missing op",
+			input:   `{"event_id":"evt-4","article_id":"a_004"}`,
 			wantErr: true,
 		},
 	}
@@ -43,27 +61,36 @@ func TestParseMessage(t *testing.T) {
 			result, err := parseMessage([]byte(tt.input))
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("期望错误但没有返回错误")
+					t.Fatal("expected error, got nil")
 				}
 				return
 			}
 			if err != nil {
-				t.Errorf("不期望错误但返回了: %v", err)
-				return
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if result.ArticleID != tt.expected.ArticleID {
-				t.Errorf("ArticleID 不匹配: got %s, want %s", result.ArticleID, tt.expected.ArticleID)
+			if result.EventScope != tt.expected.EventScope ||
+				result.EventID != tt.expected.EventID ||
+				result.ArticleID != tt.expected.ArticleID ||
+				result.Op != tt.expected.Op ||
+				result.Reason != tt.expected.Reason ||
+				result.AuthorID != tt.expected.AuthorID ||
+				result.Status != tt.expected.Status ||
+				result.VersionMs != tt.expected.VersionMs ||
+				result.Title != tt.expected.Title ||
+				result.Brief != tt.expected.Brief ||
+				result.CoverURL != tt.expected.CoverURL ||
+				result.ManualTypeTag != tt.expected.ManualTypeTag ||
+				result.Markdown != tt.expected.Markdown {
+				t.Fatalf("unexpected parse result: %#v", result)
 			}
-			if result.ArticleTag != tt.expected.ArticleTag {
-				t.Errorf("ArticleTag 不匹配: got %s, want %s", result.ArticleTag, tt.expected.ArticleTag)
+			if len(result.SecondaryTags) != len(tt.expected.SecondaryTags) {
+				t.Fatalf("unexpected secondary_tags: %#v", result.SecondaryTags)
 			}
-			if result.Content != tt.expected.Content {
-				t.Errorf("Content 不匹配: got %s, want %s", result.Content, tt.expected.Content)
-			}
-			if result.CoverUrl != tt.expected.CoverUrl {
-				t.Errorf("CoverUrl 不匹配: got %s, want %s", result.CoverUrl, tt.expected.CoverUrl)
+			for i := range result.SecondaryTags {
+				if result.SecondaryTags[i] != tt.expected.SecondaryTags[i] {
+					t.Fatalf("unexpected secondary_tags: %#v", result.SecondaryTags)
+				}
 			}
 		})
 	}
-}
 }
