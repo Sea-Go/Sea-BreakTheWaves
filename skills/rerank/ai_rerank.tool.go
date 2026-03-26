@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sea/embedding/service"
 	"sea/metrics"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,15 +22,21 @@ import (
 
 // ToolAIRerank：用大模型对候选文章做精排序（融合长期/短期/周期记忆）。
 type ToolAIRerank struct {
-	articleRepo *storage.ArticleRepo
-	memoryRepo  *storage.MemoryRepo
-	client      *openai.Client
+	articleRepo     *storage.ArticleRepo
+	memoryRepo      *storage.MemoryRepo
+	memoryChunkRepo *storage.MemoryChunkRepo
+	client          *openai.Client
 }
 
-func New(articleRepo *storage.ArticleRepo, memoryRepo *storage.MemoryRepo) *ToolAIRerank {
+func New(articleRepo *storage.ArticleRepo, memoryRepo *storage.MemoryRepo, memoryChunkRepo *storage.MemoryChunkRepo) *ToolAIRerank {
 	// client 在项目中已实现（infra.NewAIClient）。这里在 skill 初始化阶段构造一次并复用，
 	// 避免每次 Invoke 都重新初始化导致额外开销与冗余 span。
-	return &ToolAIRerank{articleRepo: articleRepo, memoryRepo: memoryRepo, client: infra.NewAIClient()}
+	return &ToolAIRerank{
+		articleRepo:     articleRepo,
+		memoryRepo:      memoryRepo,
+		memoryChunkRepo: memoryChunkRepo,
+		client:          infra.NewAIClient(),
+	}
 }
 
 func (t *ToolAIRerank) Name() string { return "ai_rerank_articles" }
@@ -188,6 +196,9 @@ func (t *ToolAIRerank) Invoke(ctx context.Context, argsRaw json.RawMessage) (res
 		)
 	}
 
+	metas = prefilterCandidateMetas(metas, args.UserIntent, args.TopK)
+	metaCnt = len(metas)
+
 	// 2) 取记忆（任一桶失败：标记 DEGRADED，但不中断 rerank；内容置空）
 	var longMem storage.UserMemory
 	var shortMem storage.UserMemory
@@ -298,6 +309,31 @@ func (t *ToolAIRerank) Invoke(ctx context.Context, argsRaw json.RawMessage) (res
 		memLongStr = strings.TrimSpace(longMem.Content)
 		memShortStr = strings.TrimSpace(shortMem.Content)
 		memPeriodicStr = strings.TrimSpace(periodicMem.Content)
+		if t.memoryChunkRepo != nil {
+			queryText := strings.TrimSpace(args.UserIntent)
+			if queryText == "" {
+				queryText = strings.Join(candidateTextHints(metas), " ")
+			}
+			if queryText != "" {
+				if vec, e := service.TextVector(ctx, queryText); e == nil && len(vec) > 0 {
+					if memLongFound {
+						if chunks, e := t.memoryChunkRepo.SearchMemoryChunks(ctx, args.UserID, storage.MemoryLongTerm, "", longMem.UpdatedAt, vec, 3); e == nil && len(chunks) > 0 {
+							memLongStr = strings.Join(chunks, "\n")
+						}
+					}
+					if memShortFound {
+						if chunks, e := t.memoryChunkRepo.SearchMemoryChunks(ctx, args.UserID, storage.MemoryShortTerm, "", shortMem.UpdatedAt, vec, 3); e == nil && len(chunks) > 0 {
+							memShortStr = strings.Join(chunks, "\n")
+						}
+					}
+					if memPeriodicFound {
+						if chunks, e := t.memoryChunkRepo.SearchMemoryChunks(ctx, args.UserID, storage.MemoryPeriodic, "d1", periodicMem.UpdatedAt, vec, 3); e == nil && len(chunks) > 0 {
+							memPeriodicStr = strings.Join(chunks, "\n")
+						}
+					}
+				}
+			}
+		}
 
 		msBuildMemory = time.Since(stepStart).Milliseconds()
 		sp.End(zlog.StatusOK, nil,
@@ -615,4 +651,154 @@ func previewTail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+func prefilterCandidateMetas(metas []storage.ArticleMeta, userIntent string, topK int) []storage.ArticleMeta {
+	if len(metas) == 0 {
+		return nil
+	}
+	capSize := topK * 2
+	if capSize < 12 {
+		capSize = 12
+	}
+	if capSize > 30 {
+		capSize = 30
+	}
+	if len(metas) <= capSize {
+		return metas
+	}
+
+	intentTerms := keywordSet(userIntent)
+	type bucket struct {
+		Meta    storage.ArticleMeta
+		Score   float64
+		Cluster string
+	}
+	buckets := make([]bucket, 0, len(metas))
+	for idx, meta := range metas {
+		cluster := primaryCluster(meta)
+		overlap := overlapScore(intentTerms, keywordSet(meta.Title+" "+meta.TypeTags+" "+meta.Tags))
+		score := float64(meta.Score)*0.35 + overlap*0.45 + recencyBias(idx, len(metas))*0.20
+		buckets = append(buckets, bucket{
+			Meta:    meta,
+			Score:   score,
+			Cluster: cluster,
+		})
+	}
+	sort.SliceStable(buckets, func(i, j int) bool {
+		return buckets[i].Score > buckets[j].Score
+	})
+
+	byCluster := map[string][]bucket{}
+	order := make([]string, 0)
+	for _, item := range buckets {
+		if _, ok := byCluster[item.Cluster]; !ok {
+			order = append(order, item.Cluster)
+		}
+		byCluster[item.Cluster] = append(byCluster[item.Cluster], item)
+	}
+
+	out := make([]storage.ArticleMeta, 0, capSize)
+	for len(out) < capSize {
+		progressed := false
+		for _, cluster := range order {
+			items := byCluster[cluster]
+			if len(items) == 0 {
+				continue
+			}
+			out = append(out, items[0].Meta)
+			byCluster[cluster] = items[1:]
+			progressed = true
+			if len(out) >= capSize {
+				break
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return out
+}
+
+func candidateTextHints(metas []storage.ArticleMeta) []string {
+	out := make([]string, 0, rerankMinInt(6, len(metas)))
+	for i := 0; i < len(metas) && i < 6; i++ {
+		text := strings.TrimSpace(metas[i].Title + " " + metas[i].TypeTags + " " + metas[i].Tags)
+		if text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func primaryCluster(meta storage.ArticleMeta) string {
+	parts := strings.Split(meta.TypeTags, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(strings.ToLower(p))
+		if p != "" {
+			return p
+		}
+	}
+	if title := strings.TrimSpace(strings.ToLower(meta.Title)); title != "" {
+		return title
+	}
+	return "default"
+}
+
+func keywordSet(text string) map[string]struct{} {
+	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return false
+		case r >= '0' && r <= '9':
+			return false
+		case r >= 0x4e00 && r <= 0x9fff:
+			return false
+		default:
+			return true
+		}
+	})
+	res := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" || len([]rune(field)) < 2 {
+			continue
+		}
+		res[field] = struct{}{}
+	}
+	return res
+}
+
+func overlapScore(a, b map[string]struct{}) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	match := 0
+	for key := range a {
+		if _, ok := b[key]; ok {
+			match++
+		}
+	}
+	denom := len(a)
+	if len(b) > denom {
+		denom = len(b)
+	}
+	if denom == 0 {
+		return 0
+	}
+	return float64(match) / float64(denom)
+}
+
+func recencyBias(rank, total int) float64 {
+	if rank < 0 || total <= 1 {
+		return 1
+	}
+	return 1 - float64(rank)/float64(total-1)
+}
+
+func rerankMinInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
