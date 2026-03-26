@@ -51,7 +51,11 @@ func (r *PoolRepo) AddItems(ctx context.Context, items []PoolItem) error {
 		_, err := r.db.ExecContext(ctx, `
 			INSERT INTO user_pool_items(user_id, pool_type, period_bucket, article_id, score, similarity, remark_score, inserted_at)
 			VALUES($1,$2,$3,$4,$5,$6,$7, now())
-			ON CONFLICT(user_id, pool_type, period_bucket, article_id) DO NOTHING
+			ON CONFLICT(user_id, pool_type, period_bucket, article_id) DO UPDATE SET
+				score=EXCLUDED.score,
+				similarity=EXCLUDED.similarity,
+				remark_score=EXCLUDED.remark_score,
+				inserted_at=now()
 		`, it.UserID, string(it.PoolType), it.PeriodBucket, it.ArticleID, it.Score, it.Similarity, it.RemarkScore)
 		if err != nil {
 			return err
