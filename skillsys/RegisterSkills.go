@@ -1,6 +1,7 @@
 package skillsys
 
 import (
+	"sea/infra"
 	"sea/skills/doc_ingest"
 	"sea/skills/memory_manage"
 	"sea/skills/milvus_search"
@@ -28,11 +29,11 @@ func RegisterSkills(
 	reg.Register(milvus_search.New())
 
 	// 文档入库
-	reg.Register(doc_ingest.New(articleRepo))
+	reg.Register(doc_ingest.New(articleRepo, infra.NewAIClient()))
 
 	// 候选池管理
 	reg.Register(pool_manage.NewPoolGetSize(poolRepo))
-	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo))
+	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo, reg))
 	reg.Register(pool_manage.NewPoolPopTopK(poolRepo))
 
 	// 用户历史
@@ -43,10 +44,10 @@ func RegisterSkills(
 	// 记忆管理
 	reg.Register(memory_manage.NewGet(memoryRepo))
 	reg.Register(memory_manage.NewUpsert(memoryRepo, memoryChunkRepo))
-	reg.Register(memory_manage.NewMaintainWindow(historyRepo, articleRepo, memoryRepo))
+	reg.Register(memory_manage.NewMaintainWindow(historyRepo, articleRepo, memoryRepo, memoryChunkRepo))
 	reg.Register(memory_manage.NewChunkHybridSearch(memoryRepo, memoryChunkRepo))
 
 	// 精排序
-	reg.Register(rerank.New(articleRepo, memoryRepo))
+	reg.Register(rerank.New(articleRepo, memoryRepo, memoryChunkRepo))
 	reg.Register(rerank.NewDashScope())
 }
