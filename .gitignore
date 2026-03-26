@@ -15,3 +15,4 @@ ChatTest/log/
 # 如果你不想把包含密钥的配置提交到仓库，请改用 config.local.yaml 并在这里忽略
 config.yaml
 breakthewaves
+/.idea
