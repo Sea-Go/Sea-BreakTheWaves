@@ -1,177 +1,295 @@
 package chunk
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	types "sea/type"
 )
 
-// Article 表示一篇结构化文章（用于推荐系统入库）。
-//
-// 文章样式约定（你给的标准）：
-//
-//	标题 + 封面 + 手打 type 标签类型
-//	二级标签 + 文字/图片
-//	二级标签 + 文字/图片
-//	...
 type Article = types.Article
-
 type Section = types.Section
-
 type Block = types.Block
-
-// Chunk 是“精召回”的最小证据单元。
 type Chunk = types.Chunk
-
-// SplitResult 是切分输出：粗召回文本 + 精召回 chunk 列表。
 type SplitResult = types.SplitResult
 
-// SplitArticle 按照 config.yaml 的 split 参数，把文章切成：
-// - 粗召回向量文本（1 条）
-// - 精召回 chunk（N 条）
-//
-// 规则（对应你给的定义）：
-// 粗召回向量：标题 + 封面 + 手打 type 标签类型 + 关键词检测 + 各类二级标题
-// 精召回向量：二级标题 + 段落内容（包括图片和文字）
 func SplitArticle(a Article, maxTokens int, overlapTokens int, keywordTopK int) (SplitResult, error) {
 	a.ArticleID = NormalizeArticleID(a.ArticleID, a)
 	if strings.TrimSpace(a.Title) == "" {
-		return SplitResult{}, errors.New("title 不能为空")
+		return SplitResult{}, errors.New("title cannot be empty")
 	}
 
 	keywords := DetectKeywords(a, keywordTopK)
+	keywordScore := KeywordCoverageScore(len(keywords))
+	coarseRawText := buildCoarseRawText(a, keywords)
+	coarseIntro := buildCoarseIntroFallback(a, keywords)
+	coarseText := ComposeCoarseText(coarseRawText, coarseIntro, keywordScore)
 
-	// 拼 coarse text
-	var h2s []string
-	for _, s := range a.Sections {
-		if strings.TrimSpace(s.H2) != "" {
-			h2s = append(h2s, strings.TrimSpace(s.H2))
-		}
-	}
-
-	coarseParts := []string{
-		"标题：" + a.Title,
-	}
-	if a.Cover != "" {
-		coarseParts = append(coarseParts, "封面："+a.Cover)
-	}
-	if len(a.TypeTags) > 0 {
-		coarseParts = append(coarseParts, "类型："+strings.Join(a.TypeTags, ","))
-	}
-	if len(keywords) > 0 {
-		coarseParts = append(coarseParts, "关键词："+strings.Join(keywords, ","))
-	}
-	if len(h2s) > 0 {
-		coarseParts = append(coarseParts, "二级标题："+strings.Join(h2s, " | "))
-	}
-
-	coarseText := strings.Join(coarseParts, "\n")
-
-	// build fine chunks
-	var chunks []Chunk
+	var fineChunks []Chunk
+	var imageChunks []Chunk
 	chunkSeq := 0
+
+	if strings.TrimSpace(a.Cover) != "" {
+		chunkSeq++
+		imageChunks = append(imageChunks, buildImageChunk(a, chunkSeq, "cover", []string{strings.TrimSpace(a.Cover)}))
+	}
+
 	for _, sec := range a.Sections {
-		secText := buildSectionText(sec)
-		secText = strings.TrimSpace(secText)
-		if secText == "" {
-			continue
+		textBody := buildSectionText(sec)
+		if textBody != "" {
+			parts := SplitByTokenBudget(textBody, maxTokens, overlapTokens)
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				chunkSeq++
+				fineChunks = append(fineChunks, Chunk{
+					ChunkID:     BuildChunkID(a.ArticleID, chunkSeq, sec.H2, part),
+					ArticleID:   a.ArticleID,
+					H2:          strings.TrimSpace(sec.H2),
+					Content:     part,
+					Tokens:      ApproxTokenCount(part),
+					ContentType: "text",
+				})
+			}
 		}
 
-		// 先按 token 预算分块（只在段落特别长时才会拆）
-		parts := SplitByTokenBudget(secText, maxTokens, overlapTokens)
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
+		for _, urls := range collectSectionImageGroups(sec) {
 			chunkSeq++
-			chunks = append(chunks, Chunk{
-				ChunkID:   BuildChunkID(a.ArticleID, chunkSeq, sec.H2, p),
-				ArticleID: a.ArticleID,
-				H2:        strings.TrimSpace(sec.H2),
-				Content:   p,
-				Tokens:    ApproxTokenCount(p),
-			})
+			imageChunks = append(imageChunks, buildImageChunk(a, chunkSeq, sec.H2, urls))
 		}
 	}
 
 	return SplitResult{
-		CoarseText: coarseText,
-		FineChunks: chunks,
-		Keywords:   keywords,
+		CoarseText:    coarseText,
+		CoarseRawText: coarseRawText,
+		CoarseIntro:   coarseIntro,
+		KeywordScore:  keywordScore,
+		FineChunks:    fineChunks,
+		ImageChunks:   imageChunks,
+		Keywords:      keywords,
 	}, nil
+}
+
+func buildCoarseRawText(a Article, keywords []string) string {
+	h2s := collectH2(a)
+	parts := []string{"title: " + strings.TrimSpace(a.Title)}
+	if len(a.TypeTags) > 0 {
+		parts = append(parts, "type_tags: "+strings.Join(uniqueStrings(a.TypeTags), ", "))
+	}
+	if len(keywords) > 0 {
+		parts = append(parts, "keywords: "+strings.Join(keywords, ", "))
+	}
+	if len(h2s) > 0 {
+		parts = append(parts, "headings: "+strings.Join(h2s, " | "))
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func buildCoarseIntroFallback(a Article, keywords []string) string {
+	parts := make([]string, 0, 4)
+	if title := strings.TrimSpace(a.Title); title != "" {
+		parts = append(parts, "This article focuses on \""+title+"\".")
+	}
+	if len(a.TypeTags) > 0 {
+		parts = append(parts, "Its primary types are "+strings.Join(uniqueStrings(a.TypeTags), ", ")+".")
+	}
+	if len(keywords) > 0 {
+		parts = append(parts, "Important keywords include "+strings.Join(limitStrings(keywords, 6), ", ")+".")
+	}
+	if h2s := collectH2(a); len(h2s) > 0 {
+		parts = append(parts, "Key sections cover "+strings.Join(limitStrings(h2s, 4), ", ")+".")
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func ComposeCoarseText(rawText, intro string, keywordScore float32) string {
+	parts := make([]string, 0, 3)
+	if rawText = strings.TrimSpace(rawText); rawText != "" {
+		parts = append(parts, rawText)
+	}
+	if intro = strings.TrimSpace(intro); intro != "" {
+		parts = append(parts, "intro: "+intro)
+	}
+	parts = append(parts, "keyword_score: "+strconv.FormatFloat(float64(keywordScore), 'f', 1, 32))
+	return strings.Join(parts, "\n")
 }
 
 func buildSectionText(sec Section) string {
 	var b strings.Builder
 	if strings.TrimSpace(sec.H2) != "" {
-		b.WriteString("二级标题：")
+		b.WriteString("heading: ")
 		b.WriteString(strings.TrimSpace(sec.H2))
 		b.WriteString("\n")
 	}
 	for _, blk := range sec.Blocks {
-		switch strings.ToLower(strings.TrimSpace(blk.Type)) {
-		case "image":
-			if strings.TrimSpace(blk.ImageURL) != "" {
-				b.WriteString("图片：")
-				b.WriteString(strings.TrimSpace(blk.ImageURL))
-				b.WriteString("\n")
-			}
-		default:
-			if strings.TrimSpace(blk.Text) != "" {
-				b.WriteString(strings.TrimSpace(blk.Text))
-				b.WriteString("\n")
-			}
+		if strings.EqualFold(strings.TrimSpace(blk.Type), "image") {
+			continue
 		}
+		if strings.TrimSpace(blk.Text) == "" {
+			continue
+		}
+		b.WriteString(strings.TrimSpace(blk.Text))
+		b.WriteString("\n")
 	}
-	return b.String()
+	return strings.TrimSpace(b.String())
 }
 
-// DetectKeywords 做一个“轻量关键词检测”。
-// 目标：粗召回要能覆盖文章主题，但不要引入高成本/高耦合的 NLP 依赖。
-// 这里采用可维护的折中：
-// - type_tags / tags 直接作为关键词
-// - 标题、二级标题里出现的 #话题 也计入关键词
-func DetectKeywords(a Article, topK int) []string {
-	m := map[string]struct{}{}
+func collectSectionImageGroups(sec Section) [][]string {
+	var groups [][]string
+	var current []string
 
-	add := func(s string) {
-		s = strings.TrimSpace(s)
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		groups = append(groups, append([]string(nil), current...))
+		current = nil
+	}
+
+	for _, blk := range sec.Blocks {
+		if !strings.EqualFold(strings.TrimSpace(blk.Type), "image") {
+			flush()
+			continue
+		}
+		url := strings.TrimSpace(blk.ImageURL)
+		if url == "" {
+			continue
+		}
+		current = append(current, url)
+	}
+	flush()
+
+	return groups
+}
+
+func buildImageChunk(a Article, seq int, h2 string, urls []string) Chunk {
+	cleanURLs := make([]string, 0, len(urls))
+	for _, url := range urls {
+		url = strings.TrimSpace(url)
+		if url != "" {
+			cleanURLs = append(cleanURLs, url)
+		}
+	}
+
+	contentType := "image"
+	content := ""
+	if len(cleanURLs) > 1 {
+		contentType = "multi_images"
+		if data, err := json.Marshal(cleanURLs); err == nil {
+			content = string(data)
+		}
+	}
+	if content == "" && len(cleanURLs) > 0 {
+		content = cleanURLs[0]
+	}
+
+	return Chunk{
+		ChunkID:     BuildChunkID(a.ArticleID, seq, strings.TrimSpace(h2), strings.Join(cleanURLs, "|")),
+		ArticleID:   a.ArticleID,
+		H2:          strings.TrimSpace(h2),
+		Content:     content,
+		Tokens:      len(cleanURLs),
+		ContentType: contentType,
+		ImageURLs:   cleanURLs,
+	}
+}
+
+func DetectKeywords(a Article, topK int) []string {
+	weightByKey := map[string]float64{}
+	textByKey := map[string]string{}
+	firstSeen := map[string]int{}
+	seenSeq := 0
+
+	add := func(s string, weight float64) {
+		s = normalizeKeywordCandidate(s)
 		if s == "" {
 			return
 		}
-		m[s] = struct{}{}
+		key := strings.ToLower(s)
+		weightByKey[key] += weight
+		if _, ok := textByKey[key]; !ok {
+			textByKey[key] = s
+		}
+		if _, ok := firstSeen[key]; !ok {
+			firstSeen[key] = seenSeq
+			seenSeq++
+		}
 	}
 
 	for _, t := range a.TypeTags {
-		add(t)
+		add(t, 5.0)
 	}
 	for _, t := range a.Tags {
-		add(t)
+		add(t, 4.0)
 	}
 
-	// 识别 #话题
 	hashTagRe := regexp.MustCompile(`#([\p{Han}A-Za-z0-9_\-]+)`)
-	for _, s := range append([]string{a.Title}, collectH2(a)...) {
-		for _, sub := range hashTagRe.FindAllStringSubmatch(s, -1) {
+	for _, text := range append([]string{a.Title}, collectH2(a)...) {
+		for _, sub := range hashTagRe.FindAllStringSubmatch(text, -1) {
 			if len(sub) == 2 {
-				add(sub[1])
+				add(sub[1], 4.0)
 			}
 		}
 	}
 
-	// 输出时保持稳定：按“出现顺序”粗略稳定（这里不做复杂排序）
-	res := make([]string, 0, len(m))
-	for k := range m {
-		res = append(res, k)
+	for _, text := range append([]string{a.Title}, collectH2(a)...) {
+		for _, piece := range extractKeywordPieces(text) {
+			add(piece, 2.0)
+		}
 	}
-	if topK > 0 && len(res) > topK {
-		res = res[:topK]
+
+	type keywordRank struct {
+		Key    string
+		Text   string
+		Weight float64
+		SeenAt int
+	}
+
+	ranked := make([]keywordRank, 0, len(weightByKey))
+	for key, weight := range weightByKey {
+		ranked = append(ranked, keywordRank{
+			Key:    key,
+			Text:   textByKey[key],
+			Weight: weight,
+			SeenAt: firstSeen[key],
+		})
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Weight == ranked[j].Weight {
+			if len([]rune(ranked[i].Text)) == len([]rune(ranked[j].Text)) {
+				return ranked[i].SeenAt < ranked[j].SeenAt
+			}
+			return len([]rune(ranked[i].Text)) < len([]rune(ranked[j].Text))
+		}
+		return ranked[i].Weight > ranked[j].Weight
+	})
+
+	res := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		res = append(res, item.Text)
+		if topK > 0 && len(res) >= topK {
+			break
+		}
 	}
 	return res
+}
+
+func KeywordCoverageScore(keywordCount int) float32 {
+	if keywordCount <= 0 {
+		return 0
+	}
+	if keywordCount > 5 {
+		keywordCount = 5
+	}
+	return float32(keywordCount) * 0.2
 }
 
 func collectH2(a Article) []string {
@@ -184,16 +302,10 @@ func collectH2(a Article) []string {
 	return hs
 }
 
-// ApproxTokenCount：近似 token 计数。
-// 说明：不同模型的 tokenizer 不同，这里只做“切分预算”的粗估。
-// 规则：按 rune 数统计（中文场景相对可用）。
 func ApproxTokenCount(s string) int {
 	return utf8.RuneCountInString(s)
 }
 
-// SplitByTokenBudget 将文本按 token 预算切分，并保留 overlap（防止检索丢边界信息）。
-//
-// ⚠️ 该函数只用于“很长段落”的兜底拆分：整体上我们仍以“二级标题”为单位组织 chunk，避免切得太碎。
 func SplitByTokenBudget(text string, maxTokens int, overlapTokens int) []string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -203,7 +315,6 @@ func SplitByTokenBudget(text string, maxTokens int, overlapTokens int) []string 
 		return []string{text}
 	}
 
-	// 先按换行切，保持自然段结构
 	paras := strings.Split(text, "\n")
 	var chunks []string
 
@@ -231,10 +342,8 @@ func SplitByTokenBudget(text string, maxTokens int, overlapTokens int) []string 
 			continue
 		}
 
-		// 当前块满了
 		flush()
 
-		// 单段过长：按字符粗拆（保证不会无限大）
 		if t > maxTokens {
 			parts := splitLongLine(p, maxTokens, overlapTokens)
 			chunks = append(chunks, parts...)
@@ -247,7 +356,6 @@ func SplitByTokenBudget(text string, maxTokens int, overlapTokens int) []string 
 
 	flush()
 
-	// overlap：把上一个 chunk 的尾部带到下一个 chunk 的开头（轻量实现）
 	if overlapTokens > 0 && len(chunks) > 1 {
 		var withOverlap []string
 		withOverlap = append(withOverlap, chunks[0])
@@ -293,4 +401,86 @@ func tailByTokens(s string, tokens int) string {
 		return s
 	}
 	return string(r[len(r)-tokens:])
+}
+
+func extractKeywordPieces(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+
+	splitter := func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', ',', '，', '。', '、', '/', '\\', '|', ':', '：', ';', '；', '(', ')', '（', '）', '[', ']', '【', '】', '<', '>', '《', '》', '"', '\'', '“', '”', '‘', '’', '-', '_', '+', '=', '*', '&', '·', '!', '！', '?', '？':
+			return true
+		default:
+			return false
+		}
+	}
+
+	parts := strings.FieldsFunc(s, splitter)
+	if len(parts) == 0 {
+		parts = []string{s}
+	}
+
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		part = normalizeKeywordCandidate(part)
+		if part == "" {
+			continue
+		}
+		key := strings.ToLower(part)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, part)
+	}
+	return out
+}
+
+func normalizeKeywordCandidate(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "#,.，。!！?？:：;；/\\|()（）[]【】<>《》\"'“”‘’`~")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if utf8.RuneCountInString(s) < 2 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) > 24 {
+		return ""
+	}
+	switch strings.ToLower(s) {
+	case "type", "title", "tag", "tags", "intro", "summary":
+		return ""
+	}
+	return s
+}
+
+func uniqueStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, item := range in {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func limitStrings(in []string, limit int) []string {
+	if limit <= 0 || len(in) <= limit {
+		return append([]string(nil), in...)
+	}
+	return append([]string(nil), in[:limit]...)
 }
