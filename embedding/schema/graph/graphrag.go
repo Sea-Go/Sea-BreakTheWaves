@@ -142,6 +142,23 @@ SET r.weight = $weight`
 	return err
 }
 
+func (s *Store) DeleteArticle(ctx context.Context, articleID string) error {
+	if s == nil || s.driver == nil {
+		return errors.New("neo4j driver is nil")
+	}
+	sess := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer sess.Close(ctx)
+
+	_, err := sess.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		query := `MATCH (p:Parent {article_id: $article_id})
+OPTIONAL MATCH (p)-[:HAS_CHILD]->(c:Child)
+DETACH DELETE p, c`
+		_, err := tx.Run(ctx, query, map[string]any{"article_id": articleID})
+		return nil, err
+	})
+	return err
+}
+
 // Neighbor 表示从 seed chunk 出发的一跳邻居。
 type Neighbor = types.Neighbor
 
