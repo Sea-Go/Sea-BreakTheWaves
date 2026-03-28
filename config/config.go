@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 
 	"sea/zlog"
@@ -12,9 +14,10 @@ import (
 var Cfg Config
 
 type Config struct {
-	Log      LogConfig      `mapstructure:"log" yaml:"log"`
-	Otel     OtelConfig     `mapstructure:"otel" yaml:"otel"`
-	Postgres PostgresConfig `mapstructure:"postgres" yaml:"postgres"`
+	Log            LogConfig            `mapstructure:"log" yaml:"log"`
+	Otel           OtelConfig           `mapstructure:"otel" yaml:"otel"`
+	Postgres       PostgresConfig       `mapstructure:"postgres" yaml:"postgres"`
+	SourcePostgres SourcePostgresConfig `mapstructure:"source_postgres" yaml:"source_postgres"`
 
 	Milvus MilvusConfig `mapstructure:"milvus" yaml:"milvus"`
 	Cohere CohereConfig `mapstructure:"cohere" yaml:"cohere"`
@@ -53,6 +56,72 @@ type PostgresConfig struct {
 	MaxOpenConns           int    `mapstructure:"max_open_conns" yaml:"max_open_conns"`
 	MaxIdleConns           int    `mapstructure:"max_idle_conns" yaml:"max_idle_conns"`
 	ConnMaxLifetimeSeconds int    `mapstructure:"conn_max_lifetime_seconds" yaml:"conn_max_lifetime_seconds"`
+}
+
+type SourcePostgresConfig struct {
+	Host                   string `mapstructure:"host" yaml:"host"`
+	Port                   int    `mapstructure:"port" yaml:"port"`
+	User                   string `mapstructure:"user" yaml:"user"`
+	Password               string `mapstructure:"password" yaml:"password"`
+	DBName                 string `mapstructure:"dbname" yaml:"dbname"`
+	SSLMode                string `mapstructure:"sslmode" yaml:"sslmode"`
+	MaxOpenConns           int    `mapstructure:"max_open_conns" yaml:"max_open_conns"`
+	MaxIdleConns           int    `mapstructure:"max_idle_conns" yaml:"max_idle_conns"`
+	ConnMaxLifetimeSeconds int    `mapstructure:"conn_max_lifetime_seconds" yaml:"conn_max_lifetime_seconds"`
+}
+
+func (c SourcePostgresConfig) HostValue() string {
+	if c.Host != "" {
+		return c.Host
+	}
+	return "127.0.0.1"
+}
+
+func (c SourcePostgresConfig) PortValue() int {
+	if c.Port > 0 {
+		return c.Port
+	}
+	return 35432
+}
+
+func (c SourcePostgresConfig) UserValue() string {
+	if c.User != "" {
+		return c.User
+	}
+	return "admin"
+}
+
+func (c SourcePostgresConfig) PasswordValue() string {
+	if c.Password != "" {
+		return c.Password
+	}
+	return "Sea-TryGo"
+}
+
+func (c SourcePostgresConfig) DBNameValue() string {
+	if c.DBName != "" {
+		return c.DBName
+	}
+	return "first_db"
+}
+
+func (c SourcePostgresConfig) SSLModeValue() string {
+	if c.SSLMode != "" {
+		return c.SSLMode
+	}
+	return "disable"
+}
+
+func (c SourcePostgresConfig) DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		url.QueryEscape(c.UserValue()),
+		url.QueryEscape(c.PasswordValue()),
+		c.HostValue(),
+		c.PortValue(),
+		url.PathEscape(c.DBNameValue()),
+		url.QueryEscape(c.SSLModeValue()),
+	)
 }
 
 type ServicesConfig struct {
@@ -120,12 +189,56 @@ type PoolsConfig struct {
 	LongTerm  PoolPolicy      `mapstructure:"long_term" yaml:"long_term"`
 	ShortTerm PoolPolicy      `mapstructure:"short_term" yaml:"short_term"`
 	Periodic  PoolPolicy      `mapstructure:"periodic" yaml:"periodic"`
+	Async     AsyncPoolConfig `mapstructure:"async" yaml:"async"`
 	Recommend RecommendPolicy `mapstructure:"recommend" yaml:"recommend"`
 }
 
 type PoolPolicy struct {
 	MinSize    int `mapstructure:"min_size" yaml:"min_size"`
 	RefillSize int `mapstructure:"refill_size" yaml:"refill_size"`
+}
+
+type AsyncPoolConfig struct {
+	Enabled            *bool `mapstructure:"enabled" yaml:"enabled"`
+	Workers            int   `mapstructure:"workers" yaml:"workers"`
+	QueueSize          int   `mapstructure:"queue_size" yaml:"queue_size"`
+	TaskTimeoutSeconds int   `mapstructure:"task_timeout_seconds" yaml:"task_timeout_seconds"`
+	QueryFanout        int   `mapstructure:"query_fanout" yaml:"query_fanout"`
+}
+
+func (c AsyncPoolConfig) EnabledValue() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+func (c AsyncPoolConfig) WorkersValue() int {
+	if c.Workers > 0 {
+		return c.Workers
+	}
+	return 6
+}
+
+func (c AsyncPoolConfig) QueueSizeValue() int {
+	if c.QueueSize > 0 {
+		return c.QueueSize
+	}
+	return 256
+}
+
+func (c AsyncPoolConfig) TaskTimeoutSecondsValue() int {
+	if c.TaskTimeoutSeconds > 0 {
+		return c.TaskTimeoutSeconds
+	}
+	return 90
+}
+
+func (c AsyncPoolConfig) QueryFanoutValue() int {
+	if c.QueryFanout > 0 {
+		return c.QueryFanout
+	}
+	return 3
 }
 
 type RecommendPolicy struct {
