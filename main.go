@@ -12,7 +12,9 @@ import (
 	"sea/infra"
 	"sea/kafka"
 	"sea/metrics"
+	"sea/poolrefill"
 	"sea/router"
+	searchsvc "sea/service"
 	"sea/skillsys"
 	"sea/storage"
 	"sea/zlog"
@@ -32,6 +34,9 @@ func main() {
 
 	if err := infra.PostgresInit(); err != nil {
 		zlog.L().Fatal("postgres init failed", zap.Error(err))
+	}
+	if err := infra.SourcePostgresInit(); err != nil {
+		zlog.L().Warn("source postgres init failed, title/author search disabled", zap.Error(err))
 	}
 	if err := infra.MilvusInit(); err != nil {
 		zlog.L().Fatal("milvus init failed", zap.Error(err))
@@ -55,6 +60,10 @@ func main() {
 	historyRepo := storage.NewUserHistoryRepo(db)
 	memoryChunkRepo := storage.NewMemoryChunkRepo(db)
 
+	sourceDB := infra.SourcePostgres()
+	sourceArticleRepo := storage.NewSourceArticleRepo(sourceDB)
+	sourceUserRepo := storage.NewSourceUserRepo(sourceDB)
+
 	signChan := make(chan os.Signal, 1)
 	signal.Notify(signChan, syscall.SIGINT, syscall.SIGTERM)
 	metrics.InitMetrics(signChan, &config.Cfg)
@@ -65,6 +74,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	refillRunner := poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, reg)
+	refillDispatcher := poolrefill.NewAsyncPoolRefillDispatcher(ctx, refillRunner, config.Cfg.Pools.Async)
+
 	if err := kafka.Start(ctx, createKafkaMessageHandler(reg, articleRepo)); err != nil {
 		zlog.L().Error("kafka consumer start failed", zap.Error(err))
 	}
@@ -73,10 +85,12 @@ func main() {
 	}
 
 	aiClient := infra.NewAIClient()
-	recoAgent := agent.NewRecoAgent(aiClient, reg, poolRepo, memoryRepo, memoryChunkRepo)
+	recoAgent := agent.NewRecoAgent(aiClient, reg, poolRepo, memoryRepo, memoryChunkRepo, refillDispatcher)
 	contentSearchAgent := agent.NewContentSearchAgent(aiClient, reg, articleRepo)
+	titleSearchService := searchsvc.NewArticleTitleSearchService(sourceArticleRepo)
+	authorSearchService := searchsvc.NewAuthorNameSearchService(sourceUserRepo)
 
-	r := router.NewRouter(reg, recoAgent, contentSearchAgent)
+	r := router.NewRouter(reg, recoAgent, contentSearchAgent, titleSearchService, authorSearchService)
 	srv := &http.Server{
 		Addr:    config.Cfg.Services.HTTPAddr + ":" + config.Cfg.Services.HTTPPort,
 		Handler: r,
