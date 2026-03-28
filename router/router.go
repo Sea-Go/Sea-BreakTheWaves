@@ -1,10 +1,12 @@
 package router
 
 import (
+	"errors"
 	"net/http"
 
 	"sea/agent"
 	"sea/middleware"
+	searchsvc "sea/service"
 	"sea/skillsys"
 	"sea/zlog"
 
@@ -13,7 +15,13 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewRouter(reg *skillsys.Registry, reco *agent.RecoAgent, contentSearch *agent.ContentSearchAgent) *gin.Engine {
+func NewRouter(
+	reg *skillsys.Registry,
+	reco *agent.RecoAgent,
+	contentSearch *agent.ContentSearchAgent,
+	titleSearch *searchsvc.ArticleTitleSearchService,
+	authorSearch *searchsvc.AuthorNameSearchService,
+) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
@@ -66,6 +74,44 @@ func NewRouter(reg *skillsys.Registry, reco *agent.RecoAgent, contentSearch *age
 
 		resp, err := contentSearch.Search(c.Request.Context(), req)
 		if err != nil {
+			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
+			return
+		}
+		OK(c, resp)
+	})
+
+	r.POST("/api/v1/search/title", func(c *gin.Context) {
+		var req searchsvc.StructuredSearchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
+			return
+		}
+
+		resp, err := titleSearch.Search(c.Request.Context(), req)
+		if err != nil {
+			if errors.Is(err, searchsvc.ErrSourceMetadataUnavailable) {
+				Fail(c, http.StatusServiceUnavailable, middleware.StatusError, err.Error(), resp.TraceID)
+				return
+			}
+			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
+			return
+		}
+		OK(c, resp)
+	})
+
+	r.POST("/api/v1/search/authors", func(c *gin.Context) {
+		var req searchsvc.StructuredSearchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
+			return
+		}
+
+		resp, err := authorSearch.Search(c.Request.Context(), req)
+		if err != nil {
+			if errors.Is(err, searchsvc.ErrSourceMetadataUnavailable) {
+				Fail(c, http.StatusServiceUnavailable, middleware.StatusError, err.Error(), resp.TraceID)
+				return
+			}
 			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
 			return
 		}
