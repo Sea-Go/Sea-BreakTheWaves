@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"sea/config"
-	"sea/embedding/service"
+	embeddingservice "sea/embedding/service"
 	"sea/infra"
-	"sea/retrieval"
+	searchsvc "sea/service"
 	"sea/skillsys"
 	"sea/storage"
 	"sea/zlog"
@@ -29,8 +29,10 @@ import (
 //   - RecallK 表示向量召回候选 chunk 数；TopK 表示最终返回文章数。
 type ContentSearchRequest struct {
 	SearchRequestID string  `json:"search_request_id,omitempty"`
+	RequestID       string  `json:"request_id,omitempty"`
 	Query           string  `json:"query" binding:"required"`
 	TopK            int     `json:"topk,omitempty"`
+	TopKLegacy      int     `json:"top_k,omitempty"`
 	RecallK         int     `json:"recall_k,omitempty"`
 	CoarseRecallK   int     `json:"coarse_recall_k,omitempty"`
 	MinPassScore    float32 `json:"min_pass_score,omitempty"`
@@ -130,6 +132,12 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 	}
 
 	req.Query = strings.TrimSpace(req.Query)
+	if req.SearchRequestID == "" {
+		req.SearchRequestID = strings.TrimSpace(req.RequestID)
+	}
+	if req.TopK <= 0 {
+		req.TopK = req.TopKLegacy
+	}
 	if req.Query == "" {
 		return ContentSearchResponse{}, errors.New("query 不能为空")
 	}
@@ -223,7 +231,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 	semanticQuery := buildSemanticQuery(req.Query, intent)
 	ctxEmbed, spEmbed := zlog.StartSpan(ctx, "retrieval.embed_query")
 	embedStart := time.Now()
-	vec, err := service.TextVector(ctxEmbed, semanticQuery)
+	vec, err := embeddingservice.TextVector(ctxEmbed, semanticQuery)
 	embedMs := time.Since(embedStart).Milliseconds()
 	if err != nil {
 		spEmbed.End(zlog.StatusError, err, zap.Int64("latency_ms", embedMs))
@@ -244,7 +252,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"latency_ms":     embedMs,
 	})
 
-	ranker := retrieval.NewPrecisionRanker(a.articleRepo, a.registry)
+	ranker := searchsvc.NewPrecisionRanker(a.articleRepo, a.registry)
 
 	ctxCoarse, spCoarse := zlog.StartSpan(ctx, "retrieval.coarse_recall")
 	coarseStart := time.Now()
@@ -263,7 +271,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		zap.Int64("latency_ms", coarseMs),
 		zap.Int("candidate_count", len(coarseCandidates)),
 	)
-	coarseCandidates = retrieval.BoostCoarseCandidatesByKeywords(coarseCandidates, semanticQuery, intent.Keywords)
+	coarseCandidates = searchsvc.BoostCoarseCandidatesByKeywords(coarseCandidates, semanticQuery, intent.Keywords)
 	expl.Add("retrieval.coarse_recall", map[string]any{
 		"candidate_count":    len(coarseCandidates),
 		"top_article_ids":    takeCoarseArticleIDs(coarseCandidates, 8),
@@ -271,7 +279,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"latency_ms":         coarseMs,
 	})
 
-	articleIDs, coarseRankByArticle := retrieval.PickArticleCandidates(
+	articleIDs, coarseRankByArticle := searchsvc.PickArticleCandidates(
 		coarseCandidates,
 		config.Cfg.Search.MaxArticleCandidates,
 	)
@@ -365,7 +373,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"latency_ms":    rerankMs,
 	})
 
-	passedHits := retrieval.FilterPassedHits(
+	passedHits := searchsvc.FilterPassedHits(
 		rerankedHits,
 		coarseRankByArticle,
 		fineRankByChunk,
@@ -621,13 +629,13 @@ type storageChunkView struct {
 	Content   string
 }
 
-func (a *ContentSearchAgent) buildResponseItems(ctx context.Context, hits []retrieval.RerankHit, vectorScoreByChunk map[string]float32, topK int) ([]ContentSearchItem, error) {
+func (a *ContentSearchAgent) buildResponseItems(ctx context.Context, hits []searchsvc.RerankHit, vectorScoreByChunk map[string]float32, topK int) ([]ContentSearchItem, error) {
 	if len(hits) == 0 || topK <= 0 {
 		return []ContentSearchItem{}, nil
 	}
 
 	orderedArticleIDs := make([]string, 0, topK)
-	bestHitByArticle := make(map[string]retrieval.RerankHit, len(hits))
+	bestHitByArticle := make(map[string]searchsvc.RerankHit, len(hits))
 	for _, hit := range hits {
 		if strings.TrimSpace(hit.ArticleID) == "" {
 			continue
@@ -801,7 +809,7 @@ func takeCandidateArticleIDs(in []contentVectorCandidate, n int) []string {
 	return out
 }
 
-func takeMatchedChunkIDs(in []retrieval.RerankHit, n int) []string {
+func takeMatchedChunkIDs(in []searchsvc.RerankHit, n int) []string {
 	out := make([]string, 0, minInt(n, len(in)))
 	for i := 0; i < len(in) && i < n; i++ {
 		if in[i].ChunkID != "" {
@@ -811,7 +819,7 @@ func takeMatchedChunkIDs(in []retrieval.RerankHit, n int) []string {
 	return out
 }
 
-func takeCoarseArticleIDs(in []retrieval.CoarseArticleCandidate, n int) []string {
+func takeCoarseArticleIDs(in []searchsvc.CoarseArticleCandidate, n int) []string {
 	out := make([]string, 0, minInt(n, len(in)))
 	for i := 0; i < len(in) && i < n; i++ {
 		if in[i].ArticleID != "" {
@@ -821,7 +829,7 @@ func takeCoarseArticleIDs(in []retrieval.CoarseArticleCandidate, n int) []string
 	return out
 }
 
-func takeCoarseKeywordScores(in []retrieval.CoarseArticleCandidate, n int) []float32 {
+func takeCoarseKeywordScores(in []searchsvc.CoarseArticleCandidate, n int) []float32 {
 	out := make([]float32, 0, minInt(n, len(in)))
 	for i := 0; i < len(in) && i < n; i++ {
 		out = append(out, in[i].KeywordScore)
@@ -829,7 +837,7 @@ func takeCoarseKeywordScores(in []retrieval.CoarseArticleCandidate, n int) []flo
 	return out
 }
 
-func takeFineChunkIDs(in []retrieval.VectorCandidate, n int) []string {
+func takeFineChunkIDs(in []searchsvc.VectorCandidate, n int) []string {
 	out := make([]string, 0, minInt(n, len(in)))
 	for i := 0; i < len(in) && i < n; i++ {
 		if in[i].ChunkID != "" {
@@ -839,7 +847,7 @@ func takeFineChunkIDs(in []retrieval.VectorCandidate, n int) []string {
 	return out
 }
 
-func takeFineArticleIDs(in []retrieval.VectorCandidate, n int) []string {
+func takeFineArticleIDs(in []searchsvc.VectorCandidate, n int) []string {
 	out := make([]string, 0, minInt(n, len(in)))
 	seen := map[string]struct{}{}
 	for i := 0; i < len(in) && len(out) < n; i++ {
