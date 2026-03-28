@@ -23,6 +23,17 @@ postgres:
   max_idle_conns: 10
   conn_max_lifetime_seconds: 300
 
+source_postgres:
+  host: "127.0.0.1"
+  port: 35432
+  user: "admin"
+  password: "Sea-TryGo"
+  dbname: "first_db"
+  sslmode: "disable"
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime_seconds: 300
+
 milvus:
   address: "localhost:19530"
   username: ""
@@ -75,6 +86,12 @@ pools:
   periodic:
     min_size: 100
     refill_size: 300
+  async:
+    enabled: true
+    workers: 6
+    queue_size: 256
+    task_timeout_seconds: 90
+    query_fanout: 3
   recommend:
     take_size: 20
     remove_after_recommend: true
