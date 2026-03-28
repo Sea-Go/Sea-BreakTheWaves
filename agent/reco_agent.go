@@ -12,6 +12,7 @@ import (
 	"sea/config"
 	"sea/embedding/service"
 	"sea/metrics"
+	"sea/poolrefill"
 	"sea/skillsys"
 	"sea/storage"
 	"sea/zlog"
@@ -34,18 +35,20 @@ type RecoAgent struct {
 	ai       *openai.Client
 	registry *skillsys.Registry
 
-	poolRepo   *storage.PoolRepo
-	memoryRepo *storage.MemoryRepo
+	poolRepo         *storage.PoolRepo
+	memoryRepo       *storage.MemoryRepo
+	refillDispatcher *poolrefill.AsyncPoolRefillDispatcher
 	// memoryChunkRepo 用于 Milvus 召回“记忆分块”，避免把整段长期/周期记忆塞进 prompt。
 	memoryChunkRepo *storage.MemoryChunkRepo
 }
 
-func NewRecoAgent(ai *openai.Client, reg *skillsys.Registry, poolRepo *storage.PoolRepo, memoryRepo *storage.MemoryRepo, memoryChunkRepo *storage.MemoryChunkRepo) *RecoAgent {
+func NewRecoAgent(ai *openai.Client, reg *skillsys.Registry, poolRepo *storage.PoolRepo, memoryRepo *storage.MemoryRepo, memoryChunkRepo *storage.MemoryChunkRepo, refillDispatcher *poolrefill.AsyncPoolRefillDispatcher) *RecoAgent {
 	return &RecoAgent{
 		ai: ai, registry: reg,
-		poolRepo:        poolRepo,
-		memoryRepo:      memoryRepo,
-		memoryChunkRepo: memoryChunkRepo,
+		poolRepo:         poolRepo,
+		memoryRepo:       memoryRepo,
+		memoryChunkRepo:  memoryChunkRepo,
+		refillDispatcher: refillDispatcher,
 	}
 }
 
@@ -286,7 +289,8 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 	})
 
 	// 池子数量检查 + refill
-	if err := a.ensurePool(ctx, req.UserID, storage.PoolLongTerm, "", recallQueries); err != nil {
+	longEnsure, err := a.ensurePoolAsync(ctx, req.UserID, storage.PoolLongTerm, "", recallQueries)
+	if err != nil {
 		expl.Add("pool.ensure.error", map[string]any{"pool": "long_term", "error": err.Error()})
 		respOut.Status = "error"
 		retErr = err
@@ -296,7 +300,8 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		}
 		return respOut, err
 	}
-	if err := a.ensurePool(ctx, req.UserID, storage.PoolShortTerm, "", recallQueries); err != nil {
+	shortEnsure, err := a.ensurePoolAsync(ctx, req.UserID, storage.PoolShortTerm, "", recallQueries)
+	if err != nil {
 		expl.Add("pool.ensure.error", map[string]any{"pool": "short_term", "error": err.Error()})
 		respOut.Status = "error"
 		retErr = err
@@ -306,7 +311,8 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		}
 		return respOut, err
 	}
-	if err := a.ensurePool(ctx, req.UserID, storage.PoolPeriodic, req.PeriodBucket, recallQueries); err != nil {
+	periodEnsure, err := a.ensurePoolAsync(ctx, req.UserID, storage.PoolPeriodic, req.PeriodBucket, recallQueries)
+	if err != nil {
 		expl.Add("pool.ensure.error", map[string]any{"pool": "periodic", "bucket": req.PeriodBucket, "error": err.Error()})
 		respOut.Status = "error"
 		retErr = err
@@ -316,9 +322,13 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		}
 		return respOut, err
 	}
-	expl.Add("pool.ensure", map[string]any{
+	expl.Add("pool_refill_async", map[string]any{
 		"recall_queries": recallQueries,
-		"pools":          []string{"long_term", "short_term", "periodic"},
+		"pools": []map[string]any{
+			longEnsure.ExplainFields(),
+			shortEnsure.ExplainFields(),
+			periodEnsure.ExplainFields(),
+		},
 	})
 
 	// -----------------------------
@@ -341,6 +351,27 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 
 	metrics.GenRecAgentRetrievalRequestsTotalMetric.WithLabelValues("reco_agent", req.Surface).Inc()
 	metrics.GenRecAgentRetrievalReturnedDocsMetric.WithLabelValues("reco_agent", req.Surface).Observe(float64(len(candidates)))
+
+	n := config.Cfg.Pools.Recommend.TakeSize
+	if n <= 0 {
+		n = 20
+	}
+	if len(candidates) == 0 {
+		fallback = true
+		expl.Add("rank.rerank", map[string]any{
+			"candidate_in":  0,
+			"candidate_out": 0,
+			"top_reason":    "",
+		})
+		respOut.Status = "fallback"
+		respOut.IDs = []string{}
+		respOut.ArticleIDs = []string{}
+		respOut.Explanation = ""
+		if req.Explain {
+			respOut.ExplainTrace = expl.Trace()
+		}
+		return respOut, nil
+	}
 
 	// -----------------------------
 	// 5) AI 精排序
@@ -368,10 +399,6 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 	})
 
 	// 取 topN
-	n := config.Cfg.Pools.Recommend.TakeSize
-	if n <= 0 {
-		n = 20
-	}
 	if len(reranked) > n {
 		reranked = reranked[:n]
 	}
@@ -379,6 +406,9 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 	var finalIDs []string
 	for _, it := range reranked {
 		finalIDs = append(finalIDs, it.ArticleID)
+	}
+	if len(candidates) < n || len(finalIDs) < n {
+		fallback = true
 	}
 
 	// -----------------------------
@@ -433,8 +463,13 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 	}
 
 	// 最终返回：Explanation 汇总每步观测信息；不再用 top1 的短 reason 覆盖。
-	respOut.Status = "ok"
+	if fallback {
+		respOut.Status = "fallback"
+	} else {
+		respOut.Status = "ok"
+	}
 	respOut.IDs = finalIDs
+	respOut.ArticleIDs = finalIDs
 	respOut.Explanation = explain
 
 	return respOut, nil
@@ -661,6 +696,83 @@ func pickPolicy(pt storage.PoolType) config.PoolPolicy {
 // =========================
 // 子流程：collectCandidates
 // =========================
+
+type poolEnsureResult struct {
+	PoolType     storage.PoolType
+	PeriodBucket string
+	SizeBefore   int
+	Enqueue      types.PoolRefillEnqueueResult
+}
+
+func (r poolEnsureResult) ExplainFields() map[string]any {
+	return map[string]any{
+		"pool_type":     string(r.PoolType),
+		"period_bucket": r.PeriodBucket,
+		"size_before":   r.SizeBefore,
+		"enqueued":      r.Enqueue.Enqueued,
+		"deduped":       r.Enqueue.Deduped,
+		"queue_result":  r.Enqueue.QueueResult,
+	}
+}
+
+func (a *RecoAgent) ensurePoolAsync(ctx context.Context, userID string, poolType storage.PoolType, periodBucket string, queryTexts []string) (poolEnsureResult, error) {
+	ctxEnsure, sp := zlog.StartSpan(ctx, "pool.ensure."+string(poolType))
+
+	result := poolEnsureResult{
+		PoolType:     poolType,
+		PeriodBucket: periodBucket,
+		Enqueue: types.PoolRefillEnqueueResult{
+			PoolType:    string(poolType),
+			QueueResult: "disabled",
+		},
+	}
+
+	policy := pickPolicy(poolType)
+	size, err := a.poolRepo.GetPoolSize(ctxEnsure, userID, poolType, periodBucket)
+	if err != nil {
+		sp.End(zlog.StatusError, err)
+		return result, err
+	}
+	result.SizeBefore = size
+
+	if size >= policy.MinSize {
+		result.Enqueue.QueueResult = "skipped_sufficient"
+		sp.End(zlog.StatusOK, nil, zap.Any("decision", map[string]any{
+			"type":   "ensure_pool",
+			"chosen": "skip_refill",
+			"signals": map[string]any{
+				"size_before": size,
+				"min_size":    policy.MinSize,
+			},
+		}))
+		return result, nil
+	}
+
+	if a.refillDispatcher != nil {
+		result.Enqueue = a.refillDispatcher.Enqueue(types.PoolRefillJob{
+			UserID:       userID,
+			PoolType:     string(poolType),
+			PeriodBucket: periodBucket,
+			QueryTexts:   queryTexts,
+		})
+	}
+
+	status := zlog.StatusOK
+	if result.Enqueue.Dropped {
+		status = zlog.StatusFallback
+	}
+	sp.End(status, nil, zap.Any("pool", map[string]any{
+		"type":         string(poolType),
+		"bucket":       periodBucket,
+		"size_before":  size,
+		"min_size":     policy.MinSize,
+		"query_count":  len(queryTexts),
+		"queue_result": result.Enqueue.QueueResult,
+		"enqueued":     result.Enqueue.Enqueued,
+		"deduped":      result.Enqueue.Deduped,
+	}))
+	return result, nil
+}
 
 func (a *RecoAgent) collectCandidates(ctx context.Context, userID string, periodBucket string) ([]string, error) {
 	// ✅ 关键修复：把 “从池子取候选” 作为一个独立 span，并把 ctx 传给工具调用，
