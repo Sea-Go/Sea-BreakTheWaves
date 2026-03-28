@@ -93,6 +93,42 @@ var (
 		Name:      "retry_total",
 		Help:      "Article sync retry enqueue count by op and source.",
 	}, []string{"op", "source"})
+
+	PoolRefillEnqueueTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "pool_refill",
+		Name:      "enqueue_total",
+		Help:      "Pool refill enqueue results grouped by result and pool type.",
+	}, []string{"result", "pool_type"})
+
+	PoolRefillRunsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "pool_refill",
+		Name:      "runs_total",
+		Help:      "Pool refill run outcomes grouped by result and pool type.",
+	}, []string{"result", "pool_type"})
+
+	PoolRefillInflight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "genrec",
+		Subsystem: "pool_refill",
+		Name:      "inflight",
+		Help:      "Current number of inflight pool refill runs.",
+	}, []string{"pool_type"})
+
+	PoolRefillStageDurationSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "genrec",
+		Subsystem: "pool_refill",
+		Name:      "stage_duration_seconds",
+		Help:      "Stage latency of pool refill runs.",
+		Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 40},
+	}, []string{"stage"})
+
+	PoolRefillItemsInserted = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "pool_refill",
+		Name:      "items_inserted",
+		Help:      "Total number of pool items inserted by pool type.",
+	}, []string{"pool_type"})
 )
 
 func InitMetrics(_ chan os.Signal, _ *config.Config) {
@@ -109,5 +145,10 @@ func InitMetrics(_ chan os.Signal, _ *config.Config) {
 		GuardrailDecisionsTotalMetric,
 		ArticleSyncEventsTotal,
 		ArticleSyncRetryTotal,
+		PoolRefillEnqueueTotal,
+		PoolRefillRunsTotal,
+		PoolRefillInflight,
+		PoolRefillStageDurationSeconds,
+		PoolRefillItemsInserted,
 	)
 }
