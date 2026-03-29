@@ -233,24 +233,34 @@ GET /health
 ```text
 Sea-BreakTheWaves/
 ├── agent/               # 推荐 Agent / 内容搜索 Agent
+├── ChatTest/            # 命令行对话式测试
 ├── chunk/               # 文档切分与 chunk 相关逻辑
 ├── config/              # 配置加载
 ├── embedding/           # 向量 schema 与 embedding 服务
 ├── infra/               # Postgres / Milvus / Neo4j / OTel 等基础设施初始化
-├── kafka/               # Kafka 消费能力
+├── kafka/               # Kafka 消费与重试相关机制
+├── log/                 # 服务运行日志存放目录
 ├── metrics/             # Prometheus 指标定义
 ├── middleware/          # Trace / 错误处理中间件
-├── router/              # HTTP 路由
+├── poolrefill/          # 推荐候选池的异步填充机制
+├── prometheus/          # Prometheus 配置文件目录
+├── router/              # HTTP 路由与响应结构
+├── service/             # 核心服务逻辑 (精排 / 问卷 / 搜索等)
 ├── skills/              # 各类推荐技能实现
 ├── skillsys/            # Skill 注册与调用框架
-├── storage/             # Postgres 存储层
-├── type/                # 公共类型定义
-├── zlog/                # 日志与 trace 封装
-├── ChatTest/            # 命令行对话式测试
-├── docker-compose.yaml  # 本地依赖环境编排
+├── storage/             # 各存储媒介的 Repository 层
+├── type/                # 接口与内部业务实体的类型定义
+├── zlog/                # 业务自定义日志与 Agent Trace 封装
+├── config.yaml          # 实际使用的配置文件
 ├── config.yaml.example  # 配置示例
+├── docker-compose.yaml  # 本地依赖环境编排
 ├── dockerfile           # 镜像构建
-└── main.go              # 服务启动入口
+├── go.mod               # Go Modules 依赖管理
+├── go.sum               # 依赖校验文件
+├── kafka_handler.go     # 全局 Kafka 处理入口
+├── logo.png             # 项目 Logo 图片
+├── main.go              # 服务启动入口
+└── service.sh           # Docker 部署启动脚本
 ```
 
 ---
@@ -340,13 +350,13 @@ docker compose up -d
 项目中的 `docker-compose.yaml` 已包含以下组件：
 
 - etcd
-- postgres
-- redis
-- neo4j
-- kafka
+- postgres (包含 exporter)
+- redis (包含 exporter 与 redisinsight)
+- neo4j (包含 neodash)
+- kafka (包含 exporter 与 kafka-ui)
 - minio
 - milvus
-- elasticsearch
+- elasticsearch (包含 exporter)
 - kibana
 - prometheus
 - grafana
