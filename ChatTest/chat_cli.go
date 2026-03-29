@@ -42,6 +42,9 @@ func main() {
 	if err := infra.PostgresInit(); err != nil {
 		panic(err)
 	}
+	if err := infra.SourcePostgresInit(); err != nil {
+		zlog.L().Warn("source postgres init failed", zap.Error(err))
+	}
 	if err := infra.MilvusInit(); err != nil {
 		panic(err)
 	}
@@ -53,12 +56,13 @@ func main() {
 	memoryRepo := storage.NewMemoryRepo(db)
 	historyRepo := storage.NewUserHistoryRepo(db)
 	memoryChunkRepo := storage.NewMemoryChunkRepo(db)
+	sourceLikeRepo := storage.NewSourceLikeRepo(infra.SourcePostgres())
 
 	reg := skillsys.NewRegistry()
 	reg.Register(milvus_search.New())
 	reg.Register(doc_ingest.New(articleRepo, infra.NewAIClient()))
 	reg.Register(pool_manage.NewPoolGetSize(poolRepo))
-	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo, reg))
+	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo, sourceLikeRepo, reg))
 	reg.Register(pool_manage.NewPoolPopTopK(poolRepo))
 	reg.Register(user_history.NewAdd(historyRepo))
 	reg.Register(user_history.NewRecent(historyRepo))
