@@ -32,8 +32,9 @@ func RegisterSkills(
 	reg.Register(doc_ingest.New(articleRepo, infra.NewAIClient()))
 
 	// 候选池管理
+	sourceLikeRepo := storage.NewSourceLikeRepo(infra.SourcePostgres())
 	reg.Register(pool_manage.NewPoolGetSize(poolRepo))
-	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo, reg))
+	reg.Register(pool_manage.NewPoolRefill(poolRepo, articleRepo, sourceLikeRepo, reg))
 	reg.Register(pool_manage.NewPoolPopTopK(poolRepo))
 
 	// 用户历史
