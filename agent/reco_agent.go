@@ -37,17 +37,27 @@ type RecoAgent struct {
 
 	poolRepo         *storage.PoolRepo
 	memoryRepo       *storage.MemoryRepo
+	sourceLikeRepo   *storage.SourceLikeRepo
 	refillDispatcher *poolrefill.AsyncPoolRefillDispatcher
 	// memoryChunkRepo 用于 Milvus 召回“记忆分块”，避免把整段长期/周期记忆塞进 prompt。
 	memoryChunkRepo *storage.MemoryChunkRepo
 }
 
-func NewRecoAgent(ai *openai.Client, reg *skillsys.Registry, poolRepo *storage.PoolRepo, memoryRepo *storage.MemoryRepo, memoryChunkRepo *storage.MemoryChunkRepo, refillDispatcher *poolrefill.AsyncPoolRefillDispatcher) *RecoAgent {
+func NewRecoAgent(
+	ai *openai.Client,
+	reg *skillsys.Registry,
+	poolRepo *storage.PoolRepo,
+	memoryRepo *storage.MemoryRepo,
+	memoryChunkRepo *storage.MemoryChunkRepo,
+	sourceLikeRepo *storage.SourceLikeRepo,
+	refillDispatcher *poolrefill.AsyncPoolRefillDispatcher,
+) *RecoAgent {
 	return &RecoAgent{
 		ai: ai, registry: reg,
 		poolRepo:         poolRepo,
 		memoryRepo:       memoryRepo,
 		memoryChunkRepo:  memoryChunkRepo,
+		sourceLikeRepo:   sourceLikeRepo,
 		refillDispatcher: refillDispatcher,
 	}
 }
@@ -832,15 +842,121 @@ func (a *RecoAgent) collectCandidates(ctx context.Context, userID string, period
 		ids = append(ids, it.ArticleID)
 	}
 
+	dislikedIDs, err := a.loadDislikedArticleIDs(ctxCollect, userID)
+	if err != nil {
+		sp.End(zlog.StatusError, err)
+		return nil, err
+	}
+	ids = filterExcludedArticleIDs(ids, dislikedIDs)
+	if len(dislikedIDs) > 0 {
+		if removed := intersectArticleIDs(append(append(poolItemsToArticleIDs(longItems), poolItemsToArticleIDs(shortItems)...), poolItemsToArticleIDs(periodItems)...), dislikedIDs); len(removed) > 0 {
+			if removeErr := a.removeFromPools(ctxCollect, userID, periodBucket, removed); removeErr != nil {
+				zlog.L().Warn("remove disliked items from pools failed",
+					zap.String("user_id", userID),
+					zap.String("period_bucket", periodBucket),
+					zap.Strings("article_ids", removed),
+					zap.Error(removeErr),
+				)
+			}
+		}
+	}
+
 	sp.End(zlog.StatusOK, nil, zap.Any("retrieval", map[string]any{
 		"returned_doc_count": len(ids),
 		"empty":              len(ids) == 0,
 		"signals": map[string]any{
-			"topk":          topK,
-			"period_bucket": periodBucket,
+			"topk":           topK,
+			"period_bucket":  periodBucket,
+			"disliked_count": len(dislikedIDs),
 		},
 	}))
 	return ids, nil
+}
+
+func (a *RecoAgent) loadDislikedArticleIDs(ctx context.Context, userID string) ([]string, error) {
+	if a == nil || a.sourceLikeRepo == nil {
+		return nil, nil
+	}
+	return a.sourceLikeRepo.ListDislikedArticleIDs(ctx, userID, 1000)
+}
+
+func filterExcludedArticleIDs(articleIDs []string, excludedArticleIDs []string) []string {
+	if len(articleIDs) == 0 || len(excludedArticleIDs) == 0 {
+		return articleIDs
+	}
+
+	excluded := make(map[string]struct{}, len(excludedArticleIDs))
+	for _, articleID := range excludedArticleIDs {
+		articleID = strings.TrimSpace(articleID)
+		if articleID == "" {
+			continue
+		}
+		excluded[articleID] = struct{}{}
+	}
+	if len(excluded) == 0 {
+		return articleIDs
+	}
+
+	out := make([]string, 0, len(articleIDs))
+	for _, articleID := range articleIDs {
+		articleID = strings.TrimSpace(articleID)
+		if articleID == "" {
+			continue
+		}
+		if _, ok := excluded[articleID]; ok {
+			continue
+		}
+		out = append(out, articleID)
+	}
+	return out
+}
+
+func intersectArticleIDs(articleIDs []string, excludedArticleIDs []string) []string {
+	if len(articleIDs) == 0 || len(excludedArticleIDs) == 0 {
+		return nil
+	}
+
+	excluded := make(map[string]struct{}, len(excludedArticleIDs))
+	for _, articleID := range excludedArticleIDs {
+		articleID = strings.TrimSpace(articleID)
+		if articleID == "" {
+			continue
+		}
+		excluded[articleID] = struct{}{}
+	}
+	if len(excluded) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(articleIDs))
+	seen := make(map[string]struct{}, len(articleIDs))
+	for _, articleID := range articleIDs {
+		articleID = strings.TrimSpace(articleID)
+		if articleID == "" {
+			continue
+		}
+		if _, ok := excluded[articleID]; !ok {
+			continue
+		}
+		if _, ok := seen[articleID]; ok {
+			continue
+		}
+		seen[articleID] = struct{}{}
+		out = append(out, articleID)
+	}
+	return out
+}
+
+func poolItemsToArticleIDs(items []storage.PoolItem) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		articleID := strings.TrimSpace(item.ArticleID)
+		if articleID == "" {
+			continue
+		}
+		out = append(out, articleID)
+	}
+	return out
 }
 
 // =========================
