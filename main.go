@@ -63,6 +63,7 @@ func main() {
 	sourceDB := infra.SourcePostgres()
 	sourceArticleRepo := storage.NewSourceArticleRepo(sourceDB)
 	sourceUserRepo := storage.NewSourceUserRepo(sourceDB)
+	sourceLikeRepo := storage.NewSourceLikeRepo(sourceDB)
 
 	signChan := make(chan os.Signal, 1)
 	signal.Notify(signChan, syscall.SIGINT, syscall.SIGTERM)
@@ -74,7 +75,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	refillRunner := poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, reg)
+	refillRunner := poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, sourceLikeRepo, reg)
 	refillDispatcher := poolrefill.NewAsyncPoolRefillDispatcher(ctx, refillRunner, config.Cfg.Pools.Async)
 
 	if err := kafka.Start(ctx, createKafkaMessageHandler(reg, articleRepo)); err != nil {
@@ -85,12 +86,20 @@ func main() {
 	}
 
 	aiClient := infra.NewAIClient()
-	recoAgent := agent.NewRecoAgent(aiClient, reg, poolRepo, memoryRepo, memoryChunkRepo, refillDispatcher)
+	recoAgent := agent.NewRecoAgent(aiClient, reg, poolRepo, memoryRepo, memoryChunkRepo, sourceLikeRepo, refillDispatcher)
 	contentSearchAgent := agent.NewContentSearchAgent(aiClient, reg, articleRepo)
 	titleSearchService := searchsvc.NewArticleTitleSearchService(sourceArticleRepo)
 	authorSearchService := searchsvc.NewAuthorNameSearchService(sourceUserRepo)
+	onboardingQuestionnaireService := searchsvc.NewOnboardingQuestionnaireService(memoryRepo, memoryChunkRepo)
 
-	r := router.NewRouter(reg, recoAgent, contentSearchAgent, titleSearchService, authorSearchService)
+	r := router.NewRouter(
+		reg,
+		recoAgent,
+		contentSearchAgent,
+		titleSearchService,
+		authorSearchService,
+		onboardingQuestionnaireService,
+	)
 	srv := &http.Server{
 		Addr:    config.Cfg.Services.HTTPAddr + ":" + config.Cfg.Services.HTTPPort,
 		Handler: r,
