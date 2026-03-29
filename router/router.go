@@ -21,6 +21,7 @@ func NewRouter(
 	contentSearch *agent.ContentSearchAgent,
 	titleSearch *searchsvc.ArticleTitleSearchService,
 	authorSearch *searchsvc.AuthorNameSearchService,
+	onboardingQuestionnaire *searchsvc.OnboardingQuestionnaireService,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
@@ -113,6 +114,28 @@ func NewRouter(
 				return
 			}
 			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
+			return
+		}
+		OK(c, resp)
+	})
+
+	r.POST("/api/v1/onboarding/questionnaire", func(c *gin.Context) {
+		var req searchsvc.OnboardingQuestionnaireRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
+			return
+		}
+
+		resp, err := onboardingQuestionnaire.Submit(c.Request.Context(), req)
+		if err != nil {
+			switch {
+			case errors.Is(err, searchsvc.ErrOnboardingMemoryUnavailable):
+				Fail(c, http.StatusServiceUnavailable, middleware.StatusError, err.Error(), resp.TraceID)
+			case errors.Is(err, searchsvc.ErrInvalidOnboardingAnswer):
+				Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), resp.TraceID)
+			default:
+				Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
+			}
 			return
 		}
 		OK(c, resp)
