@@ -18,16 +18,23 @@ import (
 )
 
 type PoolRefillExecutionRunner struct {
-	poolRepo    *storage.PoolRepo
-	articleRepo *storage.ArticleRepo
-	reranker    searchsvc.RerankInvoker
+	poolRepo       *storage.PoolRepo
+	articleRepo    *storage.ArticleRepo
+	sourceLikeRepo *storage.SourceLikeRepo
+	reranker       searchsvc.RerankInvoker
 }
 
-func NewPoolRefillExecutionRunner(poolRepo *storage.PoolRepo, articleRepo *storage.ArticleRepo, reranker searchsvc.RerankInvoker) *PoolRefillExecutionRunner {
+func NewPoolRefillExecutionRunner(
+	poolRepo *storage.PoolRepo,
+	articleRepo *storage.ArticleRepo,
+	sourceLikeRepo *storage.SourceLikeRepo,
+	reranker searchsvc.RerankInvoker,
+) *PoolRefillExecutionRunner {
 	return &PoolRefillExecutionRunner{
-		poolRepo:    poolRepo,
-		articleRepo: articleRepo,
-		reranker:    reranker,
+		poolRepo:       poolRepo,
+		articleRepo:    articleRepo,
+		sourceLikeRepo: sourceLikeRepo,
+		reranker:       reranker,
 	}
 }
 
@@ -59,10 +66,11 @@ func (r *PoolRefillExecutionRunner) Run(ctx context.Context, job types.PoolRefil
 	}
 
 	ranker := searchsvc.NewPrecisionRanker(r.articleRepo, r.reranker)
+	excludedArticleIDs := r.loadExcludedArticleIDs(ctx, job.UserID)
 	successes := make([]searchsvc.QueryMatchResult, 0, len(job.QueryTexts))
 	failedQueries := 0
 	for _, queryText := range job.QueryTexts {
-		result, err := r.runSingleQuery(ctx, ranker, strings.TrimSpace(queryText), matchOpt)
+		result, err := r.runSingleQuery(ctx, ranker, strings.TrimSpace(queryText), matchOpt, excludedArticleIDs)
 		if err != nil {
 			failedQueries++
 			zlog.L().Warn("pool refill query failed",
@@ -128,14 +136,15 @@ func (r *PoolRefillExecutionRunner) Run(ctx context.Context, job types.PoolRefil
 	_, sp := zlog.StartSpan(ctx, "side_effect.pool_refill")
 	sp.End(zlog.StatusOK, nil,
 		zap.Any("side_effect", map[string]any{
-			"type":            "pool_refill",
-			"pool_type":       job.PoolType,
-			"period_bucket":   job.PeriodBucket,
-			"inserted":        len(items),
-			"considered":      considered,
-			"pool_size_after": sizeAfter,
-			"query_count":     len(job.QueryTexts),
-			"failed_queries":  failedQueries,
+			"type":              "pool_refill",
+			"pool_type":         job.PoolType,
+			"period_bucket":     job.PeriodBucket,
+			"inserted":          len(items),
+			"considered":        considered,
+			"pool_size_after":   sizeAfter,
+			"query_count":       len(job.QueryTexts),
+			"failed_queries":    failedQueries,
+			"excluded_articles": len(excludedArticleIDs),
 		}),
 		zap.Any("retrieval", map[string]any{
 			"returned_doc_count":     len(merged.ArticleIDs),
@@ -168,6 +177,7 @@ func (r *PoolRefillExecutionRunner) runSingleQuery(
 	ranker *searchsvc.PrecisionRanker,
 	queryText string,
 	opt searchsvc.QueryMatchOptions,
+	excludedArticleIDs []string,
 ) (searchsvc.QueryMatchResult, error) {
 	if strings.TrimSpace(queryText) == "" {
 		return searchsvc.QueryMatchResult{}, errors.New("query_text cannot be empty")
@@ -180,77 +190,30 @@ func (r *PoolRefillExecutionRunner) runSingleQuery(
 		return searchsvc.QueryMatchResult{}, err
 	}
 
+	opt.QueryText = queryText
+	opt.ExcludedArticleIDs = append([]string(nil), excludedArticleIDs...)
+
 	stageStart = time.Now()
-	coarseCandidates, err := ranker.RecallCoarseArticleCandidates(ctx, vec, opt.CoarseRecallK)
-	metrics.PoolRefillStageDurationSeconds.WithLabelValues("coarse_recall").Observe(time.Since(stageStart).Seconds())
+	result, err := ranker.MatchQuery(ctx, queryText, vec, opt)
+	metrics.PoolRefillStageDurationSeconds.WithLabelValues("match_query").Observe(time.Since(stageStart).Seconds())
 	if err != nil {
 		return searchsvc.QueryMatchResult{}, err
 	}
-
-	stageStart = time.Now()
-	coarseCandidates = searchsvc.BoostCoarseCandidatesByKeywords(coarseCandidates, queryText, opt.QueryKeywords)
-	articleIDs, coarseRankByArticle := searchsvc.PickArticleCandidates(coarseCandidates, opt.MaxArticleCandidates)
-	metrics.PoolRefillStageDurationSeconds.WithLabelValues("coarse_rank").Observe(time.Since(stageStart).Seconds())
-
-	result := searchsvc.QueryMatchResult{
-		CoarseCandidates:    coarseCandidates,
-		ArticleIDs:          articleIDs,
-		CoarseRankByArticle: coarseRankByArticle,
-		VectorScoreByChunk:  map[string]float32{},
-		FineRankByChunk:     map[string]int{},
-		SupportByArticle:    map[string]int{},
-	}
-	if len(articleIDs) == 0 {
-		return result, nil
-	}
-
-	stageStart = time.Now()
-	fineCandidates, err := ranker.RecallFineCandidatesByArticleIDs(ctx, vec, articleIDs, opt.FineRecallK)
-	metrics.PoolRefillStageDurationSeconds.WithLabelValues("fine_recall").Observe(time.Since(stageStart).Seconds())
-	if err != nil {
-		return result, err
-	}
-	result.FineCandidates = fineCandidates
-	if len(fineCandidates) == 0 {
-		return result, nil
-	}
-
-	candidateIDs := make([]string, 0, len(fineCandidates))
-	for idx, candidate := range fineCandidates {
-		chunkID := strings.TrimSpace(candidate.ChunkID)
-		if chunkID == "" {
-			chunkID = strings.TrimSpace(candidate.ID)
-		}
-		if chunkID == "" {
-			continue
-		}
-		candidateIDs = append(candidateIDs, chunkID)
-		result.VectorScoreByChunk[chunkID] = candidate.VectorScore
-		result.FineRankByChunk[chunkID] = idx + 1
-		if articleID := strings.TrimSpace(candidate.ArticleID); articleID != "" {
-			result.SupportByArticle[articleID]++
-		}
-	}
-	if len(candidateIDs) == 0 {
-		return result, nil
-	}
-
-	stageStart = time.Now()
-	rerankedHits, skillMeta, err := ranker.RerankCandidates(ctx, queryText, candidateIDs, opt.RerankTopK)
-	metrics.PoolRefillStageDurationSeconds.WithLabelValues("rerank").Observe(time.Since(stageStart).Seconds())
-	if err != nil {
-		return result, err
-	}
-
-	result.SkillMeta = skillMeta
-	result.PassedHits = searchsvc.FilterPassedHits(
-		rerankedHits,
-		result.CoarseRankByArticle,
-		result.FineRankByChunk,
-		result.SupportByArticle,
-		opt.MinRerankScore,
-		opt.MinPassScore,
-		opt.SupportBonus,
-	)
 	return result, nil
+}
+
+func (r *PoolRefillExecutionRunner) loadExcludedArticleIDs(ctx context.Context, userID string) []string {
+	if r == nil || r.sourceLikeRepo == nil {
+		return nil
+	}
+
+	articleIDs, err := r.sourceLikeRepo.ListDislikedArticleIDs(ctx, userID, 1000)
+	if err != nil {
+		zlog.L().Warn("load disliked article ids failed",
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return articleIDs
 }
