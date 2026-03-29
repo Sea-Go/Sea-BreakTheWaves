@@ -75,9 +75,14 @@ type ToolPoolRefill struct {
 	runner poolrefill.PoolRefillRunner
 }
 
-func NewPoolRefill(poolRepo *storage.PoolRepo, articleRepo *storage.ArticleRepo, reranker searchsvc.RerankInvoker) *ToolPoolRefill {
+func NewPoolRefill(
+	poolRepo *storage.PoolRepo,
+	articleRepo *storage.ArticleRepo,
+	sourceLikeRepo *storage.SourceLikeRepo,
+	reranker searchsvc.RerankInvoker,
+) *ToolPoolRefill {
 	return &ToolPoolRefill{
-		runner: poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, reranker),
+		runner: poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, sourceLikeRepo, reranker),
 	}
 }
 
