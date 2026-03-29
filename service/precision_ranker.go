@@ -67,6 +67,7 @@ type QueryMatchOptions struct {
 	RerankTopK           int
 	QueryText            string
 	QueryKeywords        []string
+	ExcludedArticleIDs   []string
 }
 
 type QueryMatchResult struct {
@@ -105,7 +106,9 @@ func (r *PrecisionRanker) MatchQuery(ctx context.Context, semanticQuery string, 
 		return QueryMatchResult{}, errors.New("Skill Registry 未注入")
 	}
 
-	coarseCandidates, err := r.RecallCoarseArticleCandidates(ctx, vec, opt.CoarseRecallK)
+	coarseCandidates, err := r.RecallCoarseArticleCandidatesWithOptions(ctx, vec, opt.CoarseRecallK, RecallSearchOptions{
+		ExcludedArticleIDs: opt.ExcludedArticleIDs,
+	})
 	if err != nil {
 		return QueryMatchResult{}, err
 	}
@@ -124,7 +127,9 @@ func (r *PrecisionRanker) MatchQuery(ctx context.Context, semanticQuery string, 
 		return result, nil
 	}
 
-	fineCandidates, err := r.RecallFineCandidatesByArticleIDs(ctx, vec, articleIDs, opt.FineRecallK)
+	fineCandidates, err := r.RecallFineCandidatesByArticleIDsWithOptions(ctx, vec, articleIDs, opt.FineRecallK, RecallSearchOptions{
+		ExcludedArticleIDs: opt.ExcludedArticleIDs,
+	})
 	if err != nil {
 		return result, err
 	}
@@ -179,6 +184,15 @@ func (r *PrecisionRanker) MatchQuery(ctx context.Context, semanticQuery string, 
 }
 
 func (r *PrecisionRanker) RecallCoarseArticleCandidates(ctx context.Context, vec []float32, limit int) ([]CoarseArticleCandidate, error) {
+	return r.RecallCoarseArticleCandidatesWithOptions(ctx, vec, limit, RecallSearchOptions{})
+}
+
+func (r *PrecisionRanker) RecallCoarseArticleCandidatesWithOptions(
+	ctx context.Context,
+	vec []float32,
+	limit int,
+	recallOpt RecallSearchOptions,
+) ([]CoarseArticleCandidate, error) {
 	cli := infra.Milvus()
 	if cli == nil {
 		return nil, errors.New("Milvus 客户端未初始化")
@@ -192,6 +206,10 @@ func (r *PrecisionRanker) RecallCoarseArticleCandidates(ctx context.Context, vec
 		limit,
 		[]entity.Vector{entity.FloatVector(vec)},
 	).WithANNSField("vector").WithOutputFields("article_id", "tags")
+
+	if filter := buildMilvusArticleFilterExpr(nil, recallOpt.ExcludedArticleIDs); filter != "" {
+		opt = opt.WithFilter(filter)
+	}
 
 	rs, err := cli.Search(ctx, opt)
 	if err != nil {
@@ -235,6 +253,16 @@ func (r *PrecisionRanker) RecallCoarseArticleCandidates(ctx context.Context, vec
 }
 
 func (r *PrecisionRanker) RecallFineCandidatesByArticleIDs(ctx context.Context, vec []float32, articleIDs []string, limit int) ([]VectorCandidate, error) {
+	return r.RecallFineCandidatesByArticleIDsWithOptions(ctx, vec, articleIDs, limit, RecallSearchOptions{})
+}
+
+func (r *PrecisionRanker) RecallFineCandidatesByArticleIDsWithOptions(
+	ctx context.Context,
+	vec []float32,
+	articleIDs []string,
+	limit int,
+	recallOpt RecallSearchOptions,
+) ([]VectorCandidate, error) {
 	if len(articleIDs) == 0 {
 		return nil, nil
 	}
@@ -253,7 +281,7 @@ func (r *PrecisionRanker) RecallFineCandidatesByArticleIDs(ctx context.Context, 
 		[]entity.Vector{entity.FloatVector(vec)},
 	).WithANNSField("vector").WithOutputFields("article_id", "chunk_id", "h2")
 
-	if filter := buildVarCharInExpr("article_id", articleIDs); filter != "" {
+	if filter := buildMilvusArticleFilterExpr(articleIDs, recallOpt.ExcludedArticleIDs); filter != "" {
 		opt = opt.WithFilter(filter)
 	}
 
