@@ -44,6 +44,13 @@ func SourcePostgresInit() error {
 	}
 
 	sourcePgDB = db
+
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer indexCancel()
+	if err := ensureSourceKeywordSearchIndexes(indexCtx, db); err != nil {
+		zlog.L().Warn("ensure source keyword search indexes failed", zap.Error(err))
+	}
+
 	zlog.L().Info("source postgres initialized")
 	return nil
 }
