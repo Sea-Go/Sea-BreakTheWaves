@@ -14,17 +14,14 @@ import (
 
 var pgDB *sql.DB
 
-// Postgres 返回全局 Postgres 连接池（在 PostgresInit 成功后可用）。
 func Postgres() *sql.DB {
 	return pgDB
 }
 
-// PostgresInit 初始化 Postgres：连接池 + 必要表结构（用于 demo / 本地快速启动）。
-// 生产环境建议把建表迁移交给 migration 工具，这里保留“开箱即用”能力。
 func PostgresInit() error {
 	db, err := sql.Open("pgx", config.Cfg.Postgres.DSN)
 	if err != nil {
-		zlog.L().Error("连接 Postgres 失败", zap.Error(err))
+		zlog.L().Error("postgres connect failed", zap.Error(err))
 		return err
 	}
 
@@ -41,7 +38,7 @@ func PostgresInit() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		zlog.L().Error("Postgres Ping 失败", zap.Error(err))
+		zlog.L().Error("postgres ping failed", zap.Error(err))
 		return err
 	}
 
@@ -51,7 +48,13 @@ func PostgresInit() error {
 		return err
 	}
 
-	zlog.L().Info("Postgres 初始化完成")
+	indexCtx, indexCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer indexCancel()
+	if err := ensureKeywordSearchIndexes(indexCtx, db); err != nil {
+		zlog.L().Warn("ensure local keyword search indexes failed", zap.Error(err))
+	}
+
+	zlog.L().Info("postgres initialized")
 	return nil
 }
 
@@ -93,7 +96,6 @@ func ensurePGSchema(ctx context.Context, db *sql.DB) error {
 			preference REAL NOT NULL DEFAULT 0,
 			ts TIMESTAMPTZ NOT NULL DEFAULT now()
 		);`,
-		// 兼容：若旧表没有 history_id，则补列并回填，避免 Scan NULL。
 		`ALTER TABLE user_rec_history ADD COLUMN IF NOT EXISTS history_id TEXT;`,
 		`UPDATE user_rec_history
 			SET history_id = user_id || '|' || (EXTRACT(EPOCH FROM ts) * 1000000000)::bigint || '|' || article_id
@@ -115,7 +117,6 @@ func ensurePGSchema(ctx context.Context, db *sql.DB) error {
 			period_bucket TEXT NOT NULL DEFAULT '',
 			chunk_index INT NOT NULL,
 			content TEXT NOT NULL,
-			-- 向量索引统一由 Milvus 负责；PG 仅保留内容与可审计字段
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			PRIMARY KEY (user_id, memory_type, period_bucket, chunk_index)
 		);`,
@@ -123,7 +124,7 @@ func ensurePGSchema(ctx context.Context, db *sql.DB) error {
 
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {
-			zlog.L().Error("初始化表结构失败", zap.Error(err), zap.String("sql", s))
+			zlog.L().Error("ensure postgres schema failed", zap.Error(err), zap.String("sql", s))
 			return err
 		}
 	}
