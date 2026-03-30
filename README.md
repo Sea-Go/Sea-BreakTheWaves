@@ -493,7 +493,70 @@ Content-Type: application/json
 
 ---
 
-### 6. 查看已注册工具
+### 6. 文章标题检索
+
+提供根据部分或完整文章标题进行匹配的能力，不依赖大模型，基于元数据查询。
+
+```http
+POST /api/v1/search/title
+Content-Type: application/json
+```
+
+示例：
+
+```json
+{
+  "query": "海边旅行"
+}
+```
+
+---
+
+### 7. 作者名检索
+
+提供根据部分或完整作者名称匹配并返回对应内容的能力，不依赖大模型，基于元数据查询。
+
+```http
+POST /api/v1/search/authors
+Content-Type: application/json
+```
+
+示例：
+
+```json
+{
+  "query": "安东尼"
+}
+```
+
+---
+
+### 8. 新用户问卷提交
+
+用于获取新用户的冷启动初始偏好，并作为初始偏好沉淀进用户的长期记忆中。
+
+```http
+POST /api/v1/onboarding/questionnaire
+Content-Type: application/json
+```
+
+示例：
+
+```json
+{
+  "user_id": "u_new",
+  "answers": [
+    {
+      "question_id": "q1",
+      "selected_options": ["科技", "旅游"]
+    }
+  ]
+}
+```
+
+---
+
+### 9. 查看已注册工具
 
 ```http
 GET /api/v1/tools

@@ -16,3 +16,5 @@ ChatTest/log/
 config.yaml
 breakthewaves
 /.idea
+.gocache/
+.runtime_pprof/
