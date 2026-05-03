@@ -1,6 +1,7 @@
 package main
 
 import (
+	"agent_v2/config"
 	"context"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -79,7 +80,9 @@ func main() {
 		log.Fatalf("failed to create app start counter: %v", err)
 	}
 	startCounter.Add(ctx, 1)
-
+	if err := config.Init(); err != nil {
+		log.Fatalf("初始化配置失败: %v", err)
+	}
 	// 5. 你的 Agent / Runner 初始化与执行代码放这里。
 	//
 	// ag := llmagent.New(...)
