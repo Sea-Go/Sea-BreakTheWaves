@@ -10,8 +10,8 @@ RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --chmod=755 breakthewaves /app/breakthewaves
-COPY config.yaml /app/config.yaml
+COPY --chmod=755 recommendation/breakthewaves /app/breakthewaves
+COPY recommendation/config.yaml /app/config.yaml
 
 EXPOSE 20721
 

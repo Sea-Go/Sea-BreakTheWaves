@@ -10,7 +10,7 @@ start() {
   cd "$WORKDIR" || exit 1
 
   echo "==> docker build"
-  docker build -t "$IMAGE_NAME" .
+  docker build -f recommendation/dockerfile -t "$IMAGE_NAME" .
 
   echo "==> remove old container"
   if docker ps -a --format '{{.Names}}' | grep -q "^${APP_NAME}$"; then

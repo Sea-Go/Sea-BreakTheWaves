@@ -7,6 +7,9 @@ log/
 ChatTest/log/
 *.log
 
+# Docker 数据卷
+volumes/
+
 # 本地临时文件
 *.tmp
 *.swp
