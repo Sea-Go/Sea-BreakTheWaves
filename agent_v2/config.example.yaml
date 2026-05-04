@@ -1,0 +1,27 @@
+ali:
+  baseurl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  analysis_model: "deepseek-v4-pro"
+  test_model: "kimi-k2.6"
+  apikey: "YOUR_LLM_API_KEY"
+postgres:
+  dsn: "postgres://postgres:postgres@127.0.0.1:15432/trpc_agent?sslmode=disable&TimeZone=Asia/Shanghai"
+  database: "trpc_agent_go"
+agent:
+  app_name: "BreakTheWaves"
+  name: "chat-agent"
+  session_table_prefix: "chat_agent"
+  session_ttl: "24h"
+  async_persister_num: 4
+  max_history_runs: 20
+  preload_session_recall: 0
+  preload_session_recall_min_score: 0.60
+  read_header_timeout: "5s"
+amap:
+  baseurl: "https://restapi.amap.com/v4"
+  api_key: "AMAP_MAPS_API_KEY"
+  free_only: true
+  output: "JSON"
+  timeout_seconds: 10
+  retry:
+    max_retries: 2
+    backoff_seconds: 0.5
