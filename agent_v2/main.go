@@ -1,8 +1,10 @@
 package main
 
 import (
+	"agent_v2/agent"
 	"agent_v2/config"
 	"context"
+	"net/http"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -16,11 +18,11 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// 1. Logging：先设置日志级别。
+	// 1. Logging
 	log.SetLevel(log.LevelInfo)
 	log.Info("agent app starting")
 
-	// 2. Metrics：推荐用 OTLP HTTP，默认 Collector 端口通常是 4318。
+	// 2. Metrics：OTLP HTTP → OpenTelemetry Collector
 	mp, err := ametric.NewMeterProvider(
 		ctx,
 		ametric.WithEndpoint("localhost:4318"),
@@ -41,7 +43,7 @@ func main() {
 		}
 	}()
 
-	// 3. Tracing：推荐用 OTLP gRPC，默认 Collector 端口通常是 4317。
+	// 3. Tracing：OTLP gRPC → OpenTelemetry Collector
 	traceClean, err := atrace.Start(
 		ctx,
 		atrace.WithEndpoint("localhost:4317"),
@@ -59,7 +61,7 @@ func main() {
 		}
 	}()
 
-	// 4. 可选：给 main 启动过程打一个 span 和一个 counter，方便确认链路和指标已接通。
+	// 4. 给 main 启动过程打一个 span 和一个 counter
 	ctx, span := atrace.Tracer.Start(
 		ctx,
 		"app.main",
@@ -80,13 +82,21 @@ func main() {
 		log.Fatalf("failed to create app start counter: %v", err)
 	}
 	startCounter.Add(ctx, 1)
+
 	if err := config.Init(); err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
 	}
-	// 5. 你的 Agent / Runner 初始化与执行代码放这里。
-	//
-	// ag := llmagent.New(...)
-	// r := runner.NewRunner("your-agent-app", ag)
-	// events, err := r.Run(ctx, userID, sessionID, model.NewUserMessage("..."))
-	// ...
+	handler, cleanup, err := agent.NewTravelPlanningAGUIHandler()
+	if err != nil {
+		log.Fatalf("create amap agui handler failed: %v", err)
+	}
+	defer cleanup()
+
+	addr := "127.0.0.1:8080"
+
+	log.Info("Amap AG-UI server listening on http://%s/agui", addr)
+
+	if err := http.ListenAndServe(addr, handler); err != nil {
+		log.Fatalf("server stopped with error: %v", err)
+	}
 }

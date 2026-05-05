@@ -233,8 +233,24 @@ services:
       - "36832:6832/udp"   # agent thrift binary
       - "14268:14268"     # collector http
       - "14250:14250"     # collector grpc
-      - "34317:4317"       # OTLP gRPC
-      - "34318:4318"       # OTLP HTTP
+      # OTLP ports are internal only — otel-collector forwards traces here
+      - "4317"
+      - "4318"
+    restart: unless-stopped
+
+  # --- OpenTelemetry Collector ---
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (app → collector)
+      - "4318:4318"   # OTLP HTTP (app → collector)
+      - "8889:8889"   # Prometheus metrics exporter (Prometheus scrapes here)
+    depends_on:
+      - jaeger
     restart: unless-stopped
 
   # --- Host metrics (node-exporter) ---

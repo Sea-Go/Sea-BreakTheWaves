@@ -8,6 +8,11 @@ scrape_configs:
     static_configs:
       - targets: ["prometheus:9090"]
 
+  - job_name: "otel-collector"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
   # --- app services ---
   # Sea-CloudWeAllKnow service (your Go HTTP server)
   # Note: this assumes the service is reachable from the prometheus container.
