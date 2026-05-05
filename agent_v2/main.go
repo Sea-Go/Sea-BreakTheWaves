@@ -86,7 +86,7 @@ func main() {
 	if err := config.Init(); err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
 	}
-	handler, cleanup, err := agent.NewAmapAGUIHandler()
+	handler, cleanup, err := agent.NewTravelPlanningAGUIHandler()
 	if err != nil {
 		log.Fatalf("create amap agui handler failed: %v", err)
 	}

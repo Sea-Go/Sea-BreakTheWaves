@@ -85,7 +85,7 @@ func (r *zhihuRuntime) Search(ctx context.Context, in ZhihuSearchInput) (ZhihuSe
 
 	cmd := exec.CommandContext(
 		ctx,
-		r.pythonCommand,
+		r.resolvePythonCommand(),
 		zhihuScriptPath,
 		"--query",
 		query,
@@ -140,4 +140,20 @@ func clampZhihuSearchCount(count int) int {
 		return 10
 	}
 	return count
+}
+
+func (r *zhihuRuntime) resolvePythonCommand() string {
+	command := strings.TrimSpace(r.pythonCommand)
+	if command == "" {
+		command = defaultPythonCommand
+	}
+	if resolved, err := exec.LookPath(command); err == nil {
+		return resolved
+	}
+	if command == defaultPythonCommand {
+		if resolved, err := exec.LookPath("python3"); err == nil {
+			return resolved
+		}
+	}
+	return command
 }

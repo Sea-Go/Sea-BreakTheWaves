@@ -292,18 +292,16 @@ func TestAmapToolSetDeclarations(t *testing.T) {
 	}
 }
 
-func TestAmapToolsReportMissingEnvKey(t *testing.T) {
-	t.Setenv("AMAP_EMPTY_TEST_KEY", "")
+func TestAmapToolsRequireAPIKey(t *testing.T) {
 	tools := toolMap(NewAmapTools(config.AmapConfig{
 		BaseURL: "https://example.com",
-		APIKey:  "AMAP_EMPTY_TEST_KEY",
 	}))
 	_, err := callToolWithError(context.Background(), tools["amap_geocode"], AmapGeocodeInput{Address: "上海外滩"})
 	if err == nil {
 		t.Fatal("expected missing key error")
 	}
-	if !strings.Contains(err.Error(), "AMAP_EMPTY_TEST_KEY") {
-		t.Fatalf("error %q should mention env key source", err.Error())
+	if !strings.Contains(err.Error(), "amap.api_key") {
+		t.Fatalf("error %q should mention amap.api_key", err.Error())
 	}
 }
 

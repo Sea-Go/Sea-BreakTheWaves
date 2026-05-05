@@ -281,9 +281,9 @@ func (r *amapRuntime) buildURL(endpoint string, q url.Values) (*url.URL, error) 
 }
 
 func (r *amapRuntime) injectCommonQuery(q url.Values, includeOutput bool) error {
-	key := r.cfg.ResolvedAPIKey()
+	key := strings.TrimSpace(r.cfg.APIKey)
 	if key == "" {
-		return fmt.Errorf("高德 API Key 为空，请配置 %s", r.cfg.APIKeySource())
+		return fmt.Errorf("高德 API Key 为空，请配置 amap.api_key")
 	}
 	q.Set("key", key)
 	if includeOutput {

@@ -10,7 +10,6 @@ func TestLoadSyncsYAMLConfig(t *testing.T) {
 	oldCfg := Cfg
 	defer func() { Cfg = oldCfg }()
 
-	t.Setenv("AMAP_TEST_KEY", "resolved-amap-key")
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(configPath, []byte(`
 ali:
@@ -33,7 +32,7 @@ agent:
   read_header_timeout: "5s"
 amap:
   baseurl: "https://amap.example/v4"
-  api_key: "AMAP_TEST_KEY"
+  api_key: "literal-amap-key"
   free_only: true
   output: "JSON"
   timeout_seconds: 3
@@ -55,31 +54,23 @@ amap:
 	if Cfg.Amap.BaseURL != "https://amap.example/v4" {
 		t.Fatalf("amap.baseurl not loaded, got %q", Cfg.Amap.BaseURL)
 	}
-	if Cfg.Amap.ResolvedAPIKey() != "resolved-amap-key" {
-		t.Fatalf("ResolvedAPIKey() = %q", Cfg.Amap.ResolvedAPIKey())
+	if Cfg.Amap.APIKey != "literal-amap-key" {
+		t.Fatalf("amap.api_key not loaded, got %q", Cfg.Amap.APIKey)
 	}
 	if got := Cfg.Amap.WithDefaults().Retry.BackoffSeconds; got != 0.2 {
 		t.Fatalf("retry.backoff_seconds = %v", got)
 	}
 }
 
-func TestAmapConfigDefaultsAndEnvKeySource(t *testing.T) {
-	cfg := AmapConfig{APIKey: "AMAP_MISSING_KEY"}.WithDefaults()
+func TestAmapConfigDefaults(t *testing.T) {
+	cfg := AmapConfig{APIKey: "literal-key"}.WithDefaults()
 	if cfg.BaseURL != "" {
 		t.Fatalf("default BaseURL = %q", cfg.BaseURL)
 	}
 	if cfg.Output != "JSON" {
 		t.Fatalf("default Output = %q", cfg.Output)
 	}
-	if cfg.ResolvedAPIKey() != "" {
-		t.Fatalf("missing env-style api key should resolve empty")
-	}
-	if got := cfg.APIKeySource(); got != "environment variable AMAP_MISSING_KEY" {
-		t.Fatalf("APIKeySource() = %q", got)
-	}
-
-	literal := AmapConfig{APIKey: "literal-key"}.WithDefaults()
-	if literal.ResolvedAPIKey() != "literal-key" {
-		t.Fatalf("literal key resolved to %q", literal.ResolvedAPIKey())
+	if cfg.APIKey != "literal-key" {
+		t.Fatalf("api key changed to %q", cfg.APIKey)
 	}
 }

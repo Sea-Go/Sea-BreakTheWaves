@@ -45,16 +45,13 @@ func main() {
 func run(configPath, outPath string, timeout time.Duration) error {
 	_ = config.Load(configPath)
 	cfg := config.Cfg.Amap.WithDefaults()
-	if strings.TrimSpace(cfg.APIKey) == "" {
-		cfg.APIKey = "AMAP_MAPS_API_KEY"
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	var results []checkResult
-	if cfg.ResolvedAPIKey() == "" {
-		results = skippedResults("缺少 " + cfg.APIKeySource() + "，未发起真实高德请求")
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		results = skippedResults("缺少 amap.api_key，未发起真实高德请求")
 		return writeReport(outPath, cfg, false, results)
 	}
 
@@ -346,11 +343,11 @@ func writeReport(outPath string, cfg config.AmapConfig, attempted bool, results 
 
 	b.WriteString("## 本次运行\n\n")
 	b.WriteString(fmt.Sprintf("- 运行时间：%s\n", now))
-	b.WriteString(fmt.Sprintf("- 配置文件中的高德 key 来源：`%s`\n", cfg.APIKeySource()))
+	b.WriteString("- 配置文件中的高德 key 来源：`amap.api_key`\n")
 	b.WriteString(fmt.Sprintf("- baseurl：`%s`\n", cfg.BaseURL))
 	b.WriteString(fmt.Sprintf("- timeout_seconds：`%d`\n", cfg.TimeoutSeconds))
 	b.WriteString(fmt.Sprintf("- retry.max_retries：`%d`\n", cfg.Retry.MaxRetries))
-	b.WriteString("- 复跑命令：`AMAP_MAPS_API_KEY=你的高德Key go run ./cmd/amap_live_check -out doc/amap_tools_live_check.md`\n\n")
+	b.WriteString("- 复跑命令：`go run ./cmd/amap_live_check -out doc/amap_tools_live_check.md`\n\n")
 
 	b.WriteString("## 明细\n\n")
 	b.WriteString("| Tool | Endpoint | 状态 | 延迟(ms) | 证据 / 错误 |\n")
@@ -459,7 +456,7 @@ func escapeCell(value string) string {
 }
 
 func cfgLeakNeedle() string {
-	key := config.Cfg.Amap.ResolvedAPIKey()
+	key := strings.TrimSpace(config.Cfg.Amap.APIKey)
 	if key == "" {
 		return "\x00"
 	}

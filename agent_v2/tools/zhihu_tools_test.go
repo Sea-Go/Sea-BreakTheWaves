@@ -76,6 +76,20 @@ func TestClampZhihuSearchCount(t *testing.T) {
 	}
 }
 
+func TestResolveZhihuPythonCommandFallsBackToPython3(t *testing.T) {
+	binDir := t.TempDir()
+	python3Path := filepath.Join(binDir, "python3")
+	if err := os.WriteFile(python3Path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	runtime := &zhihuRuntime{pythonCommand: defaultPythonCommand}
+	if got := runtime.resolvePythonCommand(); got != python3Path {
+		t.Fatalf("resolvePythonCommand() = %q, want %q", got, python3Path)
+	}
+}
+
 func TestZhihuToolsCallable(t *testing.T) {
 	toolMap := map[string]agenttool.Tool{}
 	for _, tl := range NewZhihuTools(config.ZhihuConfig{}) {
