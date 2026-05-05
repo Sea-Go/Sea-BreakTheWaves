@@ -44,9 +44,62 @@ type AliConfig struct {
 }
 
 type ZhihuConfig struct {
-	AccessSecret   string `yaml:"access_secret"`
-	OpenAPIBaseURL string `yaml:"openapi_base_url"`
-	ZhihuSearchURL string `yaml:"zhihu_search_url"`
+	AccessSecret   string                   `yaml:"access_secret"`
+	OpenAPIBaseURL string                   `yaml:"openapi_base_url"`
+	ZhihuSearchURL string                   `yaml:"zhihu_search_url"`
+	GuideMaterial  ZhihuGuideMaterialConfig `yaml:"guide_material"`
+}
+
+type ZhihuGuideMaterialConfig struct {
+	QueryCount           int      `yaml:"query_count"`
+	PerQueryCount        int      `yaml:"per_query_count"`
+	ReviewPoolSize       int      `yaml:"review_pool_size"`
+	SelectedArticleCount int      `yaml:"selected_article_count"`
+	ArticleOnly          bool     `yaml:"article_only"`
+	AcceptScore          float64  `yaml:"accept_score"`
+	ReviewScore          float64  `yaml:"review_score"`
+	MinSummaryChars      int      `yaml:"min_summary_chars"`
+	MinVoteUpCount       int64    `yaml:"min_vote_up_count"`
+	MaxAgeDays           int      `yaml:"max_age_days"`
+	MustKeywords         []string `yaml:"must_keywords"`
+	ShouldKeywords       []string `yaml:"should_keywords"`
+	NegativeKeywords     []string `yaml:"negative_keywords"`
+	BlockedAuthors       []string `yaml:"blocked_authors"`
+	TrustedAuthors       []string `yaml:"trusted_authors"`
+}
+
+func (c ZhihuGuideMaterialConfig) WithDefaults() ZhihuGuideMaterialConfig {
+	if c.QueryCount <= 0 {
+		c.QueryCount = 10
+	}
+	if c.PerQueryCount <= 0 {
+		c.PerQueryCount = 10
+	}
+	if c.PerQueryCount > 10 {
+		c.PerQueryCount = 10
+	}
+	if c.ReviewPoolSize <= 0 {
+		c.ReviewPoolSize = 30
+	}
+	if c.SelectedArticleCount <= 0 {
+		c.SelectedArticleCount = 12
+	}
+	if c.AcceptScore <= 0 {
+		c.AcceptScore = 70
+	}
+	if c.ReviewScore <= 0 {
+		c.ReviewScore = 45
+	}
+	if c.MinSummaryChars <= 0 {
+		c.MinSummaryChars = 20
+	}
+	if c.MinVoteUpCount < 0 {
+		c.MinVoteUpCount = 0
+	}
+	if c.MaxAgeDays <= 0 {
+		c.MaxAgeDays = 1095
+	}
+	return c
 }
 
 type PostgresConfig struct {

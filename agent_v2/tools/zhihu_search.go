@@ -14,9 +14,6 @@ import (
 	"time"
 
 	"agent_v2/config"
-
-	"trpc.group/trpc-go/trpc-agent-go/tool"
-	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
 
 const (
@@ -62,13 +59,6 @@ func newZhihuRuntime(cfg config.ZhihuConfig) *zhihuRuntime {
 		pythonCommand: defaultPythonCommand,
 		timeout:       zhihuToolTimeout,
 	}
-}
-
-func newZhihuSearchTool(runtime *zhihuRuntime) tool.Tool {
-	return function.NewFunctionTool(runtime.Search,
-		function.WithName("zhihu_search"),
-		function.WithDescription("调用 zhihu-search skill 的脚本搜索知乎站内内容，返回标题、链接、作者、摘要、赞同数、评论数和编辑时间。"),
-	)
 }
 
 func (r *zhihuRuntime) Search(ctx context.Context, in ZhihuSearchInput) (ZhihuSearchResult, error) {

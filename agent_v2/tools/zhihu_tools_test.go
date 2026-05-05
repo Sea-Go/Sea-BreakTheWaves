@@ -46,9 +46,14 @@ func TestZhihuToolSetDeclaration(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("tool count = %d, want 1", len(got))
 	}
-	decl := got[0].Declaration()
-	if decl == nil || decl.Name != "zhihu_search" {
-		t.Fatalf("unexpected declaration: %+v", decl)
+	names := map[string]bool{}
+	for _, item := range got {
+		if item.Declaration() != nil {
+			names[item.Declaration().Name] = true
+		}
+	}
+	if !names["zhihu_guide_material"] || names["zhihu_search"] {
+		t.Fatalf("unexpected tool declarations: %+v", names)
 	}
 	if set.Name() != "zhihu" {
 		t.Fatalf("toolset name = %q, want zhihu", set.Name())
@@ -76,8 +81,11 @@ func TestZhihuToolsCallable(t *testing.T) {
 	for _, tl := range NewZhihuTools(config.ZhihuConfig{}) {
 		toolMap[tl.Declaration().Name] = tl
 	}
-	if _, ok := toolMap["zhihu_search"].(agenttool.CallableTool); !ok {
-		t.Fatalf("zhihu_search is not callable")
+	if _, ok := toolMap["zhihu_guide_material"].(agenttool.CallableTool); !ok {
+		t.Fatalf("zhihu_guide_material is not callable")
+	}
+	if _, ok := toolMap["zhihu_search"]; ok {
+		t.Fatalf("zhihu_search should not be exposed as an agent tool")
 	}
 }
 

@@ -47,6 +47,6 @@ func NewZhihuTools(cfg config.ZhihuConfig) []tool.Tool {
 
 func newZhihuTools(runtime *zhihuRuntime) []tool.Tool {
 	return []tool.Tool{
-		newZhihuSearchTool(runtime),
+		newZhihuGuideMaterialTool(runtime),
 	}
 }

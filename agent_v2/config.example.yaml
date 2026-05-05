@@ -33,3 +33,19 @@ zhihu:
   access_secret: ""
   openapi_base_url: "https://developer.zhihu.com"
   zhihu_search_url: ""
+  guide_material:
+    query_count: 10
+    per_query_count: 10
+    review_pool_size: 30
+    selected_article_count: 12
+    article_only: false
+    accept_score: 70
+    review_score: 45
+    min_summary_chars: 20
+    min_vote_up_count: 3
+    max_age_days: 1095
+    must_keywords: []
+    should_keywords: []
+    negative_keywords: []
+    blocked_authors: []
+    trusted_authors: []
