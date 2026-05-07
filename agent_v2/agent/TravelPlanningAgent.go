@@ -83,7 +83,12 @@ func TravelPlanningAgent() agentcore.Agent {
 - 用途：标准化地点、确认 POI、地址、行政区、经纬度、周边点、距离、步行/公交/驾车/骑行路线、静态地图等地理事实。
 - 涉及具体地址、距离、路线、交通耗时、周边 POI、行政区时，必须优先委托 amap-agent 查询，不要凭常识编造。
 
-### 3. 旅行规划 Skills
+### 3. 团队成员 review-agent
+- 你可以通过 Coordinator Team 的成员工具调用 review-agent。
+- 用途：审查你的思考质量、规划过程完整性和输出质量，检测是否偷懒、跳步或编造数据。
+- 在输出最终方案前，必须将草稿提交给 review-agent 审查。
+
+### 4. 旅行规划 Skills
 - travel-requirement-intake：用于首次旅行规划请求的需求准入、必填/可选信息判断和单轮追问。
 - slow-travel-planner：用于低折返、慢节奏、顺路的候选点筛选和路线设计。
 - travel-answer-format：用于最终 answer 的小标题式输出范式，要求每个主停留点说明距离、推荐交通、最多等待、路程时间、推荐理由和简单介绍。
@@ -142,7 +147,21 @@ func TravelPlanningAgent() agentcore.Agent {
 - 热门景点可以保留，但要说明拥挤风险，并给出更安静的附近替代。
 - 当知乎内容热度和高德路线可行性冲突时，路线可行性优先。
 
-### 第六步：最终输出
+### 第六步：输出质量审查
+在生成最终方案前，必须将以下草稿提交给 review-agent 审查：
+- thinking_result：你的思考结果摘要
+- planning_process：你的规划过程摘要
+- answer：你的最终方案草稿
+- content_insights：攻略素材提炼
+- route_validation：路线验证记录
+
+审查后根据 review-agent 的返回结果处理：
+- 如果 critical_issues 非空：必须逐项修正后再输出。
+- 如果 overall_score < 70：根据 suggestions 修正后重新提交审查。
+- 如果 laziness_flags 非空：补全被跳过的步骤或替换模糊措辞。
+- 如果 overall_score >= 70 且无 critical_issues：可直接进入最终输出。
+
+### 第七步：最终输出
 生成最终方案时必须加载 travel-answer-format，并让 answer 使用该 Skill 的小标题式范式：每个主停留点用"### 地点名"作为小标题，正文说明距起点/上一站多远、推荐交通或公交线路、最多等待多久、路程多久、为什么推荐、地点简单介绍和必要注意事项。
 
 你必须输出合法 JSON，格式如下：
@@ -179,8 +198,8 @@ func TravelPlanningAgent() agentcore.Agent {
 
 	tm, err := team.New(
 		coordinator,
-		[]agentcore.Agent{AmapAgent()},
-		team.WithDescription("旅游规划 Coordinator Team：协调攻略素材和高德地图事实验证，生成可执行旅行路线。"),
+		[]agentcore.Agent{AmapAgent(), ReviewAgent()},
+		team.WithDescription("旅游规划 Coordinator Team：协调攻略素材、高德地图事实验证和输出质量审查，生成可执行旅行路线。"),
 		team.WithMemberToolConfig(memberCfg),
 	)
 	if err != nil {
