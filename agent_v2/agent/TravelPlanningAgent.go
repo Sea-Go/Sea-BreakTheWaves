@@ -21,6 +21,8 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session/summary"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/team"
+
+	openaiopt "github.com/openai/openai-go/option"
 )
 
 func TravelPlanningAgent() agentcore.Agent {
@@ -32,6 +34,7 @@ func TravelPlanningAgent() agentcore.Agent {
 		config.Cfg.Ali.AnalysisModel,
 		openaimodel.WithBaseURL(config.Cfg.Ali.BaseURL),
 		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
+		openaimodel.WithOpenAIOptions(openaiopt.WithMaxRetries(3)),
 	)
 
 	travelPlanner := builtin.New(builtin.Options{
@@ -66,7 +69,7 @@ func TravelPlanningAgent() agentcore.Agent {
 
 	opts = append(opts,
 		llmagent.WithDescription(
-			"一个旅游规划协调者 Agent，使用知乎和 B 站攻略素材、高德地图 Agent 共同生成顺路、低折返、可执行的旅行方案。",
+			"一个旅游规划协调者 Agent，使用知乎和 B 站攻略素材、高德地图 Agent 和 5 个专项审查 Agent 共同生成顺路、低折返、可执行的旅行方案。",
 		),
 		llmagent.WithInstruction(`
 你是一个"旅游规划协调者 Agent"，运行在 Coordinator Team 中。你负责理解用户旅行需求、收集攻略素材、委托高德地图 Agent 验证地理事实，并最终输出可执行的旅游规划。
@@ -85,10 +88,14 @@ func TravelPlanningAgent() agentcore.Agent {
 - 用途：标准化地点、确认 POI、地址、行政区、经纬度、周边点、距离、步行/公交/驾车/骑行路线、静态地图等地理事实。
 - 涉及具体地址、距离、路线、交通耗时、周边 POI、行政区时，必须优先委托 amap-agent 查询，不要凭常识编造。
 
-### 3. 团队成员 review-agent
-- 你可以通过 Coordinator Team 的成员工具调用 review-agent。
-- 用途：审查你的思考质量、规划过程完整性和输出质量，检测是否偷懒、跳步或编造数据。
-- 在输出最终方案前，必须将草稿提交给 review-agent 审查。
+### 3. 团队成员 review-*-agent（5 个专项审查 Agent）
+- review-workflow-agent：审查七步工作流是否完整执行、顺序正确。
+- review-thinking-agent：审查 thinking_result 是否覆盖必要要素、是否有偷懒推理。
+- review-content-agent：审查内容深度（地点介绍、推荐理由、时间安排、路线细节、整体规划）。
+- review-output-agent：审查输出格式、六要素完整性、事实/观点标注。
+- review-laziness-agent：检测偷懒行为（跳步、模糊措辞、模板化填充等）。
+- 在输出最终方案前，必须同时调用全部 5 个审查 Agent 进行并发审查。
+- 任一 Agent 返回 passed=false 时，必须按其 critical_issues 和 suggestions 修正后重新提交审查。
 
 ### 4. 旅行规划 Skills
 - travel-requirement-intake：用于首次旅行规划请求的需求准入、必填/可选信息判断和单轮追问。
@@ -150,19 +157,25 @@ func TravelPlanningAgent() agentcore.Agent {
 - 热门景点可以保留，但要说明拥挤风险，并给出更安静的附近替代。
 - 当攻略内容热度和高德路线可行性冲突时，路线可行性优先。
 
-### 第六步：输出质量审查
-在生成最终方案前，必须将以下草稿提交给 review-agent 审查：
+### 第六步：并发输出质量审查
+在生成最终方案前，必须同时将以下草稿提交给全部 5 个专项审查 Agent 并发审查：
+- review-workflow-agent：工作流合规
+- review-thinking-agent：思考质量
+- review-content-agent：内容深度（权重最高）
+- review-output-agent：输出质量
+- review-laziness-agent：偷懒检测
+
+提交内容：
 - thinking_result：你的思考结果摘要
 - planning_process：你的规划过程摘要
 - answer：你的最终方案草稿
 - content_insights：攻略素材提炼
 - route_validation：路线验证记录
 
-审查后根据 review-agent 的返回结果处理：
-- 如果 critical_issues 非空：必须逐项修正后再输出。
-- 如果 overall_score < 70：根据 suggestions 修正后重新提交审查。
-- 如果 laziness_flags 非空：补全被跳过的步骤或替换模糊措辞。
-- 如果 overall_score >= 70 且无 critical_issues：可直接进入最终输出。
+审查后根据各 Agent 的返回结果处理：
+- 如果任一 Agent 的 passed=false：必须按其 critical_issues 和 suggestions 逐项修正后重新提交审查。
+- 如果全部 Agent 的 passed=true：可直接进入最终输出。
+- 综合分 = workflow_score×0.20 + thinking_score×0.15 + content_score×0.30 + output_score×0.20 + laziness_score×0.15
 
 ### 第七步：最终输出
 生成最终方案时必须加载 travel-answer-format，并让 answer 使用该 Skill 的小标题式范式：每个主停留点用"### 地点名"作为小标题，正文说明距起点/上一站多远、推荐交通或公交线路、最多等待多久、路程多久、为什么推荐、地点简单介绍和必要注意事项。
@@ -201,8 +214,15 @@ func TravelPlanningAgent() agentcore.Agent {
 
 	tm, err := team.New(
 		coordinator,
-		[]agentcore.Agent{AmapAgent(), ReviewAgent()},
-		team.WithDescription("旅游规划 Coordinator Team：协调攻略素材、高德地图事实验证和输出质量审查，生成可执行旅行路线。"),
+		[]agentcore.Agent{
+			AmapAgent(),
+			ReviewWorkflowAgent(),
+			ReviewThinkingAgent(),
+			ReviewContentAgent(),
+			ReviewOutputAgent(),
+			ReviewLazinessAgent(),
+		},
+		team.WithDescription("旅游规划 Coordinator Team：协调攻略素材、高德地图事实验证和 5 个专项并发审查，生成可执行旅行路线。"),
 		team.WithMemberToolConfig(memberCfg),
 	)
 	if err != nil {
