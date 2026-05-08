@@ -13,13 +13,23 @@ import (
 )
 
 type fakeZhihuGuideSearcher struct {
-	byQuery map[string]ZhihuSearchResult
-	calls   []ZhihuSearchInput
+	byQuery       map[string]ZhihuSearchResult
+	globalByQuery map[string]ZhihuSearchResult
+	calls         []ZhihuSearchInput
+	globalCalls   []ZhihuSearchInput
 }
 
 func (s *fakeZhihuGuideSearcher) Search(_ context.Context, in ZhihuSearchInput) (ZhihuSearchResult, error) {
 	s.calls = append(s.calls, in)
 	if result, ok := s.byQuery[in.Query]; ok {
+		return result, nil
+	}
+	return ZhihuSearchResult{Code: 0, Message: "success"}, nil
+}
+
+func (s *fakeZhihuGuideSearcher) GlobalSearch(_ context.Context, in ZhihuSearchInput) (ZhihuSearchResult, error) {
+	s.globalCalls = append(s.globalCalls, in)
+	if result, ok := s.globalByQuery[in.Query]; ok {
 		return result, nil
 	}
 	return ZhihuSearchResult{Code: 0, Message: "success"}, nil
@@ -97,6 +107,53 @@ func TestCollectZhihuGuideMaterialDedupsAndSelects(t *testing.T) {
 	}
 	if !foundAnswer {
 		t.Fatalf("expected high quality answer to be eligible for selected materials")
+	}
+}
+
+func TestCollectZhihuGuideMaterialUsesGlobalSearchSupplement(t *testing.T) {
+	now := time.Now().Unix()
+	searcher := &fakeZhihuGuideSearcher{
+		byQuery:       map[string]ZhihuSearchResult{},
+		globalByQuery: map[string]ZhihuSearchResult{},
+	}
+	opts := ZhihuGuideRunOptions{
+		QueryCount:           1,
+		PerQueryCount:        2,
+		ReviewPoolSize:       4,
+		SelectedArticleCount: 2,
+		ReviewScore:          20,
+		AcceptScore:          45,
+		MustKeywords:         []string{"大阪"},
+	}
+	query := GenerateZhihuGuideQueryPlan("大阪旅游攻略", opts.QueryCount)[0]
+	searcher.byQuery[query.Query] = ZhihuSearchResult{Code: 0, Message: "success", Items: []ZhihuSearchItem{
+		item("大阪站内路线攻略", "https://zhuanlan.zhihu.com/p/local", "作者A", "大阪路线、交通和美食攻略，适合第一次自由行。", 80, 10, now),
+	}}
+	searcher.globalByQuery[query.Query] = ZhihuSearchResult{Code: 0, Message: "success", Items: []ZhihuSearchItem{
+		item("大阪全网补充攻略", "https://example.com/osaka-guide", "作者B", "大阪全网补充内容，包含住宿区域、换乘方式、美食街区、排队避坑和雨天备选，摘要更长，适合补充给大模型。", 0, 0, now),
+	}}
+
+	run, err := collectZhihuGuideMaterial(context.Background(), searcher, "大阪旅游攻略", opts)
+	if err != nil {
+		t.Fatalf("collectZhihuGuideMaterial() error = %v", err)
+	}
+	if len(searcher.globalCalls) != 1 {
+		t.Fatalf("global calls = %d, want 1", len(searcher.globalCalls))
+	}
+	if run.Stats.RawCount != 2 || run.Stats.SelectedCount != 2 {
+		t.Fatalf("unexpected stats: %+v", run.Stats)
+	}
+	if run.Stats.ZhihuSearchRawCount != 1 || run.Stats.GlobalSearchRawCount != 1 {
+		t.Fatalf("unexpected raw scope stats: %+v", run.Stats)
+	}
+	foundGlobal := false
+	for _, selected := range run.SelectedForLLM.Items {
+		if strings.Contains(selected.Title, "[global_search]") && selected.SearchScope == "global_search" && selected.URL == "https://example.com/osaka-guide" {
+			foundGlobal = true
+		}
+	}
+	if !foundGlobal {
+		t.Fatalf("expected global search supplement in selected_for_llm: %+v", run.SelectedForLLM.Items)
 	}
 }
 

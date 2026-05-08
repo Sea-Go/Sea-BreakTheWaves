@@ -13,6 +13,7 @@ var Cfg Config
 type Config struct {
 	Ali      AliConfig      `yaml:"ali"`
 	Zhihu    ZhihuConfig    `yaml:"zhihu"`
+	Bilibili BilibiliConfig `yaml:"bilibili"`
 	Postgres PostgresConfig `yaml:"postgres"`
 	Agent    AgentConfig    `yaml:"agent"`
 	Amap     AmapConfig     `yaml:"amap"`
@@ -45,10 +46,11 @@ type AliConfig struct {
 }
 
 type ZhihuConfig struct {
-	AccessSecret   string                   `yaml:"access_secret"`
-	OpenAPIBaseURL string                   `yaml:"openapi_base_url"`
-	ZhihuSearchURL string                   `yaml:"zhihu_search_url"`
-	GuideMaterial  ZhihuGuideMaterialConfig `yaml:"guide_material"`
+	AccessSecret    string                   `yaml:"access_secret"`
+	OpenAPIBaseURL  string                   `yaml:"openapi_base_url"`
+	ZhihuSearchURL  string                   `yaml:"zhihu_search_url"`
+	GlobalSearchURL string                   `yaml:"global_search_url"`
+	GuideMaterial   ZhihuGuideMaterialConfig `yaml:"guide_material"`
 }
 
 type ZhihuGuideMaterialConfig struct {
@@ -67,6 +69,63 @@ type ZhihuGuideMaterialConfig struct {
 	NegativeKeywords     []string `yaml:"negative_keywords"`
 	BlockedAuthors       []string `yaml:"blocked_authors"`
 	TrustedAuthors       []string `yaml:"trusted_authors"`
+}
+
+type BilibiliConfig struct {
+	Cookie        string                      `yaml:"cookie"`
+	SearchTimeout int                         `yaml:"search_timeout"`
+	GuideMaterial BilibiliGuideMaterialConfig `yaml:"guide_material"`
+}
+
+type BilibiliGuideMaterialConfig struct {
+	QueryCount         int      `yaml:"query_count"`
+	PerQueryCount      int      `yaml:"per_query_count"`
+	ReviewPoolSize     int      `yaml:"review_pool_size"`
+	SelectedVideoCount int      `yaml:"selected_video_count"`
+	AcceptScore        float64  `yaml:"accept_score"`
+	ReviewScore        float64  `yaml:"review_score"`
+	MinSummaryChars    int      `yaml:"min_summary_chars"`
+	MinViewCount       int64    `yaml:"min_view_count"`
+	MaxAgeDays         int      `yaml:"max_age_days"`
+	MustKeywords       []string `yaml:"must_keywords"`
+	ShouldKeywords     []string `yaml:"should_keywords"`
+	NegativeKeywords   []string `yaml:"negative_keywords"`
+	BlockedAuthors     []string `yaml:"blocked_authors"`
+	TrustedAuthors     []string `yaml:"trusted_authors"`
+}
+
+func (c BilibiliGuideMaterialConfig) WithDefaults() BilibiliGuideMaterialConfig {
+	if c.QueryCount <= 0 {
+		c.QueryCount = 10
+	}
+	if c.PerQueryCount <= 0 {
+		c.PerQueryCount = 10
+	}
+	if c.PerQueryCount > 20 {
+		c.PerQueryCount = 20
+	}
+	if c.ReviewPoolSize <= 0 {
+		c.ReviewPoolSize = 30
+	}
+	if c.SelectedVideoCount <= 0 {
+		c.SelectedVideoCount = 12
+	}
+	if c.AcceptScore <= 0 {
+		c.AcceptScore = 70
+	}
+	if c.ReviewScore <= 0 {
+		c.ReviewScore = 45
+	}
+	if c.MinSummaryChars <= 0 {
+		c.MinSummaryChars = 10
+	}
+	if c.MinViewCount < 0 {
+		c.MinViewCount = 0
+	}
+	if c.MaxAgeDays <= 0 {
+		c.MaxAgeDays = 1095
+	}
+	return c
 }
 
 func (c ZhihuGuideMaterialConfig) WithDefaults() ZhihuGuideMaterialConfig {

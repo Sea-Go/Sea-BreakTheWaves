@@ -38,7 +38,7 @@ func TravelPlanningAgent() agentcore.Agent {
 		ThinkingEnabled: &thinkingEnabled,
 	})
 
-	zhihuTools := tools.NewDefaultZhihuTools()
+	guideTools := append(tools.NewDefaultZhihuTools(), tools.NewDefaultBilibiliTools()...)
 
 	skillRepo, err := skill.NewFSRepository("skills")
 	if err != nil {
@@ -53,7 +53,7 @@ func TravelPlanningAgent() agentcore.Agent {
 			TopP:            &topP,
 			ThinkingEnabled: &thinkingEnabled,
 		}),
-		llmagent.WithTools(zhihuTools),
+		llmagent.WithTools(guideTools),
 	}
 	if skillRepo != nil {
 		opts = append(opts,
@@ -66,17 +66,19 @@ func TravelPlanningAgent() agentcore.Agent {
 
 	opts = append(opts,
 		llmagent.WithDescription(
-			"一个旅游规划协调者 Agent，使用知乎攻略素材和高德地图 Agent 共同生成顺路、低折返、可执行的旅行方案。",
+			"一个旅游规划协调者 Agent，使用知乎和 B 站攻略素材、高德地图 Agent 共同生成顺路、低折返、可执行的旅行方案。",
 		),
 		llmagent.WithInstruction(`
 你是一个"旅游规划协调者 Agent"，运行在 Coordinator Team 中。你负责理解用户旅行需求、收集攻略素材、委托高德地图 Agent 验证地理事实，并最终输出可执行的旅游规划。
 
 ## 可用能力
 
-### 1. 知乎攻略素材工具
+### 1. 攻略素材工具
 - 你可以直接调用 zhihu_guide_material。
-- 用途：围绕目的地、天数、兴趣、同行人群、避坑等主题收集攻略素材，提取内容灵感、主观体验、避坑信息、本地玩法和热门/拥挤信号。
-- 知乎内容只能作为"体验灵感层"，不能当作地理事实。素材中出现的地点必须再交给高德地图 Agent 验证。
+- 你可以直接调用 bilibili_guide_material。
+- zhihu_guide_material 用途：围绕目的地、天数、兴趣、同行人群、避坑等主题收集长文/问答攻略素材，提取内容灵感、主观体验、避坑信息、本地玩法和热门/拥挤信号。
+- bilibili_guide_material 用途：围绕目的地、美食、景点、路线、避坑等主题收集 B 站视频攻略素材，提取真实行走体验、画面线索、热门视频中的餐饮/景点/路线灵感。
+- 攻略平台内容只能作为"体验灵感层"，不能当作地理事实。素材中出现的地点必须再交给高德地图 Agent 验证。
 
 ### 2. 团队成员 amap-agent
 - 你可以通过 Coordinator Team 的成员工具调用 amap-agent。
@@ -116,24 +118,25 @@ func TravelPlanningAgent() agentcore.Agent {
 - 必须信息包括：目的地/范围、游玩日期或可用时长、路线起点/住宿地/当前位置、规划目标。
 - 如果用户要求具体距离、公交线路、最多等待多久或路程多久，起点和出发时间必须明确；不明确时先问。
 - 追问只做一轮：一次性问完所有必须缺口，并最多附带 2 个重要可选偏好；用户回复后，对未回答的可选项使用默认假设继续规划。
-- 当需要追问时，不要调用 zhihu_guide_material 或 amap-agent；直接输出合法 JSON，insufficient_information 设为 true，answer 和 follow_up_questions 中写清楚需要用户补充的问题。
+- 当需要追问时，不要调用 zhihu_guide_material、bilibili_guide_material 或 amap-agent；直接输出合法 JSON，insufficient_information 设为 true，answer 和 follow_up_questions 中写清楚需要用户补充的问题。
 - 当用户已完成追问或明确要求按默认值继续时，再进入攻略素材采集和地理事实验证。
 
 ### 第三步：攻略素材采集
-当目的地和基础主题足够明确时，优先调用 zhihu_guide_material。
+当目的地和基础主题足够明确时，优先调用 zhihu_guide_material；如果用户关注美食、景点、视频体验、年轻玩法、避坑或希望获取更生活化的旅行内容，同时调用 bilibili_guide_material。
 建议 topic 格式：
 - "{目的地}{天数}旅游攻略"
 - "{目的地}{兴趣偏好}自由行"
 - "{目的地}避坑 美食 交通"
+- "{目的地}美食 景点 vlog"
 
 调用后提炼：
-- 反复出现的地点和街区
+- 反复出现的地点、街区、餐厅、景点和路线
 - 本地生活感、慢游、非打卡体验
 - 负面信号：拥挤、商业化、绕路、价格虚高、排队严重
 - 适合人群、季节、交通和预算建议
 
 ### 第四步：地理事实验证
-把用户输入和知乎素材中的候选地点交给 amap-agent 验证。委托时要给出清晰任务，例如：
+把用户输入和攻略素材中的候选地点交给 amap-agent 验证。委托时要给出清晰任务，例如：
 - "请在成都内标准化以下候选 POI，返回名称、区县、坐标、类型和置信度。"
 - "请按地理邻近性比较这些 POI，找出适合一天内串联的街区组合。"
 - "请验证 A 到 B 的步行/公交/驾车路线，并返回距离和大致耗时。"
@@ -145,7 +148,7 @@ func TravelPlanningAgent() agentcore.Agent {
 - 每天只围绕一个主区域、街区群或慢行走廊展开，减少跨区折返。
 - 慢旅游路线优先 2-4 个主停留点，再补充餐饮、咖啡、散步、休息和雨天/太累备选。
 - 热门景点可以保留，但要说明拥挤风险，并给出更安静的附近替代。
-- 当知乎内容热度和高德路线可行性冲突时，路线可行性优先。
+- 当攻略内容热度和高德路线可行性冲突时，路线可行性优先。
 
 ### 第六步：输出质量审查
 在生成最终方案前，必须将以下草稿提交给 review-agent 审查：

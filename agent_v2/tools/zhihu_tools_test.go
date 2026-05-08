@@ -40,6 +40,34 @@ func TestZhihuSearchToolCallsSkillScript(t *testing.T) {
 	}
 }
 
+func TestZhihuGlobalSearchCallsSkillScript(t *testing.T) {
+	skillDir := writeGlobalSearchTestSkill(t)
+	runtime := &zhihuRuntime{
+		cfg: config.ZhihuConfig{
+			AccessSecret:    "test-secret",
+			OpenAPIBaseURL:  "https://developer.example.com",
+			GlobalSearchURL: "https://developer.example.com/global",
+		},
+		globalSkillDir: skillDir,
+		pythonCommand:  "python",
+		timeout:        5 * time.Second,
+	}
+
+	out, err := runtime.GlobalSearch(context.Background(), ZhihuSearchInput{
+		Query: "AI Agent",
+		Count: 21,
+	})
+	if err != nil {
+		t.Fatalf("GlobalSearch() error = %v", err)
+	}
+	if out.Code != 0 || out.Message != "success" || out.ItemCount != 1 {
+		t.Fatalf("unexpected result: %+v", out)
+	}
+	if len(out.Items) != 1 || out.Items[0].Title != "AI Agent|20|test-secret|https://developer.example.com|https://developer.example.com/global" {
+		t.Fatalf("unexpected item: %+v", out.Items)
+	}
+}
+
 func TestZhihuToolSetDeclaration(t *testing.T) {
 	set := NewZhihuToolSet(config.ZhihuConfig{})
 	got := set.Tools(context.Background())
@@ -72,6 +100,22 @@ func TestClampZhihuSearchCount(t *testing.T) {
 	for _, tc := range cases {
 		if got := clampZhihuSearchCount(tc.in); got != tc.want {
 			t.Fatalf("clampZhihuSearchCount(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestClampGlobalSearchCount(t *testing.T) {
+	cases := []struct {
+		in   int
+		want int
+	}{
+		{in: 0, want: 10},
+		{in: 1, want: 1},
+		{in: 21, want: 20},
+	}
+	for _, tc := range cases {
+		if got := clampGlobalSearchCount(tc.in); got != tc.want {
+			t.Fatalf("clampGlobalSearchCount(%d) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }
@@ -145,6 +189,44 @@ print(json.dumps({
 }, ensure_ascii=False))
 `
 	if err := os.WriteFile(filepath.Join(scriptsDir, "zhihu-search.py"), []byte(script), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return skillDir
+}
+
+func writeGlobalSearchTestSkill(t *testing.T) string {
+	t.Helper()
+	skillDir := filepath.Join(t.TempDir(), "global-search")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	script := `import json
+import os
+import sys
+
+payload = json.loads(sys.argv[1])
+title = "|".join([
+    payload["query"],
+    str(payload["count"]),
+    os.getenv("ZHIHU_ACCESS_SECRET", ""),
+    os.getenv("ZHIHU_OPENAPI_BASE_URL", ""),
+    os.getenv("ZHIHU_GLOBAL_SEARCH_URL", ""),
+])
+print(json.dumps({
+    "code": 0,
+    "message": "success",
+    "item_count": 1,
+    "items": [{
+        "title": title,
+        "url": "https://example.com/global",
+        "author_name": "tester",
+        "summary": "global ok",
+        "edit_time": 3
+    }]
+}, ensure_ascii=False))
+`
+	if err := os.WriteFile(filepath.Join(scriptsDir, "global-search.py"), []byte(script), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	return skillDir
