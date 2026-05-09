@@ -31,6 +31,12 @@ amap:
     max_retries: 2
     backoff_seconds: 0.5
 
+backend:
+  article_base_url: "http://127.0.0.1:8889"
+  comment_base_url: "http://127.0.0.1:8888"
+  auth_token: "USER_JWT_TOKEN"
+  timeout_seconds: 15
+
 zhihu:
   access_secret: ""
   openapi_base_url: "https://developer.zhihu.com"

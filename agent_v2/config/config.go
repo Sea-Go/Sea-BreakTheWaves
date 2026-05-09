@@ -16,6 +16,7 @@ type Config struct {
 	Postgres PostgresConfig `yaml:"postgres"`
 	Agent    AgentConfig    `yaml:"agent"`
 	Amap     AmapConfig     `yaml:"amap"`
+	Backend  BackendConfig  `yaml:"backend"`
 }
 
 func Load(path string) error {
@@ -150,6 +151,26 @@ func (c AmapConfig) WithDefaults() AmapConfig {
 	}
 	if c.Retry.BackoffSeconds <= 0 {
 		c.Retry.BackoffSeconds = 0.5
+	}
+	return c
+}
+
+type BackendConfig struct {
+	ArticleBaseURL string `yaml:"article_base_url"`
+	CommentBaseURL string `yaml:"comment_base_url"`
+	AuthToken      string `yaml:"auth_token"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+}
+
+func (c BackendConfig) WithDefaults() BackendConfig {
+	if strings.TrimSpace(c.ArticleBaseURL) == "" {
+		c.ArticleBaseURL = "http://127.0.0.1:8889"
+	}
+	if strings.TrimSpace(c.CommentBaseURL) == "" {
+		c.CommentBaseURL = "http://127.0.0.1:8888"
+	}
+	if c.TimeoutSeconds <= 0 {
+		c.TimeoutSeconds = 15
 	}
 	return c
 }

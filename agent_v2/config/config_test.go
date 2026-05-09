@@ -39,6 +39,11 @@ amap:
   retry:
     max_retries: 2
     backoff_seconds: 0.2
+backend:
+  article_base_url: "https://article.example"
+  comment_base_url: "https://comment.example"
+  auth_token: "jwt-token"
+  timeout_seconds: 9
 `), 0o600)
 	if err != nil {
 		t.Fatalf("write config: %v", err)
@@ -60,6 +65,12 @@ amap:
 	if got := Cfg.Amap.WithDefaults().Retry.BackoffSeconds; got != 0.2 {
 		t.Fatalf("retry.backoff_seconds = %v", got)
 	}
+	if Cfg.Backend.ArticleBaseURL != "https://article.example" {
+		t.Fatalf("backend.article_base_url = %q", Cfg.Backend.ArticleBaseURL)
+	}
+	if got := Cfg.Backend.WithDefaults().TimeoutSeconds; got != 9 {
+		t.Fatalf("backend.timeout_seconds = %v", got)
+	}
 }
 
 func TestAmapConfigDefaults(t *testing.T) {
@@ -72,5 +83,18 @@ func TestAmapConfigDefaults(t *testing.T) {
 	}
 	if cfg.APIKey != "literal-key" {
 		t.Fatalf("api key changed to %q", cfg.APIKey)
+	}
+}
+
+func TestBackendConfigDefaults(t *testing.T) {
+	cfg := BackendConfig{}.WithDefaults()
+	if cfg.ArticleBaseURL != "http://127.0.0.1:8889" {
+		t.Fatalf("default ArticleBaseURL = %q", cfg.ArticleBaseURL)
+	}
+	if cfg.CommentBaseURL != "http://127.0.0.1:8888" {
+		t.Fatalf("default CommentBaseURL = %q", cfg.CommentBaseURL)
+	}
+	if cfg.TimeoutSeconds != 15 {
+		t.Fatalf("default TimeoutSeconds = %d", cfg.TimeoutSeconds)
 	}
 }
