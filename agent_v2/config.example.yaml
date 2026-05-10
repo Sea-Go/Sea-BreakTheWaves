@@ -19,6 +19,7 @@ agent:
   preload_session_recall: 0
   preload_session_recall_min_score: 0.60
   read_header_timeout: "5s"
+  run_timeout_seconds: 120
 
 amap:
   baseurl: "https://restapi.amap.com/v3"

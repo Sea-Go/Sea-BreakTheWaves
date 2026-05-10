@@ -119,6 +119,7 @@ type AgentConfig struct {
 	PreloadSessionRecall         int     `yaml:"preload_session_recall"`
 	PreloadSessionRecallMinScore float64 `yaml:"preload_session_recall_min_score"`
 	ReadHeaderTimeout            string  `yaml:"read_header_timeout"`
+	RunTimeoutSeconds            int     `yaml:"run_timeout_seconds"`
 }
 
 type AmapConfig struct {

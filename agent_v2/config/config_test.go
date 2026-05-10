@@ -30,6 +30,7 @@ agent:
   preload_session_recall: 1
   preload_session_recall_min_score: 0.6
   read_header_timeout: "5s"
+  run_timeout_seconds: 45
 amap:
   baseurl: "https://amap.example/v4"
   api_key: "literal-amap-key"
@@ -64,6 +65,9 @@ backend:
 	}
 	if got := Cfg.Amap.WithDefaults().Retry.BackoffSeconds; got != 0.2 {
 		t.Fatalf("retry.backoff_seconds = %v", got)
+	}
+	if Cfg.Agent.RunTimeoutSeconds != 45 {
+		t.Fatalf("agent.run_timeout_seconds = %d", Cfg.Agent.RunTimeoutSeconds)
 	}
 	if Cfg.Backend.ArticleBaseURL != "https://article.example" {
 		t.Fatalf("backend.article_base_url = %q", Cfg.Backend.ArticleBaseURL)

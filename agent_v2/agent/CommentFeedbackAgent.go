@@ -112,6 +112,15 @@ func CommentFeedbackAgentRun(
 	input CommentFeedbackInput,
 	memoryKey string,
 ) (CommentFeedbackOutput, error) {
+	return CommentFeedbackAgentRunWithContext(context.Background(), userID, sessionID, input, memoryKey)
+}
+
+func CommentFeedbackAgentRunWithContext(
+	ctx context.Context,
+	userID, sessionID string,
+	input CommentFeedbackInput,
+	memoryKey string,
+) (CommentFeedbackOutput, error) {
 	if strings.TrimSpace(userID) == "" {
 		return CommentFeedbackOutput{}, errors.New("userID 不能为空")
 	}
@@ -135,7 +144,8 @@ func CommentFeedbackAgentRun(
 请根据上面的评论生成反馈策略。
 `, string(payload))
 
-	raw, err := runAgentString(
+	raw, err := runAgentStringWithContext(
+		ctx,
 		config.Cfg.Agent.AppName+"comment-feedback",
 		CommentFeedbackAgent(),
 		userID,
@@ -172,6 +182,9 @@ func CommentFeedbackAgentRunFromBackend(
 	userID, sessionID, articleID, articleTitle, memoryKey string,
 	client *tools.BackendClient,
 ) (CommentFeedbackOutput, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if client == nil {
 		return CommentFeedbackOutput{}, errors.New("backend client 不能为空")
 	}
@@ -188,7 +201,7 @@ func CommentFeedbackAgentRunFromBackend(
 		return CommentFeedbackOutput{}, err
 	}
 
-	return CommentFeedbackAgentRun(userID, sessionID, CommentFeedbackInput{
+	return CommentFeedbackAgentRunWithContext(ctx, userID, sessionID, CommentFeedbackInput{
 		ArticleID:      articleID,
 		ArticleTitle:   articleTitle,
 		Comments:       comments,

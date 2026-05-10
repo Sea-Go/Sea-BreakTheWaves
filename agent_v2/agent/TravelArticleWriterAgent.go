@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"agent_v2/config"
 	"agent_v2/tools"
@@ -144,6 +145,16 @@ func TravelArticleWriterAgentRun(
 	plan TravelPlanningOutput,
 	memoryKey string,
 ) (TravelArticleOutput, error) {
+	return TravelArticleWriterAgentRunWithContext(context.Background(), userID, sessionID, brief, plan, memoryKey)
+}
+
+func TravelArticleWriterAgentRunWithContext(
+	ctx context.Context,
+	userID, sessionID string,
+	brief TravelArticleBrief,
+	plan TravelPlanningOutput,
+	memoryKey string,
+) (TravelArticleOutput, error) {
 	if strings.TrimSpace(userID) == "" {
 		return TravelArticleOutput{}, errors.New("userID 不能为空")
 	}
@@ -193,7 +204,8 @@ func TravelArticleWriterAgentRun(
 请根据上面的输入生成文章。
 `, string(payload))
 
-	raw, err := runAgentString(
+	raw, err := runAgentStringWithContext(
+		ctx,
 		config.Cfg.Agent.AppName+"travel-article-writer",
 		TravelArticleWriterAgent(),
 		userID,
@@ -242,10 +254,13 @@ func TravelArticleWriterAgentRunAndPublish(
 	manualTypeTag string,
 	secondaryTags []string,
 ) (tools.BackendCreateArticleResponse, TravelArticleOutput, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if client == nil {
 		return tools.BackendCreateArticleResponse{}, TravelArticleOutput{}, errors.New("backend client 不能为空")
 	}
-	out, err := TravelArticleWriterAgentRun(userID, sessionID, brief, plan, memoryKey)
+	out, err := TravelArticleWriterAgentRunWithContext(ctx, userID, sessionID, brief, plan, memoryKey)
 	if err != nil {
 		return tools.BackendCreateArticleResponse{}, TravelArticleOutput{}, err
 	}
@@ -260,11 +275,22 @@ func TravelArticleWriterAgentRunAndPublish(
 }
 
 func runAgentString(appName string, a agentcore.Agent, userID, sessionID, userMessage string) (string, error) {
+	return runAgentStringWithContext(context.Background(), appName, a, userID, sessionID, userMessage)
+}
+
+func runAgentStringWithContext(ctx context.Context, appName string, a agentcore.Agent, userID, sessionID, userMessage string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := agentRunTimeout()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	rn := runner.NewRunner(appName, a)
 	defer rn.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	eventCh, err := rn.Run(
 		ctx,
@@ -278,22 +304,58 @@ func runAgentString(appName string, a agentcore.Agent, userID, sessionID, userMe
 	}
 
 	var final strings.Builder
-	for evt := range eventCh {
-		if evt == nil || evt.Response == nil || len(evt.Response.Choices) == 0 {
-			continue
-		}
+	for {
+		select {
+		case <-ctx.Done():
+			return "", agentRunContextError(ctx.Err())
+		case evt, ok := <-eventCh:
+			if !ok {
+				if err := ctx.Err(); err != nil {
+					return "", agentRunContextError(err)
+				}
+				return strings.TrimSpace(final.String()), nil
+			}
+			if evt == nil || evt.Response == nil {
+				continue
+			}
+			if evt.IsTerminalError() {
+				if evt.Response.Error != nil {
+					return "", fmt.Errorf("agent run failed: %s", evt.Response.Error.Error())
+				}
+				return "", errors.New("agent run failed")
+			}
+			if len(evt.Response.Choices) == 0 {
+				continue
+			}
 
-		choice := evt.Response.Choices[0]
-		if choice.Delta.Content != "" {
-			final.WriteString(choice.Delta.Content)
-			continue
-		}
-		if choice.Message.Content != "" && final.Len() == 0 {
-			final.WriteString(choice.Message.Content)
+			choice := evt.Response.Choices[0]
+			if choice.Delta.Content != "" {
+				final.WriteString(choice.Delta.Content)
+				continue
+			}
+			if choice.Message.Content != "" && final.Len() == 0 {
+				final.WriteString(choice.Message.Content)
+			}
 		}
 	}
+}
 
-	return strings.TrimSpace(final.String()), nil
+func agentRunContextError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("agent run timed out: %w", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("agent run canceled: %w", err)
+	}
+	return fmt.Errorf("agent run stopped: %w", err)
+}
+
+func agentRunTimeout() time.Duration {
+	seconds := config.Cfg.Agent.RunTimeoutSeconds
+	if seconds <= 0 {
+		seconds = 120
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func normalizeTravelArticleBrief(
