@@ -57,6 +57,7 @@ func TravelPlanningAgent() agentcore.Agent {
 			ThinkingEnabled: &thinkingEnabled,
 		}),
 		llmagent.WithTools(guideTools),
+		llmagent.WithEnableParallelTools(true),
 	}
 	if skillRepo != nil {
 		opts = append(opts,
