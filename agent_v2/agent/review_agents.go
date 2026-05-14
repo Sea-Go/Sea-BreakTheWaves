@@ -1,31 +1,21 @@
 package agent
 
 import (
-	"agent_v2/config"
-
 	agentcore "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/model"
-	openaimodel "trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/planner/builtin"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
-
-	openaiopt "github.com/openai/openai-go/option"
 )
 
 // newReviewAgent 创建一个专项审查 Agent 的通用工厂函数。
-func newReviewAgent(name, description, instruction string) agentcore.Agent {
+func newReviewAgent(name, description, instruction string, level ModelLevel) agentcore.Agent {
 	thinkingEnabled := true
 	temperature := 0.0
 	topP := 0.3
 
-	alimodel := openaimodel.New(
-		config.Cfg.Ali.AnalysisModel,
-		openaimodel.WithBaseURL(config.Cfg.Ali.BaseURL),
-		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
-		openaimodel.WithOpenAIOptions(openaiopt.WithMaxRetries(3)),
-	)
+	alimodel := newModelForLevel(name, level)
 
 	reviewPlanner := builtin.New(builtin.Options{
 		ThinkingEnabled: &thinkingEnabled,
@@ -48,11 +38,21 @@ func newReviewAgent(name, description, instruction string) agentcore.Agent {
 	if skillRepo != nil {
 		opts = append(opts,
 			llmagent.WithSkills(skillRepo),
-			llmagent.WithSkillToolProfile(llmagent.SkillToolProfileFull),
+			llmagent.WithSkillToolProfile(llmagent.SkillToolProfileKnowledgeOnly),
 			llmagent.WithSkillLoadMode("turn"),
 			llmagent.WithMaxLoadedSkills(1),
 		)
 	}
+
+	// 添加通用 skill 使用规范。review-* skills 是文档型 skill，没有可执行脚本。
+	instruction = "## Skill 使用规范（重要）\n\n" +
+		"审查 skill（review-workflow、review-thinking、review-content、review-output、review-laziness）" +
+		"是纯文档型 skill，没有可执行脚本。\n" +
+		"- 使用 **skill_load** 加载所需 skill 的审查规范到上下文。\n" +
+		"- 加载后，skill 的审查标准、评分规则、反模式清单会自动注入上下文，你无需执行任何脚本。\n" +
+		"- **禁止使用 skill_run、skill_exec 或任何 shell 命令**——这些 skill 没有可运行脚本，调用会失败。\n" +
+		"- 你的工作是阅读已注入的规范文档，然后按规范逐项审查并输出结构化 JSON 报告。\n\n" +
+		instruction
 
 	opts = append(opts,
 		llmagent.WithDescription(description),
@@ -119,7 +119,7 @@ func ReviewWorkflowAgent() agentcore.Agent {
 - 禁止输出 markdown 代码块、前后缀说明或额外文本。
 - passed 为 true 当且仅当 score >= 70 且 critical_issues 为空。
 - 审查要严格但公正。
-`,
+`, ModelLevelMedium,
 	)
 }
 
@@ -174,7 +174,7 @@ func ReviewThinkingAgent() agentcore.Agent {
 - 禁止输出 markdown 代码块、前后缀说明或额外文本。
 - passed 为 true 当且仅当 score >= 65 且 critical_issues 为空。
 - 审查要严格但公正。
-`,
+`, ModelLevelMedium,
 	)
 }
 
@@ -235,7 +235,7 @@ func ReviewContentAgent() agentcore.Agent {
 - 禁止输出 markdown 代码块、前后缀说明或额外文本。
 - passed 为 true 当且仅当 score >= 75 且 critical_issues 为空。
 - 审查要严格但公正，重点关注信息准确性和完整性。
-`,
+`, ModelLevelHigh,
 	)
 }
 
@@ -293,7 +293,7 @@ func ReviewOutputAgent() agentcore.Agent {
 - 禁止输出 markdown 代码块、前后缀说明或额外文本。
 - passed 为 true 当且仅当 score >= 70 且 critical_issues 为空。
 - 审查要严格但公正。
-`,
+`, ModelLevelMedium,
 	)
 }
 
@@ -357,6 +357,50 @@ laziness_behaviors_found 中每个元素格式：
 - 禁止输出 markdown 代码块、前后缀说明或额外文本。
 - passed 为 true 当且仅当 score >= 65 且 critical_issues 为空。
 - 审查要严格但公正。
-`,
+`, ModelLevelMedium,
 	)
+}
+// ConstraintReviewAgent creates a constraint review agent for a specific planning level.
+// The level parameter selects which constraint review skill to load.
+func ConstraintReviewAgent(level string) agentcore.Agent {
+	name := "review-" + level + "-agent"
+	description := level + " 级约束审查 Agent，检查该层级的硬约束是否满足。"
+
+	instruction := "你是一个\"" + level + " 级约束审查 Agent\"，专职检查规划节点的硬约束是否满足。\n\n" +
+		"## 审查依据\n\n" +
+		"每次审查前，必须加载 review-" + level + " skill。" +
+		"该 Skill 包含该层级的完整约束清单、违规判定规则和评分标准。\n\n" +
+		"**重要：** 你不是审查\"内容好不好\"，而是检查\"是否违反不可逾越的约束限制\"。" +
+		"审查结果是硬性的——passed=false 意味着必须修正后才能进入下一阶段。\n\n" +
+		"## 审查流程\n\n" +
+		"1. 加载 review-" + level + " skill，获取该层级的约束规范。\n" +
+		"2. 逐条对照约束清单检查。\n" +
+		"3. 对每条违规记录维度、规则、实际值、阈值、严重程度。\n" +
+		"4. 输出结构化审查报告。\n\n" +
+		"## 输出格式\n\n" +
+		"你必须输出合法 JSON，格式如下：\n\n" +
+		"{\n" +
+		"  \"dimension\": \"" + level + "_constraint\",\n" +
+		"  \"score\": 80,\n" +
+		"  \"passed\": true,\n" +
+		"  \"critical_issues\": [],\n" +
+		"  \"constraint_violations\": [\n" +
+		"    {\n" +
+		"      \"dimension\": \"约束维度名称\",\n" +
+		"      \"rule\": \"约束规则描述\",\n" +
+		"      \"actual\": \"实际情况\",\n" +
+		"      \"threshold\": \"阈值\",\n" +
+		"      \"severity\": \"critical|major|minor\"\n" +
+		"    }\n" +
+		"  ],\n" +
+		"  \"suggestions\": [],\n" +
+		"  \"summary\": \"审查摘要。\"\n" +
+		"}\n\n" +
+		"补充要求：\n" +
+		"- 必须只输出单个 JSON object。\n" +
+		"- 禁止输出 markdown 代码块、前后缀说明或额外文本。\n" +
+		"- passed 为 true 当且仅当 critical_issues 为空。\n" +
+		"- 审查要严格——硬约束不容妥协。"
+
+	return newReviewAgent(name, description, instruction, ModelLevelMedium)
 }
