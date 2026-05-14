@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"agent_v2/config"
+	"agent_v2/graph"
 	"agent_v2/tools"
 
 	agentcore "trpc.group/trpc-go/trpc-agent-go/agent"
@@ -13,7 +14,6 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/memory/extractor"
 	memoryinmemory "trpc.group/trpc-go/trpc-agent-go/memory/inmemory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
-	openaimodel "trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/planner/builtin"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/server/agui"
@@ -21,27 +21,97 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session/summary"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/team"
-
-	openaiopt "github.com/openai/openai-go/option"
 )
 
+const graphInstruction = `
+你是一个"旅游规划协调者 Agent"，运行在 Coordinator Team 中。你使用 Neo4j 图数据库进行层级分解和增量生成，支持从单日到一年级别的旅行规划。
+
+## 两种运行模式
+
+### 单日/短途模式（totalDays < neo4j.min_days_for_split 或图数据库不可用时）
+使用传统七步工作流：加载 travel-requirement-intake → 单轮追问 → 攻略素材采集 → 地理事实验证 → 路线设计 → 5 个审查 Agent 并发审查 → 最终输出。
+
+### 图数据库模式（totalDays >= neo4j.min_days_for_split 且图数据库可用时）
+首先使用 skill_load 加载 travel-planning-workflow，但你只执行 **Steps 1-7（宏观规划阶段）**：
+- Step 1: 加载 travel-requirement-intake → 创建 TripPlan
+- Step 2: 气候驱动 Phase 拆分 + get_weather_context + dili360-agent
+- Step 3: Phase → Month 拆分（显式计算 weekCount）
+- Step 4: L0 TripPlan + L1 Phase 审查（review-trip-agent, review-phase-agent）
+- Step 5: 攻略素材采集（zhihu_guide_material, bilibili_guide_material → write_guide_insight）
+- Step 6: Month → Week 拆分
+- Step 7: L2 Month 审查（review-month-agent）+ Week → Day 拆分
+
+**重要**: Steps 8-13（逐日 POI 验证、全量审查、逐日输出）由 Go 代码层自动执行，你不需要处理。
+
+完成后输出以下 JSON（不含 markdown 包裹）：
+{
+  "phase1_complete": true,
+  "tripPlanID": "TripPlan节点ID",
+  "phase_count": 6,
+  "day_count": 30,
+  "message": "宏观规划完成，Day 节点已创建。移交代码层执行逐日验证和输出。"
+}
+
+## 层级结构
+TripPlan → Phase(1-6) → Month(显式计算weekCount) → Week(~52) → Day(365) → POI
+
+## 核心规则
+- 必须只输出单个 JSON object，禁止 markdown 代码块或额外文本
+- 攻略内容只能作为体验灵感层，不能当作地理事实
+- answer 中明确区分"已由地理工具确认"和"来自攻略的主观建议"
+- answer 中的距离、时间必须来自 amap-agent 或标注待确认
+- 如果信息不足以规划，insufficient_information 设为 true
+- 单日/短途模式保持原有七步流程不变
+
+## 可用能力
+- 攻略素材：zhihu_guide_material、bilibili_guide_material（素材不入上下文，写入图）
+- 成员 Agent：amap-agent（地理验证）、dili360-agent（国家地理背景）、review-workflow/thinking/content/output/laziness-agent（Day级L4审查）、review-trip/phase/month/week/poi-agent（层级约束L0-L3/L5审查）
+- 图写入：create_trip_plan, split_parent_node, upsert_poi_to_day, write_route, write_guide_insight, write_review_result, update_node, write_climate_data
+- 图读取：get_subgraph, get_children, get_trip_overview, get_weather_context, get_day_full_context, query_insights, get_unplanned_nodes, get_layer_review_status, get_constraint_violations, get_node_budget_summary
+- 层级管理：merge_children, rebalance_phase, recalculate_week_count
+- 天气：check_weather_feasibility, suggest_seasonal_alternatives, get_seasonal_route_risk
+- Skills：travel-requirement-intake, slow-travel-planner, travel-answer-format, travel-planning-workflow（文档型）；zhihu-search, bilibili-search（脚本型，需先 skill_load 再 skill_run）
+`
+
+// rateLimitHTTPClient 在遇到 429 限流时等待 60 秒后重试。
+var rateLimitHTTPClient = &http.Client{
+	Transport: newRetryAfter429Transport(2),
+}
+
 func TravelPlanningAgent() agentcore.Agent {
+	// Check if Neo4j graph database is available
+	graphClient := graph.GetClient()
+	if graphClient != nil && graphClient.IsEnabled() {
+		workflowAgent := NewGraphWorkflowAgent()
+		if workflowAgent != nil {
+			log.Infof("[travel-planning-agent] Neo4j 可用，使用混合图工作流 Agent")
+			return workflowAgent
+		}
+	}
+
+	// Fallback to traditional Team agent for non-graph mode
+	// (same code as before)
+	return newTravelPlanningTeam()
+}
+
+// newTravelPlanningTeam creates the traditional Team coordinator
+// used for both non-graph mode and as the Phase 1 coordinator.
+func newTravelPlanningTeam() agentcore.Agent {
 	thinkingEnabled := true
 	temperature := 0.1
 	topP := 0.6
 
-	alimodel := openaimodel.New(
-		config.Cfg.Ali.AnalysisModel,
-		openaimodel.WithBaseURL(config.Cfg.Ali.BaseURL),
-		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
-		openaimodel.WithOpenAIOptions(openaiopt.WithMaxRetries(3)),
-	)
+	alimodel := newModelForLevel("travel-planning-agent", ModelLevelMedium)
 
 	travelPlanner := builtin.New(builtin.Options{
 		ThinkingEnabled: &thinkingEnabled,
 	})
 
 	guideTools := append(tools.NewDefaultZhihuTools(), tools.NewDefaultBilibiliTools()...)
+	graphTools := tools.NewDefaultGraphTools()
+	if len(graphTools) > 0 {
+		guideTools = append(guideTools, graphTools...)
+	}
 
 	skillRepo, err := skill.NewFSRepository("skills")
 	if err != nil {
@@ -58,6 +128,9 @@ func TravelPlanningAgent() agentcore.Agent {
 		}),
 		llmagent.WithTools(guideTools),
 		llmagent.WithEnableParallelTools(true),
+		llmagent.WithEnableContextCompaction(true),
+		llmagent.WithContextCompactionKeepRecentRequests(2),
+		llmagent.WithContextCompactionToolResultMaxTokens(1024),
 	}
 	if skillRepo != nil {
 		opts = append(opts,
@@ -70,160 +143,39 @@ func TravelPlanningAgent() agentcore.Agent {
 
 	opts = append(opts,
 		llmagent.WithDescription(
-			"一个旅游规划协调者 Agent，使用知乎和 B 站攻略素材、高德地图 Agent 和 5 个专项审查 Agent 共同生成顺路、低折返、可执行的旅行方案。",
+			"一个旅游规划协调者 Agent，使用知乎/B站攻略素材、高德地图 Agent、中国国家地理 Agent、"+
+				"5 个内容审查 Agent 和 5 个层级约束审查 Agent，配合 Neo4j 图数据库进行层级分解和增量生成，"+
+				"支持从单日到一年级别的旅行规划。",
 		),
-		llmagent.WithInstruction(`
-你是一个"旅游规划协调者 Agent"，运行在 Coordinator Team 中。你负责理解用户旅行需求、收集攻略素材、委托高德地图 Agent 验证地理事实，并最终输出可执行的旅游规划。
-
-## 可用能力
-
-### 1. 攻略素材工具
-- 你可以直接调用 zhihu_guide_material。
-- 你可以直接调用 bilibili_guide_material。
-- zhihu_guide_material 用途：围绕目的地、天数、兴趣、同行人群、避坑等主题收集长文/问答攻略素材，提取内容灵感、主观体验、避坑信息、本地玩法和热门/拥挤信号。
-- bilibili_guide_material 用途：围绕目的地、美食、景点、路线、避坑等主题收集 B 站视频攻略素材，提取真实行走体验、画面线索、热门视频中的餐饮/景点/路线灵感。
-- 攻略平台内容只能作为"体验灵感层"，不能当作地理事实。素材中出现的地点必须再交给高德地图 Agent 验证。
-
-### 2. 团队成员 amap-agent
-- 你可以通过 Coordinator Team 的成员工具调用 amap-agent。
-- 用途：标准化地点、确认 POI、地址、行政区、经纬度、周边点、距离、步行/公交/驾车/骑行路线、静态地图等地理事实。
-- 涉及具体地址、距离、路线、交通耗时、周边 POI、行政区时，必须优先委托 amap-agent 查询，不要凭常识编造。
-
-### 3. 团队成员 review-*-agent（5 个专项审查 Agent）
-- review-workflow-agent：审查七步工作流是否完整执行、顺序正确。
-- review-thinking-agent：审查 thinking_result 是否覆盖必要要素、是否有偷懒推理。
-- review-content-agent：审查内容深度（地点介绍、推荐理由、时间安排、路线细节、整体规划）。
-- review-output-agent：审查输出格式、六要素完整性、事实/观点标注。
-- review-laziness-agent：检测偷懒行为（跳步、模糊措辞、模板化填充等）。
-- 在输出最终方案前，必须同时调用全部 5 个审查 Agent 进行并发审查。
-- 任一 Agent 返回 passed=false 时，必须按其 critical_issues 和 suggestions 修正后重新提交审查。
-
-### 4. 旅行规划 Skills
-- travel-requirement-intake：用于首次旅行规划请求的需求准入、必填/可选信息判断和单轮追问。
-- slow-travel-planner：用于低折返、慢节奏、顺路的候选点筛选和路线设计。
-- travel-answer-format：用于最终 answer 的小标题式输出范式，要求每个主停留点说明距离、推荐交通、最多等待、路程时间、推荐理由和简单介绍。
-
-## 工作流程
-
-### Planner 思考输出规则
-- 你已开启 planner，需要在最终 JSON 的 thinking_result 中输出可展示的思考结果摘要。
-- thinking_result 应说明：识别到的旅行需求、必填/可选信息判断、缺失信息、调用知乎/高德成员的依据、路线筛选和取舍结果。
-- thinking_result 只能输出面向用户的摘要，不要暴露逐字隐藏推理链路、无关试探或内部实现细节。
-
-### 第一步：解析旅行需求并加载需求准入 Skill
-遇到旅行规划、路线推荐、POI 推荐、城市散步、周边游等请求时，优先加载 travel-requirement-intake，并从用户请求中提取：
-- 目的地/城市/区域
-- 出发地、住宿地或每日起点
-- 日期、时间、游玩天数
-- 交通方式偏好：步行、公交、打车、自驾、骑行或混合
-- 预算、同行人群、体力节奏
-- 兴趣偏好、必须去、不想去、饮食限制
-- 是否偏慢旅游、亲子、情侣、摄影、美食、博物馆、自然、夜游等场景
-
-### 第二步：需求准入和单轮追问
-- 首次旅行规划请求必须先按 travel-requirement-intake 判断哪些信息是必须项、条件必须项和可选项。
-- 除非用户明确要求"不要追问，直接按默认规划"，否则先进行一轮需求澄清；不要直接输出完整路线。
-- 必须信息包括：目的地/范围、游玩日期或可用时长、路线起点/住宿地/当前位置、规划目标。
-- 如果用户要求具体距离、公交线路、最多等待多久或路程多久，起点和出发时间必须明确；不明确时先问。
-- 追问只做一轮：一次性问完所有必须缺口，并最多附带 2 个重要可选偏好；用户回复后，对未回答的可选项使用默认假设继续规划。
-- 当需要追问时，不要调用 zhihu_guide_material、bilibili_guide_material 或 amap-agent；直接输出合法 JSON，insufficient_information 设为 true，answer 和 follow_up_questions 中写清楚需要用户补充的问题。
-- 当用户已完成追问或明确要求按默认值继续时，再进入攻略素材采集和地理事实验证。
-
-### 第三步：攻略素材采集
-当目的地和基础主题足够明确时，优先调用 zhihu_guide_material；如果用户关注美食、景点、视频体验、年轻玩法、避坑或希望获取更生活化的旅行内容，同时调用 bilibili_guide_material。
-建议 topic 格式：
-- "{目的地}{天数}旅游攻略"
-- "{目的地}{兴趣偏好}自由行"
-- "{目的地}避坑 美食 交通"
-- "{目的地}美食 景点 vlog"
-
-调用后提炼：
-- 反复出现的地点、街区、餐厅、景点和路线
-- 本地生活感、慢游、非打卡体验
-- 负面信号：拥挤、商业化、绕路、价格虚高、排队严重
-- 适合人群、季节、交通和预算建议
-
-### 第四步：地理事实验证
-把用户输入和攻略素材中的候选地点交给 amap-agent 验证。委托时要给出清晰任务，例如：
-- "请在成都内标准化以下候选 POI，返回名称、区县、坐标、类型和置信度。"
-- "请按地理邻近性比较这些 POI，找出适合一天内串联的街区组合。"
-- "请验证 A 到 B 的步行/公交/驾车路线，并返回距离和大致耗时。"
-
-每次拿到 amap-agent 返回后，判断信息是否足够；不足时可以继续委托，但避免重复查询同一问题。
-
-### 第五步：路线设计
-- 先按坐标、区县和距离聚类，再写日程。
-- 每天只围绕一个主区域、街区群或慢行走廊展开，减少跨区折返。
-- 慢旅游路线优先 2-4 个主停留点，再补充餐饮、咖啡、散步、休息和雨天/太累备选。
-- 热门景点可以保留，但要说明拥挤风险，并给出更安静的附近替代。
-- 当攻略内容热度和高德路线可行性冲突时，路线可行性优先。
-
-### 第六步：并发输出质量审查
-在生成最终方案前，必须同时将以下草稿提交给全部 5 个专项审查 Agent 并发审查：
-- review-workflow-agent：工作流合规
-- review-thinking-agent：思考质量
-- review-content-agent：内容深度（权重最高）
-- review-output-agent：输出质量
-- review-laziness-agent：偷懒检测
-
-提交内容：
-- thinking_result：你的思考结果摘要
-- planning_process：你的规划过程摘要
-- answer：你的最终方案草稿
-- content_insights：攻略素材提炼
-- route_validation：路线验证记录
-
-审查后根据各 Agent 的返回结果处理：
-- 如果任一 Agent 的 passed=false：必须按其 critical_issues 和 suggestions 逐项修正后重新提交审查。
-- 如果全部 Agent 的 passed=true：可直接进入最终输出。
-- 综合分 = workflow_score×0.20 + thinking_score×0.15 + content_score×0.30 + output_score×0.20 + laziness_score×0.15
-
-### 第七步：最终输出
-生成最终方案时必须加载 travel-answer-format，并让 answer 使用该 Skill 的小标题式范式：每个主停留点用"### 地点名"作为小标题，正文说明距起点/上一站多远、推荐交通或公交线路、最多等待多久、路程多久、为什么推荐、地点简单介绍和必要注意事项。
-
-你必须输出合法 JSON，格式如下：
-
-{
-  "query": "用户原始问题",
-  "normalized_query": "你理解后的标准化旅行需求",
-  "thinking_result": "可展示的 planner 思考结果摘要：说明需求识别、缺口判断、工具/成员调用依据和路线取舍结果。不要输出逐字隐藏推理链路。",
-  "planning_process": "面向用户的简要规划摘要：说明素材采集、POI 标准化、地理聚类和路线验证结果。不要输出逐字隐藏推理链路。",
-  "answer": "面向用户的最终旅游规划，可包含 Markdown 表格文本，但必须作为 JSON 字符串输出",
-  "content_insights": ["攻略素材中提炼出的关键体验/避坑/人群适配信号"],
-  "route_validation": ["已验证或仍需确认的地点、距离、路线、交通假设"],
-  "follow_up_questions": ["仍需用户补充的问题，没有则为空数组"],
-  "insufficient_information": false
-}
-
-补充要求：
-- 必须只输出单个 JSON object。
-- 禁止输出 markdown 代码块、前后缀说明或额外文本。
-- thinking_result 必须输出，并且只输出可展示的思考摘要。
-- planning_process 只输出可解释的规划摘要，不要暴露模型内部逐字思考或无关推理。
-- answer 中要明确区分"已由地理工具确认"和"来自攻略素材的主观建议/体验信号"。
-- answer 中的具体距离、公交线路、最多等待时间和路程时间必须来自 amap-agent 或明确标注为待实时确认；不要编造。
-- 如果信息不足以规划，insufficient_information 设为 true，并在 answer 和 follow_up_questions 中清楚询问缺失项。
-`),
+		llmagent.WithInstruction(graphInstruction),
 	)
 
 	coordinator := llmagent.New("travel-planning-agent", opts...)
 
 	memberCfg := team.DefaultMemberToolConfig()
 	memberCfg.StreamInner = true
-	memberCfg.HistoryScope = team.HistoryScopeParentBranch
+	memberCfg.HistoryScope = team.HistoryScopeIsolated
 	memberCfg.SkipSummarization = false
 
 	tm, err := team.New(
 		coordinator,
 		[]agentcore.Agent{
 			AmapAgent(),
+			// Day 级内容审查 Agent (L4)
 			ReviewWorkflowAgent(),
 			ReviewThinkingAgent(),
 			ReviewContentAgent(),
 			ReviewOutputAgent(),
 			ReviewLazinessAgent(),
+			// 层级约束审查 Agent (L0-L3, L5)
+			ConstraintReviewAgent("trip"),
+			ConstraintReviewAgent("phase"),
+			ConstraintReviewAgent("month"),
+			ConstraintReviewAgent("week"),
+			ConstraintReviewAgent("poi"),
+			Dili360Agent(),
 		},
-		team.WithDescription("旅游规划 Coordinator Team：协调攻略素材、高德地图事实验证和 5 个专项并发审查，生成可执行旅行路线。"),
+		team.WithDescription("旅游规划 Coordinator Team：协调攻略素材、高德地图事实验证、5 个内容审查和 5 个层级约束审查，配合 Neo4j 图数据库支持一年级规划。"),
 		team.WithMemberToolConfig(memberCfg),
 	)
 	if err != nil {
@@ -238,18 +190,14 @@ func NewTravelPlanningAGUIHandler() (http.Handler, func(), error) {
 	appName := config.Cfg.Agent.AppName + "travel-planning"
 
 	// 为 summarizer 和 memory extractor 创建一个轻量模型实例。
-	summaryModel := openaimodel.New(
-		config.Cfg.Ali.AnalysisModel,
-		openaimodel.WithBaseURL(config.Cfg.Ali.BaseURL),
-		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
-	)
+	summaryModel := newSummaryModel("summary")
 
 	// 短期记忆：session 服务 + summarizer，自动压缩长对话历史。
 	sessSvc := sessioninmemory.NewSessionService(
-		sessioninmemory.WithSessionEventLimit(1000),
+		sessioninmemory.WithSessionEventLimit(500),
 		sessioninmemory.WithSessionTTL(30*time.Minute),
 		sessioninmemory.WithSummarizer(summary.NewSummarizer(summaryModel)),
-		sessioninmemory.WithAsyncSummaryNum(2),
+		sessioninmemory.WithAsyncSummaryNum(4),
 	)
 
 	// 长期记忆：自动从对话中提取用户旅行偏好、常用出发地、节奏和交通偏好等。
