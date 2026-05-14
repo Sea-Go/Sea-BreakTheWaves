@@ -14,8 +14,8 @@ func TestAmapAgentReasoningCapture(t *testing.T) {
 		t.Skipf("跳过：无法加载 config.yaml: %v", err)
 	}
 
-	if config.Cfg.Ali.ApiKey == "" || config.Cfg.Ali.AnalysisModel == "" {
-		t.Skip("跳过：Ali API Key 或 AnalysisModel 未配置")
+	if config.Cfg.Ali.ApiKey == "" || len(config.Cfg.Ali.HighModels) == 0 {
+		t.Skip("跳过：Ali API Key 或 HighModels 未配置")
 	}
 
 	userID := "test-reasoning-user"

@@ -19,7 +19,6 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/memory/extractor"
 	memoryinmemory "trpc.group/trpc-go/trpc-agent-go/memory/inmemory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
-	openaimodel "trpc.group/trpc-go/trpc-agent-go/model/openai"
 	"trpc.group/trpc-go/trpc-agent-go/planner/builtin"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/server/agui"
@@ -33,11 +32,7 @@ func AmapAgent() agentcore.Agent {
 	temperature := 0.0
 	topP := 0.3
 
-	alimodel := openaimodel.New(
-		config.Cfg.Ali.AnalysisModel,
-		openaimodel.WithBaseURL(config.Cfg.Ali.BaseURL),
-		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
-	)
+	alimodel := newModelForLevel("amap-agent", ModelLevelMedium)
 
 	amapTools := tools.NewDefaultAmapTools()
 
@@ -348,11 +343,7 @@ func NewAmapAGUIHandler() (http.Handler, func(), error) {
 	appName := config.Cfg.Agent.AppName + "amap"
 
 	// 为 summarizer 和 memory extractor 创建一个轻量模型实例
-	summaryModel := openaimodel.New(
-		config.Cfg.Ali.AnalysisModel,
-		openaimodel.WithBaseURL(config.Cfg.Ali.BaseURL),
-		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
-	)
+	summaryModel := newSummaryModel("amap-summary")
 
 	// 短期记忆：session 服务 + summarizer，自动压缩长对话历史
 	sessSvc := sessioninmemory.NewSessionService(

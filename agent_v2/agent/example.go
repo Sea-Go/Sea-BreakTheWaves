@@ -19,7 +19,7 @@ func ExampleAgent() agentcore.Agent {
 	thinkingEnabled := true
 
 	exampleModel := openaimodel.New(
-		config.Cfg.Ali.TestModel,
+		SelectModel(ModelLevelHigh),
 		openaimodel.WithAPIKey(config.Cfg.Ali.ApiKey),
 		openaimodel.WithBaseURL(strings.TrimRight(config.Cfg.Ali.BaseURL, "/")),
 	)
