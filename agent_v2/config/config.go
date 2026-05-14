@@ -17,6 +17,7 @@ type Config struct {
 	Postgres PostgresConfig `yaml:"postgres"`
 	Agent    AgentConfig    `yaml:"agent"`
 	Amap     AmapConfig     `yaml:"amap"`
+	Neo4j    Neo4jConfig    `yaml:"neo4j"`
 }
 
 func Load(path string) error {
@@ -38,11 +39,25 @@ func Init() error {
 }
 
 type AliConfig struct {
-	BaseURL       string `yaml:"baseurl"`
-	AnalysisModel string `yaml:"analysis_model"`
-	TestModel     string `yaml:"test_model"`
-	AmapModel     string `yaml:"amap_model"`
-	ApiKey        string `yaml:"apikey"`
+	BaseURL      string   `yaml:"baseurl"`
+	ApiKey       string   `yaml:"apikey"`
+	HighModels   []string `yaml:"high_models"`
+	MediumModels []string `yaml:"medium_models"`
+	LowModels    []string `yaml:"low_models"`
+}
+
+// ModelsForLevel 返回指定等级的模型列表。
+func (c AliConfig) ModelsForLevel(level int) []string {
+	switch level {
+	case 0: // ModelLevelHigh
+		return c.HighModels
+	case 1: // ModelLevelMedium
+		return c.MediumModels
+	case 2: // ModelLevelLow
+		return c.LowModels
+	default:
+		return nil
+	}
 }
 
 type ZhihuConfig struct {
@@ -192,6 +207,43 @@ type AmapConfig struct {
 type AmapRetryConfig struct {
 	MaxRetries     int     `yaml:"max_retries"`
 	BackoffSeconds float64 `yaml:"backoff_seconds"`
+}
+
+type Neo4jConfig struct {
+	URI             string `yaml:"uri"`
+	Username        string `yaml:"username"`
+	Password        string `yaml:"password"`
+	Database        string `yaml:"database"`
+	MaxPoolSize     int  `yaml:"max_pool_size"`
+	ConnectTimeout  int  `yaml:"connect_timeout"`
+	ReadTimeout     int  `yaml:"read_timeout"`
+	Enabled         bool `yaml:"enabled"`
+	MinDaysForSplit int  `yaml:"min_days_for_split"`
+}
+
+func (c Neo4jConfig) WithDefaults() Neo4jConfig {
+	if strings.TrimSpace(c.URI) == "" {
+		c.URI = "neo4j://localhost:7687"
+	}
+	if strings.TrimSpace(c.Username) == "" {
+		c.Username = "neo4j"
+	}
+	if strings.TrimSpace(c.Database) == "" {
+		c.Database = "neo4j"
+	}
+	if c.MaxPoolSize <= 0 {
+		c.MaxPoolSize = 10
+	}
+	if c.ConnectTimeout <= 0 {
+		c.ConnectTimeout = 10
+	}
+	if c.ReadTimeout <= 0 {
+		c.ReadTimeout = 30
+	}
+	if c.MinDaysForSplit <= 0 {
+		c.MinDaysForSplit = 2
+	}
+	return c
 }
 
 func (c AmapConfig) WithDefaults() AmapConfig {

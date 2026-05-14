@@ -14,8 +14,8 @@ func TestLoadSyncsYAMLConfig(t *testing.T) {
 	err := os.WriteFile(configPath, []byte(`
 ali:
   baseurl: "https://dashscope.example/v1"
-  analysis_model: "analysis-model"
-  test_model: "test-model"
+  high_models: ["analysis-model"]
+  low_models: ["low-model"]
   apikey: "llm-key"
 postgres:
   dsn: "postgres://example"
@@ -63,8 +63,8 @@ amap:
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if Cfg.Ali.AnalysisModel != "analysis-model" {
-		t.Fatalf("analysis_model not loaded, got %q", Cfg.Ali.AnalysisModel)
+	if len(Cfg.Ali.HighModels) == 0 || Cfg.Ali.HighModels[0] != "analysis-model" {
+		t.Fatalf("high_models[0] not loaded, got %v", Cfg.Ali.HighModels)
 	}
 	if Cfg.Amap.BaseURL != "https://amap.example/v4" {
 		t.Fatalf("amap.baseurl not loaded, got %q", Cfg.Amap.BaseURL)
