@@ -10,7 +10,8 @@ CREATE (tp:TripPlan {
     totalDays: $totalDays, budgetTotal: $budgetTotal, travelStyle: $travelStyle,
     transportMode: $transportMode, interests: $interests, mustVisit: $mustVisit,
     avoid: $avoid, rawRequirements: $rawRequirements, status: $status,
-    maxConsecutiveHighIntensityDays: $maxConsecutiveHighIntensityDays
+    maxConsecutiveHighIntensityDays: $maxConsecutiveHighIntensityDays,
+    userId: $userId, sessionId: $sessionId, requestId: $requestId
 })
 RETURN tp.id AS id
 `
@@ -54,7 +55,8 @@ const cypherWriteRoute = `
 MATCH (from:POI {id: $fromPOIID}), (to:POI {id: $toPOIID})
 MERGE (from)-[r:ROUTES_TO]->(to)
 SET r.transportMode = $transportMode, r.distanceMeters = $distanceMeters,
-    r.durationMin = $durationMin, r.estimatedCost = $estimatedCost, r.notes = $notes
+    r.durationMin = $durationMin, r.estimatedCost = $estimatedCost, r.notes = $notes,
+    r.fromPOIID = $fromPOIID, r.toPOIID = $toPOIID
 RETURN true AS ok
 `
 
@@ -90,7 +92,8 @@ MATCH (target {id: $targetNodeID})
 CREATE (rr:ReviewResult {
     id: $id, level: $level, dimension: $dimension, score: $score,
     passed: $passed, criticalIssues: $criticalIssues,
-    issues: $issues, suggestions: $suggestions, summary: $summary
+    issues: $issues, suggestions: $suggestions, summary: $summary,
+    constraintViolations: $constraintViolations
 })
 CREATE (target)-[:REVIEWED_BY]->(rr)
 RETURN rr.id AS reviewID
@@ -126,8 +129,10 @@ OPTIONAL MATCH (day)-[:REVIEWED_BY]->(rr:ReviewResult)
 OPTIONAL MATCH (day)-[:EXPECTED_WEATHER]->(cd:ClimateData)
 RETURN day,
        collect(DISTINCT poi) AS pois,
-       collect(DISTINCT {from: rt.fromPOIID, to: rt.toPOIID, mode: rt.transportMode,
-               distance: rt.distanceMeters, duration: rt.durationMin, cost: rt.estimatedCost}) AS routes,
+       collect(DISTINCT {fromPOIID: rt.fromPOIID, toPOIID: rt.toPOIID,
+               fromName: poi.name, toName: toPOI.name,
+               mode: rt.transportMode, distance: rt.distanceMeters,
+               duration: rt.durationMin, cost: rt.estimatedCost}) AS routes,
        collect(DISTINCT gi) AS insights,
        collect(DISTINCT rr) AS reviews,
        collect(DISTINCT cd) AS climate
@@ -227,16 +232,20 @@ RETURN collect({
 // --- Read: constraint violations ---
 
 const cypherGetConstraintViolations = `
-MATCH (n {id: $nodeID})
-OPTIONAL MATCH (n)-[:REVIEWED_BY]->(rr:ReviewResult)
-WHERE rr.passed = false
-RETURN collect({
-    nodeID: n.id,
-    nodeName: n.name,
-    level: rr.level,
-    criticalIssues: rr.criticalIssues,
-    violations: rr.constraintViolations
-}) AS violations
+MATCH (root {id: $nodeID})
+OPTIONAL MATCH (root)-[:REVIEWED_BY]->(rr:ReviewResult {passed: false})
+WITH root,
+    collect({nodeID: root.id, nodeName: coalesce(root.name, ''),
+        level: rr.level, criticalIssues: rr.criticalIssues,
+        violations: rr.constraintViolations}) AS direct
+OPTIONAL MATCH (root)-[:HAS_PHASE|HAS_MONTH|HAS_WEEK|HAS_DAY|VISITS_POI*1..6]->(child)
+OPTIONAL MATCH (child)-[:REVIEWED_BY]->(cr:ReviewResult {passed: false})
+WITH direct + collect({nodeID: child.id, nodeName: coalesce(child.name, ''),
+    level: cr.level, criticalIssues: cr.criticalIssues,
+    violations: cr.constraintViolations}) AS allViolations
+UNWIND allViolations AS v
+WITH v WHERE v.level IS NOT NULL
+RETURN collect(v) AS violations
 `
 
 // --- Read: budget ---
@@ -246,6 +255,20 @@ MATCH (n {id: $nodeID})
 OPTIONAL MATCH (n)-[:HAS_PHASE|HAS_MONTH|HAS_WEEK|HAS_DAY|VISITS_POI*1..6]->(child)
 WHERE child:POI OR child:RouteSegment
 RETURN coalesce(sum(child.estimatedCost), 0) AS totalCost
+`
+
+// --- Sequence edges ---
+
+const cypherCreateSequenceEdges = `
+MATCH (parent {id: $parentID})
+OPTIONAL MATCH (parent)-[r]->(child)
+WHERE type(r) STARTS WITH 'HAS_'
+WITH parent, child
+ORDER BY child.seq
+WITH parent, collect(child) AS children
+UNWIND range(0, size(children)-2) AS i
+WITH children[i] AS current, children[i+1] AS next
+CREATE (current)-[:%s]->(next)
 `
 
 // FormatSplitCypher builds the split query for a specific parent→child pair.
@@ -266,5 +289,26 @@ func relTypeForChild(childType string) string {
 		return RelHasDay
 	default:
 		return "HAS_" + childType
+	}
+}
+
+// FormatSequenceCypher builds the sequence-edge query for a child type.
+func FormatSequenceCypher(childType string) string {
+	relType := nextRelType(childType)
+	return fmt.Sprintf(cypherCreateSequenceEdges, relType)
+}
+
+func nextRelType(childType string) string {
+	switch childType {
+	case NodeTypePhase:
+		return RelNextPhase
+	case NodeTypeMonth:
+		return RelNextMonth
+	case NodeTypeWeek:
+		return RelNextWeek
+	case NodeTypeDay:
+		return RelNextDay
+	default:
+		return "NEXT_"
 	}
 }

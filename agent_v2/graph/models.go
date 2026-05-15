@@ -68,6 +68,9 @@ type TripPlanNode struct {
 	RawRequirements                 string   `json:"rawRequirements"`
 	Status                          string   `json:"status"`
 	MaxConsecutiveHighIntensityDays int      `json:"maxConsecutiveHighIntensityDays"`
+	UserID                          string   `json:"userId"`
+	SessionID                       string   `json:"sessionId"`
+	RequestID                       string   `json:"requestId"`
 }
 
 // PhaseNode represents a seasonal/geographic phase (1-6 phases per year).
@@ -250,4 +253,18 @@ type WeatherConstraintNode struct {
 	AffectedActivities []string `json:"affectedActivities"`
 	Threshold          string `json:"threshold"`
 	Description        string `json:"description"`
+}
+
+// OutputChunkNode represents a paginated output chunk for cursor-based reading.
+type OutputChunkNode struct {
+	ID            string `json:"id"`
+	TripPlanID    string `json:"tripPlanId"`
+	NodeID        string `json:"nodeId"`
+	Level         string `json:"level"`
+	Seq           int    `json:"seq"`
+	Title         string `json:"title"`
+	Content       string `json:"content"`
+	TokenEstimate int    `json:"tokenEstimate"`
+	Status        string `json:"status"`
+	CreatedAt     string `json:"createdAt"`
 }

@@ -25,6 +25,7 @@ func (c *Client) CreateTripPlan(ctx context.Context, tp TripPlanNode) (string, e
 			"transportMode": tp.TransportMode, "interests": tp.Interests, "mustVisit": tp.MustVisit,
 			"avoid": tp.Avoid, "rawRequirements": tp.RawRequirements, "status": tp.Status,
 			"maxConsecutiveHighIntensityDays": tp.MaxConsecutiveHighIntensityDays,
+			"userId": tp.UserID, "sessionId": tp.SessionID, "requestId": tp.RequestID,
 		})
 		return nil, err
 	})
@@ -82,6 +83,20 @@ func (c *Client) SplitParentNode(ctx context.Context, parentID, childType string
 		ids[i] = fmt.Sprint(v)
 	}
 	return ids, nil
+}
+
+// CreateSequenceEdges creates NEXT_* edges between children of the same parent,
+// ordered by seq. For example, Phase1-[:NEXT_PHASE]->Phase2-[:NEXT_PHASE]->Phase3.
+func (c *Client) CreateSequenceEdges(ctx context.Context, parentID, childType string) error {
+	cypher := FormatSequenceCypher(childType)
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypher, map[string]any{"parentID": parentID})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: create sequence edges for %s: %w", childType, err)
+	}
+	return nil
 }
 
 // POIInput describes a POI to upsert into a Day.
@@ -245,6 +260,7 @@ func (c *Client) WriteReviewResult(ctx context.Context, targetNodeID string, rev
 			"score": review.Score, "passed": review.Passed,
 			"criticalIssues": review.CriticalIssues, "issues": review.Issues,
 			"suggestions": review.Suggestions, "summary": review.Summary,
+			"constraintViolations": violationsToMaps(review.ConstraintViolations),
 		})
 		return nil, err
 	})
@@ -549,6 +565,23 @@ func (c *Client) GetNodeBudgetSummary(ctx context.Context, nodeID string) (float
 
 // --- Helpers ---
 
+func violationsToMaps(violations []ConstraintViolation) []map[string]any {
+	if len(violations) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, len(violations))
+	for i, v := range violations {
+		out[i] = map[string]any{
+			"dimension": v.Dimension,
+			"rule":      v.Rule,
+			"actual":    v.Actual,
+			"threshold": v.Threshold,
+			"severity":  v.Severity,
+		}
+	}
+	return out
+}
+
 func toMapSlice(v any) []map[string]any {
 	list, _ := v.([]any)
 	out := make([]map[string]any, len(list))
@@ -608,7 +641,7 @@ func getStringSlice(props map[string]any, key string) []string {
 func nodeToTripPlanNode(n neo4j.Node) TripPlanNode {
 	p := n.Props
 	return TripPlanNode{
-		ID: n.ElementId, Name: getStringProp(p, "name"),
+		ID: getStringProp(p, "id"), Name: getStringProp(p, "name"),
 		StartDate: getStringProp(p, "startDate"), EndDate: getStringProp(p, "endDate"),
 		TotalDays: getIntProp(p, "totalDays"), BudgetTotal: getFloatProp(p, "budgetTotal"),
 		TravelStyle: getStringProp(p, "travelStyle"), TransportMode: getStringProp(p, "transportMode"),
@@ -616,13 +649,16 @@ func nodeToTripPlanNode(n neo4j.Node) TripPlanNode {
 		Avoid: getStringSlice(p, "avoid"), RawRequirements: getStringProp(p, "rawRequirements"),
 		Status: getStringProp(p, "status"),
 		MaxConsecutiveHighIntensityDays: getIntProp(p, "maxConsecutiveHighIntensityDays"),
+		UserID:    getStringProp(p, "userId"),
+		SessionID: getStringProp(p, "sessionId"),
+		RequestID: getStringProp(p, "requestId"),
 	}
 }
 
 func nodeToDayNode(n neo4j.Node) DayNode {
 	p := n.Props
 	return DayNode{
-		ID: n.ElementId, Date: getStringProp(p, "date"),
+		ID: getStringProp(p, "id"), Date: getStringProp(p, "date"),
 		DayIndex: getIntProp(p, "dayIndex"), Theme: getStringProp(p, "theme"),
 		StartPoint: getStringProp(p, "startPoint"), PrimaryArea: getStringProp(p, "primaryArea"),
 		RouteOverview: getStringProp(p, "routeOverview"), Intensity: getStringProp(p, "intensity"),
@@ -633,7 +669,7 @@ func nodeToDayNode(n neo4j.Node) DayNode {
 func nodeToPOINode(n neo4j.Node) POINode {
 	p := n.Props
 	return POINode{
-		ID: n.ElementId, Name: getStringProp(p, "name"),
+		ID: getStringProp(p, "id"), Name: getStringProp(p, "name"),
 		AmapPOIID: getStringProp(p, "amapPOIID"), Type: getStringProp(p, "type"),
 		Lat: getFloatProp(p, "lat"), Lng: getFloatProp(p, "lng"),
 		Address: getStringProp(p, "address"), District: getStringProp(p, "district"),
@@ -649,7 +685,7 @@ func nodeToPOINode(n neo4j.Node) POINode {
 func nodeToGuideInsightNode(n neo4j.Node) GuideInsightNode {
 	p := n.Props
 	return GuideInsightNode{
-		ID: n.ElementId, Source: getStringProp(p, "source"),
+		ID: getStringProp(p, "id"), Source: getStringProp(p, "source"),
 		SourceTitle: getStringProp(p, "sourceTitle"), SourceURL: getStringProp(p, "sourceURL"),
 		AuthorName: getStringProp(p, "authorName"), ContentSummary: getStringProp(p, "contentSummary"),
 		Keywords: getStringSlice(p, "keywords"), Sentiment: getStringProp(p, "sentiment"),
@@ -660,18 +696,41 @@ func nodeToGuideInsightNode(n neo4j.Node) GuideInsightNode {
 func nodeToReviewResultNode(n neo4j.Node) ReviewResultNode {
 	p := n.Props
 	return ReviewResultNode{
-		ID: n.ElementId, Level: getStringProp(p, "level"),
+		ID: getStringProp(p, "id"), Level: getStringProp(p, "level"),
 		Dimension: getStringProp(p, "dimension"), Score: getIntProp(p, "score"),
 		Passed: getBoolProp(p, "passed"), CriticalIssues: getStringSlice(p, "criticalIssues"),
 		Issues: getStringSlice(p, "issues"), Suggestions: getStringSlice(p, "suggestions"),
-		Summary: getStringProp(p, "summary"),
+		Summary:              getStringProp(p, "summary"),
+		ConstraintViolations: toConstraintViolations(p["constraintViolations"]),
 	}
+}
+
+func toConstraintViolations(v any) []ConstraintViolation {
+	list, _ := v.([]any)
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]ConstraintViolation, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, ConstraintViolation{
+			Dimension: fmt.Sprint(m["dimension"]),
+			Rule:      fmt.Sprint(m["rule"]),
+			Actual:    fmt.Sprint(m["actual"]),
+			Threshold: fmt.Sprint(m["threshold"]),
+			Severity:  fmt.Sprint(m["severity"]),
+		})
+	}
+	return out
 }
 
 func nodeToClimateDataNode(n neo4j.Node) ClimateDataNode {
 	p := n.Props
 	return ClimateDataNode{
-		ID: n.ElementId, Region: getStringProp(p, "region"),
+		ID: getStringProp(p, "id"), Region: getStringProp(p, "region"),
 		Month: getIntProp(p, "month"), AvgHighTemp: getFloatProp(p, "avgHighTemp"),
 		AvgLowTemp: getFloatProp(p, "avgLowTemp"), Precipitation: getFloatProp(p, "precipitation"),
 		Humidity: getFloatProp(p, "humidity"), RainyDays: getIntProp(p, "rainyDays"),
@@ -683,7 +742,7 @@ func nodeToClimateDataNode(n neo4j.Node) ClimateDataNode {
 func nodeToWeatherConstraintNode(n neo4j.Node) WeatherConstraintNode {
 	p := n.Props
 	return WeatherConstraintNode{
-		ID: n.ElementId, Region: getStringProp(p, "region"),
+		ID: getStringProp(p, "id"), Region: getStringProp(p, "region"),
 		Month: getIntProp(p, "month"), ConstraintType: getStringProp(p, "constraintType"),
 		Severity: getStringProp(p, "severity"),
 		AffectedActivities: getStringSlice(p, "affectedActivities"),
@@ -694,7 +753,7 @@ func nodeToWeatherConstraintNode(n neo4j.Node) WeatherConstraintNode {
 func nodeToSeasonalEventNode(n neo4j.Node) SeasonalEventNode {
 	p := n.Props
 	return SeasonalEventNode{
-		ID: n.ElementId, Name: getStringProp(p, "name"),
+		ID: getStringProp(p, "id"), Name: getStringProp(p, "name"),
 		Region: getStringProp(p, "region"), StartMonth: getIntProp(p, "startMonth"),
 		EndMonth: getIntProp(p, "endMonth"), Type: getStringProp(p, "type"),
 		Description: getStringProp(p, "description"),

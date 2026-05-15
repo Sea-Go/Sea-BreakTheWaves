@@ -27,6 +27,11 @@ func Init() {
 		panic(fmt.Sprintf("graph: failed to initialize Neo4j client: %v", err))
 	}
 	client = c
+	if c != nil && c.IsEnabled() {
+		if err := c.EnsureSchema(context.Background()); err != nil {
+			panic(fmt.Sprintf("graph: failed to ensure schema: %v", err))
+		}
+	}
 }
 
 // GetClient returns the package-level Neo4j client, or nil if not enabled.
