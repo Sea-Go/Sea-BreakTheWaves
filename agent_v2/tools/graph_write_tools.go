@@ -26,6 +26,9 @@ type CreateTripPlanInput struct {
 	Avoid                           []string `json:"avoid" jsonschema:"description=避雷地点"`
 	RawRequirements                 string   `json:"raw_requirements" jsonschema:"description=用户原始需求"`
 	MaxConsecutiveHighIntensityDays int      `json:"max_consecutive_high_intensity_days" jsonschema:"description=连续高强度天数上限"`
+	UserID                          string   `json:"user_id" jsonschema:"description=用户ID"`
+	SessionID                       string   `json:"session_id" jsonschema:"description=会话ID"`
+	RequestID                       string   `json:"request_id" jsonschema:"description=请求ID"`
 }
 
 type CreateTripPlanOutput struct {
@@ -47,6 +50,7 @@ func newCreateTripPlanTool(client *graph.Client) tool.Tool {
 				Interests: in.Interests, MustVisit: in.MustVisit, Avoid: in.Avoid,
 				RawRequirements: in.RawRequirements,
 				MaxConsecutiveHighIntensityDays: in.MaxConsecutiveHighIntensityDays,
+				UserID: in.UserID, SessionID: in.SessionID, RequestID: in.RequestID,
 			}
 			id, err := client.CreateTripPlan(ctx, tp)
 			if err != nil {

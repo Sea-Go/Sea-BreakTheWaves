@@ -15,11 +15,10 @@ type GraphToolSet struct {
 	tools  []tool.Tool
 }
 
-// NewDefaultGraphToolSet creates a GraphToolSet from global config.
+// NewDefaultGraphToolSet creates a GraphToolSet from the global client.
 func NewDefaultGraphToolSet() *GraphToolSet {
-	client, err := graph.NewClient(config.Cfg.Neo4j)
-	if err != nil {
-		// Return a toolset that returns errors on all operations (graceful degradation)
+	client := graph.GetClient()
+	if client == nil || !client.IsEnabled() {
 		return &GraphToolSet{client: nil, tools: nil}
 	}
 	return &GraphToolSet{
@@ -65,8 +64,8 @@ func (s *GraphToolSet) IsEnabled() bool {
 
 // NewDefaultGraphTools returns graph tools as a flat slice (for direct coordinator use).
 func NewDefaultGraphTools() []tool.Tool {
-	client, err := graph.NewClient(config.Cfg.Neo4j)
-	if err != nil || client == nil {
+	client := graph.GetClient()
+	if client == nil || !client.IsEnabled() {
 		return nil
 	}
 	return newGraphTools(client)

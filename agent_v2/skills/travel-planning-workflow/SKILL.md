@@ -5,11 +5,21 @@ description: 图数据库模式下的四阶段十三步旅行规划工作流。T
 
 # 图数据库模式：四阶段十三步工作流
 
+## 运行前提
+
+需求准入已由 Go 层 Orchestrator 完成。上下文中已包含完整的 TravelRequirementSnapshot。
+本 skill 只在 orchestrator 确认 requirement_ready=true 后被加载。
+禁止加载 travel-requirement-intake。禁止向用户追问。
+
 ## 阶段一：宏观规划 + L0 TripPlan / L1 Phase 级审查
 
-### Step 1: 解析年度需求 + 创建 TripPlan
-- 加载 travel-requirement-intake
-- 调用 create_trip_plan 创建根节点（设定 budgetTotal、maxConsecutiveHighIntensityDays 等）
+### Step 1: 基于需求快照创建 TripPlan
+- 输入：Orchestrator 提供的结构化 TravelRequirementSnapshot
+- 调用 create_trip_plan 创建根节点（绑定 userId/sessionId/requestId，设定 budgetTotal、maxConsecutiveHighIntensityDays 等）
+- 规划 3-8 个 Phase（region, season, theme, dayCount, start/end anchor）
+- 禁止重新解析用户原始意图
+- 禁止加载 travel-requirement-intake
+- 禁止向用户追问
 
 ### Step 2: 气候驱动的 Phase 拆分
 - 对候选区域调用 get_weather_context 获取各月气候
