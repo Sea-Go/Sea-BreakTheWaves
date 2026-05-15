@@ -21,17 +21,20 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // graphWorkflowAgent implements agentcore.Agent for the hybrid graph workflow.
-// Phase 1 uses the LLM coordinator (Steps 1-7), Phases 2-5 use Go-level loops.
+// Orchestrator controls stage progression; coordinator handles macro planning.
 type graphWorkflowAgent struct {
 	name         string
 	description  string
-	coordinator  agentcore.Agent
+	coordinator  agentcore.Agent              // macro_planning 完整 coordinator（有图/地图/攻略工具）
+	intakeAgent  agentcore.Agent              // intake/merge 精简 Agent（只有 skill 工具）
 	graphClient  *graph.Client
-	reviewAgents []reviewAgentSpec // cached review agents for Phase 3
+	reviewAgents []reviewAgentSpec            // cached review agents for Phase 3
+	orchestrator *TravelSkillOrchestrator     // skills 编排中央控制器
 }
 
 type reviewAgentSpec struct {
@@ -74,46 +77,62 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 			sessionID = invocation.Session.ID
 		}
 
-		// --- Phase 1: Macro Planning (Steps 1-7) ---
-		a.emitTextEvent(outCh, invocation, "Phase 1/5: 宏观规划 — LLM Coordinator 执行 Steps 1-7...")
-		tripPlanID, macroContext, err := a.runPhase1(ctx, userID, sessionID, msg, outCh, invocation)
+		// ================================================================
+		// 1. Orchestrator 决定本轮执行哪个 stage
+		// ================================================================
+		result, err := a.orchestrator.Handle(ctx, userID, sessionID, msg, a.intakeAgent)
 		if err != nil {
-			a.emitErrorEvent(outCh, invocation, fmt.Sprintf("Phase 1 failed: %v", err))
-			return
-		}
-		a.emitTextEvent(outCh, invocation, fmt.Sprintf("Phase 1 完成 — TripPlanID: %s, 共 %d Day", tripPlanID, macroContext.dayCount))
-
-		// --- Phase 2: Day-by-Day POI Verification (Step 8) ---
-		a.emitTextEvent(outCh, invocation, "Phase 2/5: 逐日 POI 验证 — amap-agent 地理编码 + 周边搜索 + 路线查询...")
-		if err := a.runPhase2(ctx, tripPlanID); err != nil {
-			a.emitErrorEvent(outCh, invocation, fmt.Sprintf("Phase 2 failed: %v", err))
-			return
-		}
-		a.emitTextEvent(outCh, invocation, "Phase 2 完成 — POI 和路线数据已写入图数据库")
-
-		// --- Phase 3: Full Review (Steps 9-10) ---
-		a.emitTextEvent(outCh, invocation, "Phase 3/5: 全量审查 — 10 个审查 Agent 逐日审查...")
-		if err := a.runPhase3(ctx, tripPlanID); err != nil {
-			a.emitErrorEvent(outCh, invocation, fmt.Sprintf("Phase 3 failed: %v", err))
-			return
-		}
-		a.emitTextEvent(outCh, invocation, "Phase 3 完成 — 审查结果已写入图数据库")
-
-		// --- Phase 4: Global Checks (Steps 11-12) ---
-		a.emitTextEvent(outCh, invocation, "Phase 4/5: 全局检查 — 约束违规追溯 + 天气风险终审...")
-		globalNotes := a.runPhase4(ctx, tripPlanID, macroContext)
-		a.emitTextEvent(outCh, invocation, "Phase 4 完成")
-
-		// --- Phase 5: Day-by-Day Output (Step 13) ---
-		a.emitTextEvent(outCh, invocation, "Phase 5/5: 逐日输出 — 对每天调用 get_day_fullContext + DayOutputAgent...")
-		finalJSON, err := a.runPhase5(ctx, tripPlanID, globalNotes, macroContext)
-		if err != nil {
-			a.emitErrorEvent(outCh, invocation, fmt.Sprintf("Phase 5 failed: %v", err))
+			a.emitErrorEvent(outCh, invocation, fmt.Sprintf("编排错误: %v", err))
 			return
 		}
 
-		// Emit final result
-		a.emitFinalEvent(outCh, invocation, finalJSON)
+		// ================================================================
+		// 2. StopWorkflow → 直接返回追问/提示文本给用户
+		// ================================================================
+		if result.StopWorkflow {
+			if result.Output != "" {
+				a.emitTextEvent(outCh, invocation, result.Output)
+			}
+			return
+		}
+
+		// ================================================================
+		// 3. 连续推进 stage，直到遇到 checkpoint 或未实现阶段
+		// ================================================================
+		const maxStageSteps = 5
+		for step := 0; step < maxStageSteps; step++ {
+			switch result.NextStage {
+			case StageMacroPlanning:
+				rt := a.orchestrator.LoadOrInitRuntime(userID, sessionID)
+				if !rt.Requirement.RequirementReady {
+					a.emitErrorEvent(outCh, invocation, "需求未完成，不能进入宏观规划")
+					return
+				}
+				augmentedMsg := buildMacroPrompt(msg, rt)
+				tripPlanID, err := a.runMacroPlanningOnly(ctx, userID, sessionID, augmentedMsg, outCh, invocation)
+				if err != nil {
+					a.emitErrorEvent(outCh, invocation, fmt.Sprintf("宏观规划失败: %v", err))
+					return
+				}
+				a.orchestrator.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
+					r.TripPlanID = tripPlanID
+					r.CurrentStage = StageGraphSplitting
+				})
+				result.NextStage = StageGraphSplitting
+
+			case StageGraphSplitting, StageDayExpansion, StageReview, StageFinalOutput:
+				a.emitTextEvent(outCh, invocation,
+					fmt.Sprintf("%s 阶段（待后续 PR 实现）", result.NextStage))
+				return
+
+			default:
+				a.emitTextEvent(outCh, invocation,
+					fmt.Sprintf("规划完成: stage=%s", result.NextStage))
+				return
+			}
+		}
+
+		a.emitErrorEvent(outCh, invocation, "达到最大连续推进步数，停止。")
 	}()
 
 	return outCh, nil
@@ -123,7 +142,7 @@ func (a *graphWorkflowAgent) emitTextEvent(outCh chan<- *event.Event, inv *agent
 	msgID := fmt.Sprintf("wf-msg-%d", time.Now().UnixNano())
 	outCh <- &event.Event{
 		Response: &model.Response{
-			ID:   msgID,
+			ID:     msgID,
 			Object: model.ObjectTypeChatCompletionChunk,
 			Choices: []model.Choice{{
 				Delta: model.Message{Content: text + "\n"},
@@ -136,7 +155,7 @@ func (a *graphWorkflowAgent) emitErrorEvent(outCh chan<- *event.Event, inv *agen
 	msgID := fmt.Sprintf("wf-err-%d", time.Now().UnixNano())
 	outCh <- &event.Event{
 		Response: &model.Response{
-			ID:   msgID,
+			ID:     msgID,
 			Object: model.ObjectTypeChatCompletion,
 			Choices: []model.Choice{{
 				Message: model.Message{Role: model.RoleAssistant, Content: fmt.Sprintf("❌ %s", errMsg)},
@@ -149,7 +168,7 @@ func (a *graphWorkflowAgent) emitFinalEvent(outCh chan<- *event.Event, inv *agen
 	msgID := fmt.Sprintf("wf-final-%d", time.Now().UnixNano())
 	outCh <- &event.Event{
 		Response: &model.Response{
-			ID:   msgID,
+			ID:     msgID,
 			Object: model.ObjectTypeChatCompletion,
 			Choices: []model.Choice{{
 				Message: model.Message{Role: model.RoleAssistant, Content: content},
@@ -167,106 +186,97 @@ type macroPlanContext struct {
 	rawAnswer  string // coordinator's planning output
 }
 
-func (a *graphWorkflowAgent) runPhase1(ctx context.Context, userID, sessionID, userMessage string, outCh chan<- *event.Event, invocation *agentcore.Invocation) (string, *macroPlanContext, error) {
+// --- Macro Planning Only ---
+// Replaces the old runPhase1 which also did Month/Week/Day splitting.
+// Now only does TripPlan + Phase creation.
+
+func (a *graphWorkflowAgent) runMacroPlanningOnly(
+	ctx context.Context,
+	userID, sessionID string,
+	augmentedMsg string,
+	outCh chan<- *event.Event,
+	invocation *agentcore.Invocation,
+) (string, error) {
 	cfg := config.Cfg
-	appName := cfg.Agent.AppName + "workflow-phase1"
+	appName := cfg.Agent.AppName + "macro-planning"
 
 	rn := runner.NewRunner(appName, a.coordinator)
 	defer rn.Close()
 
-	eventCh, err := rn.Run(ctx, userID, sessionID, model.NewUserMessage(userMessage),
-		agentcore.WithStream(true))
+	eventCh, err := rn.Run(ctx, userID, sessionID,
+		model.NewUserMessage(augmentedMsg), agentcore.WithStream(true))
 	if err != nil {
-		return "", nil, fmt.Errorf("run coordinator: %w", err)
+		return "", fmt.Errorf("run coordinator: %w", err)
 	}
 
-	var finalContent strings.Builder
-	var tripPlanID string
-
+	var out strings.Builder
 	for evt := range eventCh {
 		if evt == nil || evt.Response == nil {
 			continue
 		}
-		for _, choice := range evt.Response.Choices {
-			if choice.Delta.Content != "" {
-				finalContent.WriteString(choice.Delta.Content)
-				// Forward to AG-UI for real-time user feedback
-				a.emitTextEvent(outCh, invocation, choice.Delta.Content)
+		for _, c := range evt.Response.Choices {
+			if c.Delta.Content != "" {
+				out.WriteString(c.Delta.Content)
 			}
-			if choice.Message.Content != "" && finalContent.Len() == 0 {
-				finalContent.WriteString(choice.Message.Content)
-				a.emitTextEvent(outCh, invocation, choice.Message.Content)
+			if c.Message.Content != "" && out.Len() == 0 {
+				out.WriteString(c.Message.Content)
 			}
 		}
 	}
 
-	output := finalContent.String()
-	log.Infof("[workflow-runner] Phase 1 coordinator output: %d chars", len(output))
-
-	// Extract tripPlanID from coordinator output
-	tripPlanID = extractTripPlanID(output)
+	tripPlanID := extractTripPlanID(out.String())
 	if tripPlanID == "" {
-		// Fallback: query Neo4j for the most recent TripPlan
-		tripPlanID = a.findLatestTripPlan(ctx)
+		log.Errorf("[workflow-runner] macro_planning: no trip_plan_id in output, len=%d", out.Len())
+		return "", fmt.Errorf("coordinator 未返回 trip_plan_id，输出长度 %d 字符", out.Len())
 	}
 
-	if tripPlanID == "" {
-		return "", nil, fmt.Errorf("无法获取 TripPlanID，coordinator 输出 %d 字符", len(output))
-	}
-
-	// Deduplicate duplicate nodes caused by rate-limit retries
-	a.dedupPhase1Nodes(ctx, tripPlanID)
-
-	// Get day count and regions from Neo4j
 	overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
 	if err != nil {
-		return "", nil, fmt.Errorf("get trip overview: %w", err)
+		return "", fmt.Errorf("get trip overview: %w", err)
+	}
+	if overview.TripPlan.SessionID != sessionID {
+		log.Errorf("[workflow-runner] TripPlan %s session mismatch: expected %s, got %s",
+			tripPlanID, sessionID, overview.TripPlan.SessionID)
+		return "", fmt.Errorf("TripPlan %s 属于 session %s，不是当前 session %s",
+			tripPlanID, overview.TripPlan.SessionID, sessionID)
 	}
 
-	// Ensure all days are created — LLM may truncate for very large trips (>60 days)
-	totalDays := overview.TripPlan.TotalDays
-	actualDays := len(overview.Days)
-	if actualDays < totalDays {
-		log.Infof("[workflow-runner] LLM created %d/%d days, filling missing %d days via Go code",
-			actualDays, totalDays, totalDays-actualDays)
-		if err := a.ensureAllDaysCreated(ctx, tripPlanID, overview); err != nil {
-			log.Errorf("[workflow-runner] ensureAllDaysCreated failed: %v", err)
-		} else {
-			overview, err = a.graphClient.GetTripOverview(ctx, tripPlanID)
-			if err != nil {
-				return "", nil, fmt.Errorf("re-fetch trip overview: %w", err)
-			}
-		}
-	}
+	// 只给用户阶段摘要，不流式透传 SkillResult JSON
+	a.emitTextEvent(outCh, invocation,
+		fmt.Sprintf("宏观规划完成 — 已创建 %d 个 Phase。接下来进入图拆分阶段。", len(overview.Phases)))
 
-	mctx := &macroPlanContext{
-		tripPlanID: tripPlanID,
-		dayCount:   len(overview.Days),
-		rawAnswer:  output,
-	}
-	for _, p := range overview.Phases {
-		if region, ok := p["region"].(string); ok && region != "" {
-			mctx.regions = append(mctx.regions, region)
-		}
-	}
+	log.Infof("[workflow-runner] macro_planning: tripPlanID=%s phases=%d session=%s",
+		tripPlanID, len(overview.Phases), sessionID)
+	return tripPlanID, nil
+}
 
-	log.Infof("[workflow-runner] Phase 1 complete: tripPlanID=%s days=%d regions=%v",
-		tripPlanID, mctx.dayCount, mctx.regions)
+// buildMacroPrompt embeds the requirement snapshot into the macro planning prompt.
+func buildMacroPrompt(originalMsg string, rt TravelSkillRuntime) string {
+	reqJSON, _ := json.Marshal(rt.Requirement)
+	return fmt.Sprintf(`## 已确认的旅行需求
 
-	return tripPlanID, mctx, nil
+%s
+
+## 用户原始消息
+%s
+
+## 本阶段任务：MacroPlanning
+只完成以下操作：
+1. 基于需求创建 TripPlan（create_trip_plan，必须绑定 userId=%s, sessionId=%s, requestId=%s）
+2. 规划 3-8 个 Phase（region, season, theme, dayCount, start/end anchor）
+
+禁止：Month/Week/Day 拆分、攻略采集、POI 验证、审查、逐日输出。
+
+输出 SkillResult JSON（含 trip_plan_id, next_stage=graph_splitting）。`,
+		string(reqJSON), originalMsg, rt.UserID, rt.SessionID, rt.RunID)
 }
 
 func extractTripPlanID(output string) string {
-	// Try to parse as phase1_complete JSON
-	var phase1 struct {
-		Phase1Complete bool   `json:"phase1_complete"`
-		TripPlanID     string `json:"tripPlanID"`
+	// 优先：解析 SkillResult JSON
+	if r := parseSkillResult(output); r != nil && r.TripPlanID != "" {
+		return r.TripPlanID
 	}
-	if json.Unmarshal([]byte(output), &phase1) == nil && phase1.TripPlanID != "" {
-		return phase1.TripPlanID
-	}
-	// Try to find any JSON object with tripPlanID field in the output
-	// Some LLMs wrap the JSON in markdown or text
+	// 兼容旧格式：tripPlanID / trip_plan_id
 	cleaned := extractJSONBlock(output)
 	if cleaned != "" {
 		var generic map[string]interface{}
@@ -274,36 +284,14 @@ func extractTripPlanID(output string) string {
 			if id, ok := generic["tripPlanID"].(string); ok && id != "" {
 				return id
 			}
+			if id, ok := generic["trip_plan_id"].(string); ok && id != "" {
+				return id
+			}
 		}
 	}
 	return ""
 }
 
-func (a *graphWorkflowAgent) findLatestTripPlan(ctx context.Context) string {
-	// Direct Neo4j query to find any TripPlan
-	result, err := a.graphClient.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		rec, err := tx.Run(ctx,
-			"MATCH (tp:TripPlan) RETURN tp.id AS id ORDER BY tp.id DESC LIMIT 1",
-			map[string]any{},
-		)
-		if err != nil {
-			return nil, err
-		}
-		if rec.Next(ctx) {
-			id, _ := rec.Record().Get("id")
-			return id, nil
-		}
-		return nil, rec.Err()
-	})
-	if err != nil || result == nil {
-		return ""
-	}
-	return fmt.Sprint(result)
-}
-
-// ensureAllDaysCreated fills in missing Day nodes when the LLM coordinator
-// truncates the day count for very large trips (>60 days). It distributes
-// remaining days across existing Weeks proportionally.
 func (a *graphWorkflowAgent) ensureAllDaysCreated(ctx context.Context, tripPlanID string, overview *graph.TripOverview) error {
 	totalDays := overview.TripPlan.TotalDays
 	actualDays := len(overview.Days)
@@ -362,13 +350,13 @@ func (a *graphWorkflowAgent) ensureAllDaysCreated(ctx context.Context, tripPlanI
 			}
 
 			dayProps := map[string]any{
-				"id":         dayID,
-				"date":       date,
-				"dayIndex":   maxDayIdx,
-				"theme":      theme,
-				"intensity":  "medium",
-				"status":     "outlined",
-				"startPoint": "",
+				"id":          dayID,
+				"date":        date,
+				"dayIndex":    maxDayIdx,
+				"theme":       theme,
+				"intensity":   "medium",
+				"status":      "outlined",
+				"startPoint":  "",
 				"primaryArea": "",
 			}
 
@@ -419,35 +407,6 @@ func calculateDate(startDate string, offset int) string {
 		return startDate
 	}
 	return t.AddDate(0, 0, offset).Format("2006-01-02")
-}
-
-// dedupPhase1Nodes removes duplicate TripPlan and Phase nodes caused by rate-limit retries.
-// Month/Week/Day nodes are left as-is since retry-created nodes don't cause issues
-// and the dedup logic for lower levels is too brittle.
-func (a *graphWorkflowAgent) dedupPhase1Nodes(ctx context.Context, tripPlanID string) {
-	// Remove duplicate TripPlan nodes (keep the one matching tripPlanID)
-	_, _ = a.graphClient.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx,
-			`MATCH (tp:TripPlan)
-			 WHERE tp.id <> $tripPlanID
-			 DETACH DELETE tp`,
-			map[string]any{"tripPlanID": tripPlanID})
-		return nil, err
-	})
-
-	// Remove duplicate Phase nodes (keep first per seq for the correct TripPlan)
-	_, _ = a.graphClient.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx,
-			`MATCH (tp:TripPlan {id: $tripPlanID})-[:HAS_PHASE]->(p:Phase)
-			 WITH p ORDER BY p.seq
-			 WITH p.seq AS seq, collect(p)[0] AS keep, collect(p)[1..] AS dups
-			 UNWIND dups AS dup
-			 DETACH DELETE dup`,
-			map[string]any{"tripPlanID": tripPlanID})
-		return nil, err
-	})
-
-	log.Infof("[workflow-runner] dedup complete for tripPlanID=%s", tripPlanID)
 }
 
 // --- Phase 2: Day-by-Day POI Verification ---
@@ -546,7 +505,34 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string) er
 	}
 
 	// Parse and write POIs
-	pois, routes := parseAmapPOIResult(amapResult)
+	pois, rawRoutes := parseAmapPOIResult(amapResult)
+
+	// Pre-generate POI IDs before any writes, so routes can reference them correctly.
+	for i := range pois {
+		if pois[i].ID == "" {
+			pois[i].ID = fmt.Sprintf("poi-%s", uuid.NewString())
+		}
+	}
+
+	// Rebuild routes using the pre-generated POI IDs
+	var routes []graph.RouteInput
+	for _, rr := range rawRoutes {
+		if rr.TransportMode == "" {
+			continue
+		}
+		if rr.FromPOI >= len(pois) || rr.ToPOI >= len(pois) {
+			continue
+		}
+		routes = append(routes, graph.RouteInput{
+			FromPOIID:      pois[rr.FromPOI].ID,
+			ToPOIID:        pois[rr.ToPOI].ID,
+			TransportMode:  rr.TransportMode,
+			DistanceMeters: rr.DistanceMeters,
+			DurationMin:    rr.DurationMin,
+			EstimatedCost:  rr.EstimatedCost,
+			Notes:          rr.Notes,
+		})
+	}
 
 	for _, poi := range pois {
 		poiID, err := a.graphClient.UpsertPOIToDay(ctx, dayID, poi)
@@ -572,20 +558,23 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string) er
 	return nil
 }
 
-func parseAmapPOIResult(result string) ([]graph.POIInput, []graph.RouteInput) {
-	type rawRoute struct {
-		FromPOI        int     `json:"fromPOI"`
-		ToPOI          int     `json:"toPOI"`
-		TransportMode  string  `json:"transportMode"`
-		DistanceMeters float64 `json:"distanceMeters"`
-		DurationMin    float64 `json:"durationMin"`
-		EstimatedCost  float64 `json:"estimatedCost"`
-		Notes          string  `json:"notes"`
-	}
-	var parsed struct {
-		POIs   []graph.POIInput `json:"pois"`
-		Routes []rawRoute       `json:"routes"`
-	}
+type parsedAmapResult struct {
+	POIs      []graph.POIInput `json:"pois"`
+	RawRoutes []rawAmapRoute   `json:"routes"`
+}
+
+type rawAmapRoute struct {
+	FromPOI        int     `json:"fromPOI"`
+	ToPOI          int     `json:"toPOI"`
+	TransportMode  string  `json:"transportMode"`
+	DistanceMeters float64 `json:"distanceMeters"`
+	DurationMin    float64 `json:"durationMin"`
+	EstimatedCost  float64 `json:"estimatedCost"`
+	Notes          string  `json:"notes"`
+}
+
+func parseAmapPOIResult(result string) ([]graph.POIInput, []rawAmapRoute) {
+	var parsed parsedAmapResult
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		cleaned := extractJSONBlock(result)
 		if cleaned != "" {
@@ -600,26 +589,7 @@ func parseAmapPOIResult(result string) ([]graph.POIInput, []graph.RouteInput) {
 		}
 	}
 
-	var routes []graph.RouteInput
-	for _, route := range parsed.Routes {
-		if route.TransportMode != "" && route.FromPOI < len(pois) && route.ToPOI < len(pois) {
-			routes = append(routes, graph.RouteInput{
-				FromPOIID:      pois[route.FromPOI].ID,
-				ToPOIID:        pois[route.ToPOI].ID,
-				TransportMode:  route.TransportMode,
-				DistanceMeters: route.DistanceMeters,
-				DurationMin:    route.DurationMin,
-				EstimatedCost:  route.EstimatedCost,
-				Notes:          route.Notes,
-			})
-		}
-	}
-
-	// Write routes using the POI IDs directly
-	// We also need to handle case where routes reference POI names instead of indices
-	_ = routes
-
-	return pois, routes
+	return pois, parsed.RawRoutes
 }
 
 func extractJSONBlock(text string) string {
@@ -914,9 +884,9 @@ func parseReviewOutput(output string) *graph.ReviewInput {
 // --- Phase 4: Global Checks ---
 
 type globalNotes struct {
-	weatherNotes    []string
-	seasonalEvents  []string
-	reviewSummary   string
+	weatherNotes   []string
+	seasonalEvents []string
+	reviewSummary  string
 }
 
 func (a *graphWorkflowAgent) runPhase4(ctx context.Context, tripPlanID string, mctx *macroPlanContext) *globalNotes {
@@ -935,27 +905,35 @@ func (a *graphWorkflowAgent) runPhase4(ctx context.Context, tripPlanID string, m
 		}
 	}
 
-	// Weather context for each region
-	for _, region := range mctx.regions {
-		wc, err := a.graphClient.GetWeatherContext(ctx, region, 3) // March
-		if err != nil || wc == nil {
-			continue
+	// Weather context for each region, using actual month from Phase start date
+		overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
+		if err == nil {
+			for _, p := range overview.Phases {
+				region := getStr(p, "region")
+				startDate := getStr(p, "startDate")
+				if region == "" || startDate == "" {
+					continue
+				}
+				month := monthFromDate(startDate)
+				wc, wcErr := a.graphClient.GetWeatherContext(ctx, region, month)
+				if wcErr != nil || wc == nil {
+					continue
+				}
+				for _, cd := range wc.ClimateData {
+					notes.weatherNotes = append(notes.weatherNotes,
+						fmt.Sprintf("%s %d月: %.0f-%.0f°C, 极端天气风险=%s",
+							region, cd.Month, cd.AvgLowTemp, cd.AvgHighTemp, cd.ExtremeWeatherRisk))
+				}
+				for _, c := range wc.Constraints {
+					notes.weatherNotes = append(notes.weatherNotes,
+						fmt.Sprintf("%s: %s(%s) — %s", region, c.ConstraintType, c.Severity, c.Description))
+				}
+				for _, se := range wc.SeasonalEvents {
+					notes.seasonalEvents = append(notes.seasonalEvents,
+						fmt.Sprintf("%s (%d-%d月): %s", se.Name, se.StartMonth, se.EndMonth, se.Description))
+				}
+			}
 		}
-		for _, cd := range wc.ClimateData {
-			notes.weatherNotes = append(notes.weatherNotes,
-				fmt.Sprintf("%s %d月: %.0f-%.0f°C, 极端天气风险=%s",
-					region, cd.Month, cd.AvgLowTemp, cd.AvgHighTemp, cd.ExtremeWeatherRisk))
-		}
-		for _, c := range wc.Constraints {
-			notes.weatherNotes = append(notes.weatherNotes,
-				fmt.Sprintf("%s: %s(%s) — %s", region, c.ConstraintType, c.Severity, c.Description))
-		}
-		for _, se := range wc.SeasonalEvents {
-			notes.seasonalEvents = append(notes.seasonalEvents,
-				fmt.Sprintf("%s (%d-%d月): %s", se.Name, se.StartMonth, se.EndMonth, se.Description))
-		}
-	}
-
 	return notes
 }
 
@@ -969,9 +947,9 @@ func (a *graphWorkflowAgent) runPhase5(ctx context.Context, tripPlanID string, n
 
 	// Build Phase→Day hierarchy
 	type phaseInfo struct {
-		name  string
-		seq   int
-		days  []string // day IDs
+		name string
+		seq  int
+		days []string // day IDs
 	}
 
 	// Map day IDs to phases via Month→Week→Day traversal
@@ -1072,17 +1050,17 @@ func (a *graphWorkflowAgent) runPhase5(ctx context.Context, tripPlanID string, n
 
 func formatDayDataForOutput(subgraph *graph.DaySubgraph) string {
 	type dayOutputData struct {
-		Date      string              `json:"date"`
-		DayIndex  int                 `json:"dayIndex"`
-		Theme     string              `json:"theme"`
-		Intensity string              `json:"intensity"`
-		StartPoint string             `json:"startPoint"`
-		PrimaryArea string            `json:"primaryArea"`
-		POIs      []graph.POINode     `json:"pois"`
-		Routes    []map[string]any    `json:"routes"`
-		Insights  []graph.GuideInsightNode `json:"insights"`
-		Climate   []graph.ClimateDataNode `json:"climate"`
-		Reviews   []graph.ReviewResultNode `json:"reviews"`
+		Date        string                   `json:"date"`
+		DayIndex    int                      `json:"dayIndex"`
+		Theme       string                   `json:"theme"`
+		Intensity   string                   `json:"intensity"`
+		StartPoint  string                   `json:"startPoint"`
+		PrimaryArea string                   `json:"primaryArea"`
+		POIs        []graph.POINode          `json:"pois"`
+		Routes      []map[string]any         `json:"routes"`
+		Insights    []graph.GuideInsightNode `json:"insights"`
+		Climate     []graph.ClimateDataNode  `json:"climate"`
+		Reviews     []graph.ReviewResultNode `json:"reviews"`
 	}
 
 	data := dayOutputData{
@@ -1252,6 +1230,14 @@ func getFloat(m map[string]any, key string) float64 {
 	return 0
 }
 
+func monthFromDate(dateStr string) int {
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		return 1
+	}
+	return int(t.Month())
+}
+
 func deduplicate(items []string) []string {
 	seen := make(map[string]bool)
 	var result []string
@@ -1272,8 +1258,14 @@ func NewGraphWorkflowAgent() agentcore.Agent {
 		return nil
 	}
 
-	// Create the coordinator Team (Steps 1-7 only)
+	// Create the coordinator Team (macro planning only)
 	coordinator := newTravelPlanningTeam()
+
+	// Create intake-only agent (requirement analysis, no business tools)
+	intakeAgent := newIntakeOnlyAgent()
+
+	// Create skill orchestrator
+	orchestrator := NewTravelSkillOrchestrator()
 
 	// Pre-create review agents for Phase 3 reuse
 	reviewAgents := []reviewAgentSpec{
@@ -1285,10 +1277,12 @@ func NewGraphWorkflowAgent() agentcore.Agent {
 	}
 
 	return &graphWorkflowAgent{
-		name:        "graph-workflow-agent",
-		description: "混合图工作流 Agent：LLM 宏观规划（Steps 1-7）+ Go 层逐日执行（Steps 8-13）",
-		coordinator: coordinator,
-		graphClient: graphClient,
+		name:         "graph-workflow-agent",
+		description:  "混合图工作流 Agent：Orchestrator 编排 skills + LLM 宏观规划 + Go 层逐日执行",
+		coordinator:  coordinator,
+		intakeAgent:  intakeAgent,
+		graphClient:  graphClient,
 		reviewAgents: reviewAgents,
+		orchestrator: orchestrator,
 	}
 }
