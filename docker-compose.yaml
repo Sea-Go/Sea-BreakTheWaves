@@ -77,14 +77,14 @@ services:
       - ./data/neo4j/conf:/var/lib/neo4j/conf
     restart: unless-stopped
 
-  neodash:
-    image: nielsdejong/neodash:latest
-    container_name: neodash
-    ports:
-      - "35005:5005"
-    depends_on:
-      - neo4j
-    restart: unless-stopped
+#  neodash:
+#    image: nielsdejong/neodash:latest
+#    container_name: neodash
+#    ports:
+#      - "35005:5005"
+#    depends_on:
+#      - neo4j
+#    restart: unless-stopped
   # --- Kafka ---
   kafka:
     image: apache/kafka:latest
@@ -234,8 +234,6 @@ services:
       - "14268:14268"     # collector http
       - "14250:14250"     # collector grpc
       # OTLP ports are internal only — otel-collector forwards traces here
-      - "4317"
-      - "4318"
     restart: unless-stopped
 
   # --- OpenTelemetry Collector ---
