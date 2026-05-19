@@ -114,7 +114,7 @@ func main() {
 	}
 	defer cleanup()
 
-	addr := "127.0.0.1:8080"
+	addr := "127.0.0.1:8088"
 
 	log.Info("Amap AG-UI server listening on http://%s/agui", addr)
 
