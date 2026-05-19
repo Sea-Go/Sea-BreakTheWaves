@@ -1,214 +1,264 @@
-# 365 天极限测试报告
+# 365 天全国自驾旅行规划 — 完整测试报告
 
-> 测试日期：2026-05-14 | 请求：365 天中国环游 | 预算：36 万 | 模型：qwen3-max (coordinator)
-> 
-> **更新**：第二轮完整执行测试于 18:13 启动，Day 补齐逻辑成功将 31 → 365 天。
-
----
-
-## 一、测试概览
-
-### 第一轮（无 Day 补齐）
-
-| 指标 | 数值 |
-|------|------|
-| 请求天数 | 365 |
-| 实际创建 Day 节点 | **31**（被 LLM Coordinator 截断） |
-
-### 第二轮（Go 层 Day 补齐）
-
-| 指标 | 数值 |
-|------|------|
-| Coordinator 创建 | 31 Day |
-| Go 层补齐 | 334 Day |
-| **最终 Day 数** | **365 ✓** |
-| Week 数 | 59 |
-| Month 数 | 12 |
-| Phase 数 | 4 |
-| Phase 1 耗时 | ~8 分钟 |
-| Day 补齐耗时 | ~1 秒 |
-| 总耗时 | **50 分钟** |
-| Phase 数量 | 6 |
-| Month 数量 | 12 |
-| Week 数量 | 10 |
-| Day 数量 | 31 |
-| POI 数量 | **0** |
-| RouteSegment 数量 | **0** |
-| ReviewResult 数量 | **0** |
-| 最终 answer 长度 | 39,488 字符（~1273 字/天） |
+> 测试时间: 2026-05-18 16:46 ~ 16:48
+> 测试端口: 127.0.0.1:8088
+> 用户输入: "全国365天的旅游，预算20万，一人行，自驾游，更喜好自然风光"
 
 ---
 
-## 二、各阶段详细分析
+## 一、AG-UI 事件流（原始输出）
 
-### Phase 1：宏观规划（Steps 1-7）
+### 第 1 轮: 需求提交
 
-| 指标 | 数值 |
-|------|------|
-| 耗时 | ~8 分钟 |
-| Coordinator 输出 | 13,392 字符 |
-| 预期 Day 数 | 365 |
-| 实际 Day 数 | **31** |
-
-**问题 #1：LLM Coordinator 无法处理 365 天规模**
-
-**现象**：Coordinator 要求创建 365 个 Day，但只创建了 31 个（约 1 天代表 12 天）。
-
-**根因**：
-- qwen3-max 上下文窗口 ~32K tokens，无法容纳 365 天的详细规划
-- Coordinator 隐式将 365 天"压缩"为 31 个代表性 Day
-- 每个 Month 创建了 ~2.5 个 Day，而非按 Week→Day 正确拆分
-- Skill 中定义的 Phase→Month→Week→Day 层级拆分流程对 365 天规模不适用
-
-**推断**：如果 coordinator 使用 deepseek-v4-pro（120K context），可能创建更多 Day，但 365 天仍然远超任何模型的上下文窗口。**纯 LLM 宏观规划的天花板约 60-90 天**。
-
----
-
-### Phase 2：逐日 POI 验证（Step 8）
-
-| 指标 | 数值 |
-|------|------|
-| 耗时 | 17 分 38 秒（31 天） |
-| 每天耗时 | ~34 秒 |
-| POI 写入数 | **0** |
-| Route 写入数 | **0** |
-
-**问题 #2：amap-agent 不调用高德 API 工具**
-
-**现象**：31 次 amap-agent 调用全部返回空结果。completion_tokens 仅 10-25，prompt_tokens 仅 4000-5000。
-
-**根因**：
-- `amapPOIVerifyInstruction` 使用了 Planner 模式，但 amap-agent 在没有明确 POI 名称的情况下，无法用 `amap_poi_keyword_search` 找到合适结果
-- 每个 Day 的区域信息太粗略（如"华北、华东"），amap 关键词搜索返回无关结果
-- amap-agent 在工具调用失败后直接返回空 JSON，不敢编造数据（这是正确行为）
-- **根本原因**：Phase 1 没有为每个 Day 分配具体的城市/区域，导致 Phase 2 无法进行有意义的 POI 搜索
-
-**推断**：如果 365 天真有 365 个 Day 节点，Phase 2 需要 365 × 34s ≈ **3.4 小时**。加上高德 API QPS 限制（个人免费版 1 QPS），实际可能需要 **6-12 小时**。
-
----
-
-### Phase 3：全量审查（Steps 9-10）
-
-| 指标 | 数值 |
-|------|------|
-| 耗时 | 18 分 43 秒（31 天） |
-| 每天耗时 | ~36 秒（5 个审查 agent 并发） |
-| LLM 调用数 | **155**（31 天 × 5 agents） |
-| ReviewResult 写入 | **0**（无数据可审查） |
-
-**问题 #3：审查在无数据时仍然全量运行**
-
-**现象**：即使每个 Day 的 POI 为空，5 个审查 agent 仍然被调用并输出 JSON。
-
-**根因**：
-- 审查 agent 是按天循环调用的，不检查 Day 是否有 POI 数据
-- 无数据时审查 agent 仍然加载 skill、生成输出（浪费 LLM 调用）
-- **成本估算**：155 次 LLM 调用 × ~3500 tokens/次 ≈ 540K tokens
-
-**推断**：365 天全量审查 = 365 × 5 = **1825 次 LLM 调用**。即使每次 30 秒并发，也需要 ~1825/5 × 30s ≈ **3 小时**。**LLM 成本**：1825 × ~0.01 元 ≈ **18 元**。
-
----
-
-### Phase 4：全局检查（Steps 11-12）
-
-| 指标 | 数值 |
-|------|------|
-| 耗时 | 1 分 22 秒 |
-| constraint_violations | 1 |
-
-**无明显问题**。Phase 4 只做少量 Neo4j 查询，规模影响小。
-
----
-
-### Phase 5：逐日输出（Step 13）
-
-| 指标 | 数值 |
-|------|------|
-| 耗时 | 5 分 9 秒（31 天） |
-| 每天耗时 | ~10 秒 |
-| completion_tokens/天 | 286-341 |
-| 总 answer 长度 | 39,488 字符 |
-| get_day_fullContext 调用 | **31 次**（验证了逐日加载） |
-
-**问题 #4：无数据导致输出空洞**
-
-**现象**：每个 Day 的 `get_day_fullContext` 返回的 POI/Routes/Insights/Reviews 全部为空，DayOutputAgent 只能根据 Day 节点的基本信息（日期、主题、区域）生成泛泛的描述。
-
-**每日输出示例**（来自实际测试）：
-```
-### Day 1: 云南15天自然风光摄影之旅 — Day 1
-
-**日期**：2025年1月1日  
-**主题**：自然风光摄影之旅  
-**区域**：华北、华东  
-
-当日无具体POI数据。建议用户提供更详细的目的地信息以获得精准规划。
+请求:
+```json
+{"threadId":"doc-test-365","runId":"run-1","messages":[{"role":"user","content":"全国365天的旅游，预算20万，一人行，自驾游，更喜好自然风光"}]}
 ```
 
-**根因**：级联效应 — Phase 1 无具体区域 → Phase 2 无 POI → Phase 5 无内容。
+SSE 响应:
+```
+id: RUN_STARTED_1779094019476
+data: {"type":"RUN_STARTED","timestamp":1779094019476,"threadId":"doc-test-365","runId":"run-1"}
 
-**推断**：365 天全量输出 = 365 × 10s ≈ **1 小时**。总 answer 长度预估：365 × 1273 字 ≈ **465K 字符**（接近单次 LLM 上下文上限）。
+id: TEXT_MESSAGE_START_1779094028696
+data: {"type":"TEXT_MESSAGE_START","timestamp":1779094028696,"messageId":"wf-msg-1779094028696825000","role":""}
 
----
+id: TEXT_MESSAGE_CONTENT_1779094028696
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1779094028696,"messageId":"wf-msg-1779094028696825000","delta":"在开始规划前，我需要先确认几项关键信息：\n\n1. 你计划从哪个城市出发？\n2. 每日节奏希望轻松、均衡，还是尽量多打卡？\n3. 计划什么时候开始？如果还没确定，我可以默认从下个月开始。\n\n"}
 
-## 三、总体问题汇总
+id: TEXT_MESSAGE_END_1779094028697
+data: {"type":"TEXT_MESSAGE_END","timestamp":1779094028697,"messageId":"wf-msg-1779094028696825000"}
 
-| # | 问题 | 严重度 | 出现在 | 根因 |
-|---|------|--------|--------|------|
-| 1 | Coordinator 截断天数 | **Critical** | Phase 1 | LLM 上下文窗口不足以规划 365 天 |
-| 2 | amap-agent POI 为空 | **Critical** | Phase 2 | Phase 1 未提供具体城市，amap 搜索无结果 |
-| 3 | 审查在无数据时运行 | High | Phase 3 | 未检查 Day 是否有 POI 再调用审查 agent |
-| 4 | 输出空洞 | High | Phase 5 | 级联效应：上游无数据导致下游无内容 |
-| 5 | 完整流程耗时过长 | Medium | Phase 2-5 | 31 天 ≈ 50 分钟；365 天预估 6-10 小时 |
-| 6 | LLM 成本线性增长 | Medium | Phase 3,5 | 天数 × 审查数 × 每千 token 费用 |
+id: RUN_FINISHED_1779094028697
+data: {"type":"RUN_FINISHED","timestamp":1779094028697,"threadId":"doc-test-365","runId":"run-1"}
+```
 
----
-
-## 四、365 天规模的推算
-
-假设 Coordinator 能创建完整的 365 天结构：
-
-| 阶段 | 31 天实测 | 365 天推算 | 瓶颈 |
-|------|----------|-----------|------|
-| Phase 1 | 8 min | **不可行** — LLM 上下文限制 | Coordinator 上下文 |
-| Phase 2 | 17 min | **3.4 小时**（无 QPS 限制）/ **12 小时**（1 QPS） | 高德 API QPS |
-| Phase 3 | 19 min | **3 小时**（1825 次 LLM 调用） | LLM 成本 + 耗时 |
-| Phase 4 | 1.4 min | ~2 min | Neo4j 查询性能 |
-| Phase 5 | 5 min | **1 小时**（365 次 LLM 调用） | LLM 调用数 |
-| **总计** | **50 min** | **7-16 小时** | — |
-| **LLM 成本** | ~1 元 | **~30-50 元** | API 费用 |
-| **Neo4j 节点** | 70 | **~2500**（365 Day + 1000+ POI + Routes + Reviews） | 数据库规模 |
-| **Answer 长度** | 39K chars | **~465K chars** | 接近上下文上限 |
+**用户可见输出:**
+> 在开始规划前，我需要先确认几项关键信息：
+>
+> 1. 你计划从哪个城市出发？
+> 2. 每日节奏希望轻松、均衡，还是尽量多打卡？
+> 3. 计划什么时候开始？如果还没确定，我可以默认从下个月开始。
 
 ---
 
-## 五、改进建议
+### 第 2 轮: 补充信息 → 需求合并 → 宏观规划
 
-### 短期（当前架构内优化）
+请求:
+```json
+{"threadId":"doc-test-365","runId":"run-2","messages":[{"role":"user","content":"从北京出发，6月1日开始，节奏均衡"}]}
+```
 
-1. **Phase 1 分批规划**：Coordinator 每次只规划 30 天的 Phase，多次调用完成 365 天
-2. **Phase 3 数据门控**：跳过无 POI 的 Day，减少无意义 LLM 调用
-3. **Phase 5 跳过空 Day**：如果 `get_day_fullContext` 返回空 POI，使用 Go 模板生成简短占位符（不调用 LLM）
+SSE 响应:
+```
+id: RUN_STARTED_1779094028711
+data: {"type":"RUN_STARTED","timestamp":1779094028711,"threadId":"doc-test-365","runId":"run-2"}
 
-### 中期（架构改进）
+id: TEXT_MESSAGE_START_1779094087706
+data: {"type":"TEXT_MESSAGE_START","timestamp":1779094087706,"messageId":"wf-msg-1779094087706658000","role":""}
 
-4. **并行 Phase 2**：10 个 amap-agent 并发处理不同 Day，缩短到 1/10 时间
-5. **Phase 3 采样审查**：365 天中随机抽样 30% 做全量审查，其余做快速检查
-6. **Phase 5 分组输出**：按 Phase 分组后，对每组调用一次 LLM 生成该 Phase 的完整输出（减少 LLM 调用次数）
+id: TEXT_MESSAGE_CONTENT_1779094087706
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1779094087706,"messageId":"wf-msg-1779094087706658000","delta":"宏观规划完成 — 已创建 7 个 Phase。接下来进入图拆分阶段。\n"}
 
-### 长期（根本性解决）
+id: TEXT_MESSAGE_END_1779094087706
+data: {"type":"TEXT_MESSAGE_END","timestamp":1779094087706,"messageId":"wf-msg-1779094087706658000"}
 
-7. **非 LLM 的宏规划**：用 Go 代码直接按日历生成 Phase/Month/Week/Day 结构（不依赖 LLM）
-8. **流式输出**：逐日生成并立即发送给用户，而非等所有天完成才输出
-9. **增量缓存**：已生成的 Day 内容缓存到 Neo4j，避免重复生成
+id: TEXT_MESSAGE_START_1779094087706
+data: {"type":"TEXT_MESSAGE_START","timestamp":1779094087706,"messageId":"wf-msg-1779094087706734000","role":""}
+
+id: TEXT_MESSAGE_CONTENT_1779094087706
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1779094087706,"messageId":"wf-msg-1779094087706734000","delta":"graph_splitting 阶段（待后续 PR 实现）\n"}
+
+id: TEXT_MESSAGE_END_1779094087706
+data: {"type":"TEXT_MESSAGE_END","timestamp":1779094087706,"messageId":"wf-msg-1779094087706734000"}
+
+id: RUN_FINISHED_1779094087706
+data: {"type":"RUN_FINISHED","timestamp":1779094087706,"threadId":"doc-test-365","runId":"run-2"}
+```
+
+**用户可见输出:**
+> 宏观规划完成 — 已创建 7 个 Phase。接下来进入图拆分阶段。
+>
+> graph_splitting 阶段（待后续 PR 实现）
 
 ---
 
-## 六、测试环境
+## 二、服务器日志（完整）
 
-- Go 服务：`agent_v2/main.go`，端口 8080
-- Neo4j：Docker `neo4j:latest`，端口 37474 (HTTP) / 37687 (Bolt)
-- Coordinator 模型：qwen3-max
-- Review 模型：qwen3-max (4 agents) + deepseek-v4-pro (1 agent, review-content)
-- DayOutput 模型：qwen3-max
-- 测试时间：2026-05-14 16:48 — 17:38
+```
+16:46:21 INFO  agent app starting
+16:46:21 INFO  [travel-planning-agent] Neo4j 可用，使用混合图工作流 Agent
+16:46:21 INFO  Amap AG-UI server listening on http://127.0.0.1:8088/agui
+
+── 第1轮: 需求提交 ──
+
+16:46:59 INFO  [orchestrator] handle: userID=user sessionID=doc-test-365 stage=requirement_intake msgLen=83
+16:46:59 INFO  [orchestrator] intake: start userID=user sessionID=doc-test-365
+16:46:59 INFO  [model-router] agent=intake-agent level=MEDIUM model=qwen3-max remaining_tpm=5000000/5000000
+16:47:08 INFO  [model-usage] agent=intake-agent model=qwen3-max prompt_tokens=10128 completion_tokens=256 total_tokens=10384
+16:47:08 INFO  [orchestrator] intake: decision ready=false missingP0=[start_city] missingP1=[pace start_date] askedRounds=0
+16:47:08 INFO  [orchestrator] intake: not ready → askedRounds=1 questions=3
+
+── 第2轮: 需求合并 ──
+
+16:47:08 INFO  [orchestrator] handle: userID=user sessionID=doc-test-365 stage=awaiting_user_info msgLen=47
+16:47:08 INFO  [orchestrator] merge: start userID=user sessionID=doc-test-365 askedRounds=1
+16:47:08 INFO  [model-router] agent=intake-agent level=MEDIUM model=qwen3-max remaining_tpm=4989616/5000000
+16:47:15 INFO  [model-usage] agent=intake-agent model=qwen3-max prompt_tokens=10031 completion_tokens=198 total_tokens=10229
+16:47:15 INFO  [orchestrator] merge: decision ready=true missingP0=[] missingP1=[] askedRounds=1 maxRounds=2
+16:47:15 INFO  [orchestrator] merge: ready → macro_planning
+
+── 宏观规划（轻量 Agent，4 工具 + Dili360 子 Agent）──
+
+16:47:15 INFO  [model-router] agent=macro-planning-agent level=MEDIUM model=qwen3-max remaining_tpm=4979387/5000000
+16:47:31 INFO  [model-router] agent=macro-planning-agent level=MEDIUM model=qwen3-max remaining_tpm=5000000/5000000
+16:47:58 INFO  [model-router] agent=macro-planning-agent level=MEDIUM model=qwen3-max remaining_tpm=5000000/5000000
+16:48:06 INFO  [model-router] agent=macro-planning-agent level=MEDIUM model=qwen3-max remaining_tpm=5000000/5000000
+16:48:07 INFO  [model-usage] agent=macro-planning-agent model=qwen3-max prompt_tokens=5470 completion_tokens=36 total_tokens=5506
+
+── Neo4j 验证 + Phase 校验 ──
+
+16:48:07 INFO  [workflow-runner] macro_planning: TripPlan ca4eba4d-a64e-4980-b12d-59372347c287 confirmed in Neo4j (user=user, session=doc-test-365)
+16:48:07 INFO  [workflow-checks] macro planning validation passed: 7 phases, totalDayCount=365
+16:48:07 INFO  [workflow-runner] macro_planning: tripPlanID=ca4eba4d-a64e-4980-b12d-59372347c287 phases=7 session=doc-test-365
+
+── 阶段推进 ──
+
+16:48:07 INFO  [model-router] agent=summary level=LOW model=qwen3.6-plus remaining_tpm=4992520/5000000
+16:48:28 INFO  [model-usage] agent=summary model=qwen3.6-plus prompt_tokens=5534 completion_tokens=1031 total_tokens=6565
+```
+
+**关键日志解读:**
+
+| 时间 | 事件 | 说明 |
+|------|------|------|
+| 16:47:08 | `intake: decision ready=false` | 需求准入 Agent 判断信息不足，生成 3 个追问 |
+| 16:47:15 | `merge: decision ready=true` | 需求合并 Agent 判断信息充足，进入宏观规划 |
+| 16:48:07 | `TripPlan confirmed in Neo4j` | **Go 层从 Neo4j 确认 TripPlan 存在**（非 LLM 文本提取） |
+| 16:48:07 | `validation passed: 7 phases, totalDayCount=365` | Phase 完整性校验通过 |
+
+---
+
+## 三、Neo4j 图数据库存储结果
+
+### TripPlan 根节点
+
+```
+tp.id:          ca4eba4d-a64e-4980-b12d-59372347c287
+tp.name:        全国自然风光自驾之旅
+tp.totalDays:   365
+tp.startDate:   2024-06-01
+tp.endDate:     2025-05-31
+tp.budgetTotal: 200000.0
+tp.travelStyle: 均衡
+tp.transportMode: 自驾
+tp.interests:   ["自然风光"]
+tp.status:      decomposed
+```
+
+### Phase 子节点（7 个）
+
+| seq | 名称 | 区域 | 天数 | 开始日期 | 结束日期 |
+|-----|------|------|------|---------|---------|
+| 1 | 华北初夏自然探索 | 华北 | 45 | 2024-06-01 | 2024-07-15 |
+| 2 | 西北盛夏风光之旅 | 西北 | 47 | 2024-07-16 | 2024-08-31 |
+| 3 | 西南雨季山水行 | 西南 | 45 | 2024-09-01 | 2024-10-15 |
+| 4 | 华南秋日滨海游 | 华南 | 46 | 2024-10-16 | 2024-11-30 |
+| 5 | 华东深秋文化自然 | 华东 | 46 | 2024-12-01 | 2025-01-15 |
+| 6 | 东北冰雪奇缘 | 东北 | 45 | 2025-01-16 | 2025-03-01 |
+| 7 | 华北春日返程 | 华北 | 91 | 2025-03-02 | 2025-05-31 |
+
+**dayCount 校验:** 45 + 47 + 45 + 46 + 46 + 45 + 91 = **365** ✅
+
+### ClimateData 气候数据
+
+| Phase | 区域 | 月份 | 最高温 | 最低温 | 降水 | 极端天气风险 |
+|-------|------|------|--------|--------|------|------------|
+| 1 | 华北 | 6月 | 32°C | 20°C | 80mm | 低 |
+| 2 | 西北 | 6月 | 28°C | 15°C | 20mm | 低 |
+| 2 | 西北 | 7月 | 30°C | 18°C | 20mm | 低 |
+| 3 | 西南 | 6月 | 26°C | 18°C | 180mm | 中 |
+| 3 | 西南 | 8月 | 28°C | 19°C | 150mm | 中 |
+| 4 | 华南 | 6月 | 33°C | 25°C | 250mm | 高 |
+| 4 | 华南 | 10月 | 28°C | 20°C | 60mm | 低 |
+| 5 | 华东 | 6月 | 29°C | 22°C | 200mm | 中 |
+| 5 | 华东 | 11月 | 20°C | 10°C | 50mm | 低 |
+| 6 | 东北 | 6月 | 25°C | 15°C | 100mm | 低 |
+| 6 | 东北 | 12月 | -5°C | -15°C | 10mm | 高 |
+| 7 | 华北 | 6月 | 32°C | 20°C | 80mm | 低 |
+
+### 子节点统计
+
+| 节点类型 | 数量 | 说明 |
+|---------|------|------|
+| Phase | 7 | ✅ 宏观规划产物 |
+| Month | 0 | ⏳ 待 Phase 2 拆分 |
+| Week | 0 | ⏳ 待 Phase 2 拆分 |
+| Day | 0 | ⏳ 待 Phase 2 拆分 |
+
+---
+
+## 四、架构验证要点
+
+### 1. TripPlanID 所有权回归 Go 层
+
+```
+Go 层预生成 expectedTripPlanID → 传给 LLM → LLM 调用 create_trip_plan → Go 层查 Neo4j 确认
+```
+
+日志证据:
+```
+[workflow-runner] macro_planning: TripPlan ca4eba4d... confirmed in Neo4j (user=user, session=doc-test-365)
+```
+
+不再依赖 LLM 文本输出中的 trip_plan_id。
+
+### 2. 轻量级宏观规划 Agent
+
+```
+旧: newTravelPlanningTeam() — 24 工具 + 12 子 Agent
+新: newMacroPlanningAgent() — 4 工具 + 1 子 Agent (Dili360)
+```
+
+工具清单: `create_trip_plan`, `split_parent_node`, `get_weather_context`, `write_climate_data`
+
+### 3. 需求准入 → 需求合并 → 宏观规划 三阶段流
+
+```
+requirement_intake → awaiting_user_info → requirement_merge → macro_planning → graph_splitting
+```
+
+Orchestrator 控制 stage 推进，每个 stage 使用不同的 Agent。
+
+### 4. Phase 完整性校验
+
+校验项全部通过:
+- Phase 数量: 7（范围 3-8）✅
+- seq 连续: 1,2,3,4,5,6,7 ✅
+- startDate/endDate: 全部填充 ✅
+- region: 全部填充 ✅
+- dayCount > 0: 全部 ✅
+- dayCount 之和 = 365: ✅
+- 无 Month/Week/Day 节点: ✅
+
+### 5. MERGE 幂等性
+
+Cypher 使用 `MERGE (tp:TripPlan {id: $id})` 而非 `CREATE`，重试不会产生重复节点。
+
+---
+
+## 五、待实现阶段
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| `requirement_intake` | ✅ 已实现 | 需求准入 + 追问 |
+| `requirement_merge` | ✅ 已实现 | 需求合并 |
+| `macro_planning` | ✅ 已实现 | TripPlan + Phase 创建 |
+| `graph_splitting` | ⏳ 待实现 | Phase→Month→Week→Day 拆分 |
+| `day_expansion` | ⏳ 待实现 | POI 验证 + 路线写入 |
+| `review` | ⏳ 待实现 | L0-L5 六级审查 |
+| `final_output` | ⏳ 待实现 | 逐日详细输出 |
+
+---
+
+*本报告由 agent_v2 E2E 测试自动生成，包含 AG-UI 事件流、服务器日志、Neo4j 图数据三部分原始输出。*
