@@ -4,15 +4,15 @@ import "fmt"
 
 // --- Node creation ---
 
-const cypherCreateTripPlan = `
-CREATE (tp:TripPlan {
-    id: $id, name: $name, startDate: $startDate, endDate: $endDate,
-    totalDays: $totalDays, budgetTotal: $budgetTotal, travelStyle: $travelStyle,
-    transportMode: $transportMode, interests: $interests, mustVisit: $mustVisit,
-    avoid: $avoid, rawRequirements: $rawRequirements, status: $status,
-    maxConsecutiveHighIntensityDays: $maxConsecutiveHighIntensityDays,
-    userId: $userId, sessionId: $sessionId, requestId: $requestId
-})
+const cypherMergeTripPlan = `
+MERGE (tp:TripPlan {id: $id})
+ON CREATE SET tp.name = $name, tp.startDate = $startDate, tp.endDate = $endDate,
+    tp.totalDays = $totalDays, tp.budgetTotal = $budgetTotal, tp.travelStyle = $travelStyle,
+    tp.transportMode = $transportMode, tp.interests = $interests, tp.mustVisit = $mustVisit,
+    tp.avoid = $avoid, tp.rawRequirements = $rawRequirements, tp.status = $status,
+    tp.maxConsecutiveHighIntensityDays = $maxConsecutiveHighIntensityDays,
+    tp.userId = $userId, tp.sessionId = $sessionId, tp.requestId = $requestId
+ON MATCH SET tp.updatedAt = timestamp()
 RETURN tp.id AS id
 `
 
@@ -26,7 +26,7 @@ UNWIND $children AS child
 CREATE (parent)-[:%s]->(c:%s {
     id: child.id, name: child.name, seq: child.seq,
     startDate: child.startDate, endDate: child.endDate,
-    region: child.region, status: 'outlined'
+    region: child.region, dayCount: child.dayCount, status: 'outlined'
 })
 SET c += child.props
 RETURN collect(c.id) AS ids
@@ -187,7 +187,7 @@ OPTIONAL MATCH (phase)-[:HAS_MONTH]->(month:Month)
 OPTIONAL MATCH (month)-[:HAS_WEEK]->(week:Week)
 OPTIONAL MATCH (week)-[:HAS_DAY]->(day:Day)
 RETURN tp,
-       collect(DISTINCT phase {.id, .name, .seq, .region, .season, .status, .dayCount}) AS phases,
+       collect(DISTINCT phase {.id, .name, .seq, .region, .season, .status, .dayCount, .startDate, .endDate}) AS phases,
        collect(DISTINCT month {.id, .name, .yearMonth, .seq, .region, .status, .weekCount}) AS months,
        collect(DISTINCT week {.id, .name, .seq, .primaryLocation, .status}) AS weeks,
        collect(DISTINCT day {.id, .date, .dayIndex, .theme, .status}) AS days
@@ -312,3 +312,11 @@ func nextRelType(childType string) string {
 		return "NEXT_"
 	}
 }
+
+// --- Read: find TripPlan by ID ---
+
+const cypherFindTripPlanByID = `
+MATCH (tp:TripPlan {id: $id})
+RETURN tp.id AS id, tp.userId AS userId, tp.sessionId AS sessionId,
+       tp.requestId AS requestId, tp.totalDays AS totalDays, tp.status AS status
+`
