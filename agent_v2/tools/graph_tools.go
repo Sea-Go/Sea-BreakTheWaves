@@ -110,3 +110,17 @@ func newGraphTools(client *graph.Client) []tool.Tool {
 		newGetSeasonalRouteRiskTool(client),
 	}
 }
+
+// NewMacroPlanningGraphTools returns only the 4 tools needed for macro planning.
+func NewMacroPlanningGraphTools() []tool.Tool {
+	client := graph.GetClient()
+	if client == nil || !client.IsEnabled() {
+		return nil
+	}
+	return []tool.Tool{
+		newCreateTripPlanTool(client),
+		newSplitParentNodeTool(client),
+		newGetWeatherContextTool(client),
+		newWriteClimateDataTool(client),
+	}
+}
