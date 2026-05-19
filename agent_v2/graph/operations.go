@@ -19,7 +19,7 @@ func (c *Client) CreateTripPlan(ctx context.Context, tp TripPlanNode) (string, e
 		tp.Status = StatusOutlined
 	}
 	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		_, err := tx.Run(ctx, cypherCreateTripPlan, map[string]any{
+		_, err := tx.Run(ctx, cypherMergeTripPlan, map[string]any{
 			"id": tp.ID, "name": tp.Name, "startDate": tp.StartDate, "endDate": tp.EndDate,
 			"totalDays": tp.TotalDays, "budgetTotal": tp.BudgetTotal, "travelStyle": tp.TravelStyle,
 			"transportMode": tp.TransportMode, "interests": tp.Interests, "mustVisit": tp.MustVisit,
@@ -35,6 +35,34 @@ func (c *Client) CreateTripPlan(ctx context.Context, tp TripPlanNode) (string, e
 	return tp.ID, nil
 }
 
+// FindTripPlanByID checks if a TripPlan with the given ID exists in Neo4j.
+// Returns the TripPlanNode if found, nil if not found.
+func (c *Client) FindTripPlanByID(ctx context.Context, id string) (*TripPlanNode, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherFindTripPlanByID, map[string]any{"id": id})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			return rec.Record().AsMap(), nil
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: find trip plan by id: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	m := result.(map[string]any)
+	return &TripPlanNode{
+		ID:        fmt.Sprint(m["id"]),
+		UserID:    fmt.Sprint(m["userId"]),
+		SessionID: fmt.Sprint(m["sessionId"]),
+		RequestID: fmt.Sprint(m["requestId"]),
+	}, nil
+}
+
 // SplitChildInput describes a single child node to create during a split.
 type SplitChildInput struct {
 	ID        string         `json:"id"`
@@ -43,6 +71,7 @@ type SplitChildInput struct {
 	StartDate string         `json:"startDate,omitempty"`
 	EndDate   string         `json:"endDate,omitempty"`
 	Region    string         `json:"region,omitempty"`
+	DayCount  int            `json:"dayCount,omitempty"`
 	Props     map[string]any `json:"props,omitempty"`
 }
 
@@ -57,7 +86,7 @@ func (c *Client) SplitParentNode(ctx context.Context, parentID, childType string
 		childMaps[i] = map[string]any{
 			"id": ch.ID, "name": ch.Name, "seq": ch.Seq,
 			"startDate": ch.StartDate, "endDate": ch.EndDate,
-			"region": ch.Region, "props": ch.Props,
+			"region": ch.Region, "dayCount": ch.DayCount, "props": ch.Props,
 		}
 	}
 	result, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
@@ -559,6 +588,35 @@ func (c *Client) GetNodeBudgetSummary(ctx context.Context, nodeID string) (float
 	}
 	if v, ok := result.(float64); ok {
 		return v, nil
+	}
+	return 0, nil
+}
+
+// CountChildrenByType counts child nodes of a specific type under a parent.
+func (c *Client) CountChildrenByType(ctx context.Context, parentID string, childType string) (int, error) {
+	cypher := fmt.Sprintf(`
+		MATCH (parent {id: $parentID})-[:HAS_%s]->(child:%s)
+		RETURN count(child) AS count
+	`, childType, childType)
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypher, map[string]any{"parentID": parentID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("count")
+			return val, nil
+		}
+		return 0, rec.Err()
+	})
+	if err != nil {
+		return 0, fmt.Errorf("graph: count children by type %s: %w", childType, err)
+	}
+	if v, ok := result.(int64); ok {
+		return int(v), nil
+	}
+	if v, ok := result.(float64); ok {
+		return int(v), nil
 	}
 	return 0, nil
 }
