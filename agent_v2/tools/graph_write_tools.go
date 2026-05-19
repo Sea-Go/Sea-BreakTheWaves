@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"agent_v2/graph"
 
@@ -14,6 +15,7 @@ import (
 // --- create_trip_plan ---
 
 type CreateTripPlanInput struct {
+	TripPlanID                      string   `json:"trip_plan_id" jsonschema:"required,description=系统预生成的 TripPlanID，必须原样使用"`
 	Name                            string   `json:"name" jsonschema:"required,description=旅行名称"`
 	StartDate                       string   `json:"start_date" jsonschema:"required,description=出发日期 YYYY-MM-DD"`
 	EndDate                         string   `json:"end_date" jsonschema:"required,description=结束日期 YYYY-MM-DD"`
@@ -26,9 +28,9 @@ type CreateTripPlanInput struct {
 	Avoid                           []string `json:"avoid" jsonschema:"description=避雷地点"`
 	RawRequirements                 string   `json:"raw_requirements" jsonschema:"description=用户原始需求"`
 	MaxConsecutiveHighIntensityDays int      `json:"max_consecutive_high_intensity_days" jsonschema:"description=连续高强度天数上限"`
-	UserID                          string   `json:"user_id" jsonschema:"description=用户ID"`
-	SessionID                       string   `json:"session_id" jsonschema:"description=会话ID"`
-	RequestID                       string   `json:"request_id" jsonschema:"description=请求ID"`
+	UserID                          string   `json:"user_id" jsonschema:"required,description=用户ID"`
+	SessionID                       string   `json:"session_id" jsonschema:"required,description=会话ID"`
+	RequestID                       string   `json:"request_id" jsonschema:"required,description=请求ID"`
 }
 
 type CreateTripPlanOutput struct {
@@ -43,7 +45,20 @@ func newCreateTripPlanTool(client *graph.Client) tool.Tool {
 				return CreateTripPlanOutput{Success: false},
 					fmt.Errorf("Neo4j 图数据库不可用")
 			}
+			if strings.TrimSpace(in.TripPlanID) == "" {
+				return CreateTripPlanOutput{Success: false}, fmt.Errorf("trip_plan_id is required")
+			}
+			if strings.TrimSpace(in.UserID) == "" {
+				return CreateTripPlanOutput{Success: false}, fmt.Errorf("user_id is required")
+			}
+			if strings.TrimSpace(in.SessionID) == "" {
+				return CreateTripPlanOutput{Success: false}, fmt.Errorf("session_id is required")
+			}
+			if strings.TrimSpace(in.RequestID) == "" {
+				return CreateTripPlanOutput{Success: false}, fmt.Errorf("request_id is required")
+			}
 			tp := graph.TripPlanNode{
+				ID: in.TripPlanID,
 				Name: in.Name, StartDate: in.StartDate, EndDate: in.EndDate,
 				TotalDays: in.TotalDays, BudgetTotal: in.BudgetTotal,
 				TravelStyle: in.TravelStyle, TransportMode: in.TransportMode,
@@ -72,6 +87,7 @@ type SplitChildSpec struct {
 	StartDate string `json:"start_date" jsonschema:"description=开始日期"`
 	EndDate   string `json:"end_date" jsonschema:"description=结束日期"`
 	Region    string `json:"region" jsonschema:"description=所属区域"`
+	DayCount  int    `json:"day_count" jsonschema:"description=该阶段包含的天数"`
 }
 
 type SplitParentNodeInput struct {
@@ -96,6 +112,7 @@ func newSplitParentNodeTool(client *graph.Client) tool.Tool {
 				children[i] = graph.SplitChildInput{
 					ID: ch.ID, Name: ch.Name, Seq: ch.Seq,
 					StartDate: ch.StartDate, EndDate: ch.EndDate, Region: ch.Region,
+					DayCount: ch.DayCount,
 				}
 			}
 			ids, err := client.SplitParentNode(ctx, in.ParentNodeID, in.ChildType, children)
