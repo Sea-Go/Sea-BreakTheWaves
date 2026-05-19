@@ -1,0 +1,18 @@
+id: RUN_STARTED_1779182859806
+data: {"type":"RUN_STARTED","timestamp":1779182859806,"threadId":"sync-365-v6","runId":"run-1"}
+
+id: TEXT_MESSAGE_START_1779182911143
+data: {"type":"TEXT_MESSAGE_START","timestamp":1779182911143,"messageId":"wf-msg-1779182911143882000","role":""}
+
+id: TEXT_MESSAGE_CONTENT_1779182911143
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1779182911143,"messageId":"wf-msg-1779182911143882000","delta":"宏观规划完成 — 已创建 7 个 Phase。接下来进入图拆分阶段。\n"}
+
+id: TEXT_MESSAGE_END_1779182912142
+data: {"type":"TEXT_MESSAGE_END","timestamp":1779182912142,"messageId":"wf-msg-1779182911143882000"}
+
+id: TEXT_MESSAGE_START_1779182912142
+data: {"type":"TEXT_MESSAGE_START","timestamp":1779182912142,"messageId":"wf-msg-1779182912141935000","role":""}
+
+id: TEXT_MESSAGE_CONTENT_1779182912142
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1779182912142,"messageId":"wf-msg-1779182912141935000","delta":"图拆分完成，已创建 Month/Week/Day 层级。开始逐日生成行程...\n"}
+
