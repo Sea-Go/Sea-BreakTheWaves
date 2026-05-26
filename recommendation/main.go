@@ -13,6 +13,7 @@ import (
 	"sea/infra"
 	_ "sea/internal/filter"
 	"sea/internal/handler"
+	"sea/internal/rest"
 	"sea/kafka"
 	"sea/metrics"
 	"sea/poolrefill"
@@ -128,6 +129,8 @@ func main() {
 		onboardingQuestionnaireService,
 	)
 
+	rest.RegisterRoutes(trpcHandler)
+
 	trpcServer := trpc.NewServer()
 	v1.RegisterRecommendationServiceService(
 		trpcServer.Service("recommendation.v1.RecommendationService"),
@@ -137,9 +140,13 @@ func main() {
 		trpcServer.Service("recommendation.v1.RecommendationService.http"),
 		trpcHandler,
 	)
+	v1.RegisterRecommendationServiceService(
+		trpcServer.Service("recommendation.v1.RecommendationService.rest"),
+		trpcHandler,
+	)
 
 	go func() {
-		log.Info("tRPC server starting on :8000 (trpc) and :8080 (http)")
+		log.Info("tRPC server starting on :8000 (trpc), :8080 (http), :8082 (restful)")
 		if err := trpcServer.Serve(); err != nil {
 			log.Errorf("tRPC server error: %v", err)
 		}

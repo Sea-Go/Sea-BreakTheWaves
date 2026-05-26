@@ -20,6 +20,12 @@ server:
       network: tcp
       protocol: http
       timeout: 30000
+    - name: recommendation.v1.RecommendationService.rest
+      ip: 0.0.0.0
+      port: 8082
+      network: tcp
+      protocol: restful
+      timeout: 30000
 
 plugins:
   log:
