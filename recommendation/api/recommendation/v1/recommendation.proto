@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package recommendation.v1;
+
+option go_package = "sea/api/recommendation/v1";
+
+// RecommendRequest 推荐请求
+message RecommendRequest {
+    string rec_request_id = 1;
+    string request_id     = 2;
+    string query          = 3;
+    string user_id        = 4;
+    string session_id     = 5;
+    string surface        = 6;
+    string period_bucket  = 7;
+    int32  topk           = 8;
+    bool   explain        = 9;
+}
+
+// RecommendResponse 推荐响应
+message RecommendResponse {
+    string trace_id      = 1;
+    string rec_request_id = 2;
+    string status         = 3;
+    string explanation    = 4;
+}
+
+// ContentSearchRequest 内容搜索请求
+message ContentSearchRequest {
+    string search_request_id = 1;
+    string request_id        = 2;
+    string query             = 3;
+    int32  topk              = 4;
+    int32  top_k             = 5;
+    int32  recall_k          = 6;
+    int32  coarse_recall_k   = 7;
+    float  min_pass_score    = 8;
+    bool   explain           = 9;
+}
+
+// ContentSearchResponse 内容搜索响应
+message ContentSearchResponse {
+    string trace_id         = 1;
+    string search_request_id = 2;
+    string status            = 3;
+}
+
+// IngestRequest 文档入库请求
+message IngestRequest {
+    string article_id   = 1;
+    double score        = 2;
+    string article_json = 3;
+    string markdown     = 4;
+    string title        = 5;
+    string cover        = 6;
+}
+
+// IngestResponse 文档入库响应
+message IngestResponse {
+    string article_id              = 1;
+    bool   coarse_vector_inserted  = 2;
+    int32  fine_vector_inserted    = 3;
+    int32  fine_chunk_count        = 4;
+    int32  image_vector_inserted   = 5;
+    int32  image_chunk_count       = 6;
+    bool   graph_enabled           = 7;
+    bool   graph_write_ok          = 8;
+}
+
+// TitleSearchRequest 标题搜索请求
+message TitleSearchRequest {
+    string search_request_id = 1;
+    string query             = 2;
+    int32  topk              = 3;
+}
+
+// TitleSearchResponse 标题搜索响应
+message TitleSearchResponse {
+    string trace_id          = 1;
+    string search_request_id = 2;
+    string status            = 3;
+}
+
+// AuthorSearchRequest 作者搜索请求
+message AuthorSearchRequest {
+    string search_request_id = 1;
+    string query             = 2;
+    int32  topk              = 3;
+}
+
+// AuthorSearchResponse 作者搜索响应
+message AuthorSearchResponse {
+    string trace_id          = 1;
+    string search_request_id = 2;
+    string status            = 3;
+}
+
+// OnboardingRequest 新用户引导请求
+message OnboardingRequest {
+    string request_id                       = 1;
+    string user_id                          = 2;
+    string username                         = 3;
+    repeated string interests               = 4;
+    string primary_purpose                  = 5;
+    repeated string preferred_article_types = 6;
+    string preferred_article_length         = 7;
+    string preferred_style                  = 8;
+    repeated string backgrounds             = 9;
+    string difficulty_preference            = 10;
+    repeated string excluded_contents       = 11;
+    repeated string reading_time_slots      = 12;
+    repeated string personalized_recommendation_types = 13;
+}
+
+// OnboardingResponse 新用户引导响应
+message OnboardingResponse {
+    string trace_id              = 1;
+    string request_id            = 2;
+    string status                = 3;
+    string user_id               = 4;
+    string period_bucket         = 5;
+    repeated string memory_types = 6;
+    repeated string warnings     = 7;
+}
+
+// HealthResponse 健康检查响应
+message HealthResponse {
+    string status = 1;
+}
+
+// ToolListResponse 工具列表响应
+message ToolListResponse {
+}
+
+// RecommendationService 推荐服务
+service RecommendationService {
+    rpc Recommend(RecommendRequest) returns (RecommendResponse);
+    rpc ContentSearch(ContentSearchRequest) returns (ContentSearchResponse);
+    rpc IngestDocument(IngestRequest) returns (IngestResponse);
+    rpc SearchTitle(TitleSearchRequest) returns (TitleSearchResponse);
+    rpc SearchAuthor(AuthorSearchRequest) returns (AuthorSearchResponse);
+    rpc SubmitOnboarding(OnboardingRequest) returns (OnboardingResponse);
+    rpc HealthCheck(HealthRequest) returns (HealthResponse);
+    rpc ListTools(ToolListRequest) returns (ToolListResponse);
+}
+
+message HealthRequest {}
+
+message ToolListRequest {}

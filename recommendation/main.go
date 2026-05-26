@@ -8,8 +8,10 @@ import (
 	"syscall"
 
 	"sea/agent"
+	v1 "sea/api/recommendation/v1"
 	"sea/config"
 	"sea/infra"
+	"sea/internal/handler"
 	"sea/kafka"
 	"sea/metrics"
 	"sea/poolrefill"
@@ -20,6 +22,8 @@ import (
 	"sea/zlog"
 
 	"go.uber.org/zap"
+	trpc "trpc.group/trpc-go/trpc-go"
+	"trpc.group/trpc-go/trpc-go/log"
 )
 
 func main() {
@@ -92,6 +96,7 @@ func main() {
 	authorSearchService := searchsvc.NewAuthorNameSearchService(sourceUserRepo)
 	onboardingQuestionnaireService := searchsvc.NewOnboardingQuestionnaireService(memoryRepo, memoryChunkRepo)
 
+	// ---- Gin HTTP server (existing) ----
 	r := router.NewRouter(
 		reg,
 		recoAgent,
@@ -112,11 +117,41 @@ func main() {
 		}
 	}()
 
+	// ---- tRPC server (new, dual-run with Gin) ----
+	trpcHandler := handler.New(
+		reg,
+		recoAgent,
+		contentSearchAgent,
+		titleSearchService,
+		authorSearchService,
+		onboardingQuestionnaireService,
+	)
+
+	trpcServer := trpc.NewServer()
+	v1.RegisterRecommendationServiceService(
+		trpcServer.Service("recommendation.v1.RecommendationService"),
+		trpcHandler,
+	)
+	v1.RegisterRecommendationServiceService(
+		trpcServer.Service("recommendation.v1.RecommendationService.http"),
+		trpcHandler,
+	)
+
+	go func() {
+		log.Info("tRPC server starting on :8000 (trpc) and :8080 (http)")
+		if err := trpcServer.Serve(); err != nil {
+			log.Errorf("tRPC server error: %v", err)
+		}
+	}()
+
 	<-signChan
 	zlog.L().Info("shutdown signal received")
 
 	if err := srv.Shutdown(context.Background()); err != nil {
 		zlog.L().Error("http server shutdown failed", zap.Error(err))
+	}
+	if err := trpcServer.Close(nil); err != nil {
+		zlog.L().Error("tRPC server shutdown failed", zap.Error(err))
 	}
 
 	infra.Neo4jClose(context.Background())

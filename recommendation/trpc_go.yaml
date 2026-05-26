@@ -1,0 +1,26 @@
+global:
+  namespace: Development
+  env_name: dev
+
+server:
+  app: sea
+  server: recommendation
+  service:
+    - name: recommendation.v1.RecommendationService
+      ip: 0.0.0.0
+      port: 8000
+      network: tcp
+      protocol: trpc
+      timeout: 30000
+    - name: recommendation.v1.RecommendationService.http
+      ip: 0.0.0.0
+      port: 8080
+      network: tcp
+      protocol: http
+      timeout: 30000
+
+plugins:
+  log:
+    default:
+      - writer: console
+        level: debug
