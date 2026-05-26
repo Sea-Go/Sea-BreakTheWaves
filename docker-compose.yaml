@@ -5,6 +5,7 @@ services:
   etcd:
     container_name: etcd
     image: quay.io/coreos/etcd:v3.5.25
+    platform: linux/amd64
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -79,6 +80,7 @@ services:
 
   neodash:
     image: nielsdejong/neodash:latest
+    platform: linux/amd64
     container_name: neodash
     ports:
       - "35005:5005"
@@ -108,6 +110,7 @@ services:
   # --- Kafka UI ---
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
+    platform: linux/amd64
     container_name: kafka-ui
     ports:
       - "38080:8080"
@@ -144,6 +147,7 @@ services:
   milvus:
     container_name: milvus-standalone
     image: milvusdb/milvus:v2.6.8
+    platform: linux/amd64
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
