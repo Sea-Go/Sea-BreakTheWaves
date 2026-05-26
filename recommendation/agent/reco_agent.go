@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"sea/config"
-	"sea/embedding/service"
+	embeddingservice "sea/embedding/service"
 	"sea/metrics"
 	"sea/poolrefill"
 	"sea/skillsys"
@@ -18,7 +18,6 @@ import (
 	"sea/zlog"
 
 	"github.com/openai/openai-go/v3"
-	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 
 	types "sea/type"
@@ -71,266 +70,107 @@ func NewRecoAgent(
 // 6) validate.output（质量/引用/grounding 基础校验）
 // 7) side_effect.*（出池/曝光等）
 func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (RecommendResponse, error) {
-	// -----------------------------
-	// E2E metrics：在一个 defer 里统一上报，保证所有返回路径都能统计到。
-	// -----------------------------
-	startE2E := time.Now()
-	degraded := false
-	fallback := false
-	statusLabel := "error" // 默认按 error 计；成功路径会在 defer 内覆盖
-	resultLabel := "skip"  // validation_total: pass|fail|skip
-
-	tracer := otel.Tracer("sea/reco_agent")
-	ctx, root := tracer.Start(ctx, "invoke_agent reco_agent")
-	defer root.End()
-
-	if req.Surface == "" {
-		req.Surface = "home_feed"
-	}
-	if req.RecRequestID == "" {
-		req.RecRequestID = "rec_" + randID()
-	}
 	if req.PeriodBucket == "" {
 		req.PeriodBucket = "d1"
 	}
 
-	ctx = zlog.NewTrace(ctx, req.RecRequestID, req.Surface, "reco_agent", req.UserID, req.SessionID, nil)
+	recReqID := req.RecRequestID
+	surface := req.Surface
+	if surface == "" {
+		surface = "home_feed"
+	}
+	ctx = zlog.NewTrace(ctx, recReqID, surface, "reco_agent", req.UserID, req.SessionID, nil)
 
 	base, _ := zlog.BaseFrom(ctx)
-	// metrics / 日志里需要 trace_id；提前把它塞进返回值，避免异常路径返回空 trace。
 	respOut := RecommendResponse{
 		TraceID:      base.TraceID,
-		RecRequestID: req.RecRequestID,
+		RecRequestID: base.RecRequestID,
 	}
-
 	expl := newExplainBuilder(req.Explain)
 	expl.Add("invoke", map[string]any{
 		"trace_id":       base.TraceID,
-		"rec_request_id": req.RecRequestID,
-		"surface":        req.Surface,
+		"rec_request_id": base.RecRequestID,
+		"surface":        base.Surface,
 		"period_bucket":  req.PeriodBucket,
 	})
 
-	var retErr error
-	defer func() {
-		// 1) status label
-		if retErr == nil {
-			statusLabel = "ok"
-			if degraded {
-				statusLabel = "degraded"
-			}
-			if fallback {
-				statusLabel = "fallback"
-			}
-		}
-		// validation_total 的结果：出错则 skip；否则按是否 degraded 计 pass/fail。
-		if retErr != nil {
-			resultLabel = "skip"
-		} else if degraded {
-			resultLabel = "fail"
-		} else {
-			resultLabel = "pass"
-		}
-
-		// 2) requests_total
-		metrics.GenRecAgentRequestsTotalMetric.WithLabelValues("reco_agent", req.Surface, statusLabel).Inc()
-
-		// 3) e2e latency
-		metrics.GenRecAgentE2ELatencySecondsMetric.WithLabelValues("reco_agent", req.Surface, statusLabel).
-			Observe(time.Since(startE2E).Seconds())
-
-		// 4) validate
-		metrics.GenRecAgentValidationTotalMetric.WithLabelValues(resultLabel).Inc()
-	}()
-
-	// root 事件（日志）
-	zlog.L().Info("invoke_agent",
-		zap.String("event_type", "invoke_agent"),
-		zap.String("trace_id", base.TraceID),
-		zap.String("rec_request_id", req.RecRequestID),
-		zap.String("surface", req.Surface),
-		zap.String("agent", "reco_agent"),
-		zap.String("status", "OK"),
-	)
-
-	// -----------------------------
-	// 1) intent.parse（span 必须包住 LLM 调用，否则 Jaeger 里会显示 0us）
-	// -----------------------------
-	ctxIntent, spIntent := zlog.StartSpan(ctx, "intent.parse")
-	intent, intentLat, err := a.intentParse(ctxIntent, req.Query)
+	// 1) intent.parse
+	intent, err := runStep(ctx, "intent.parse", func(ctx context.Context) (IntentResult, error) {
+		r, _, e := a.intentParse(ctx, req.Query)
+		return r, e
+	})
 	if err != nil {
-		spIntent.End(zlog.StatusError, err, zap.Int64("latency_ms", intentLat))
-		expl.Add("intent.parse.error", map[string]any{"error": err.Error(), "latency_ms": intentLat})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "intent.parse", err, &respOut, req.Explain)
 	}
-	spIntent.End(zlog.StatusOK, nil,
-		zap.Int64("latency_ms", intentLat),
-		zap.Any("intent", intent),
-	)
 	expl.Add("intent.parse", map[string]any{
-		"label":       intent.Label,
-		"confidence":  intent.Confidence,
-		"signals":     intent.Signals,
-		"latency_ms":  intentLat,
-		"user_query":  req.Query,
-		"model":       config.Cfg.Agent.Model,
-		"temperature": 0.0,
+		"label":      intent.Label,
+		"confidence": intent.Confidence,
+		"signals":    intent.Signals,
 	})
 
-	// -----------------------------
-	// 2) policy.route（此处可替换为更复杂策略/模型）
-	// -----------------------------
-	_, spPolicy := zlog.StartSpan(ctx, "policy.route")
-	route := a.routePolicy(req.Query, intent)
-	spPolicy.End(zlog.StatusOK, nil, zap.Any("decision", route))
+	// 2) policy.route
+	route, err := runStep(ctx, "policy.route", func(ctx context.Context) (RouteDecision, error) {
+		return a.routePolicy(req.Query, intent), nil
+	})
+	if err != nil {
+		return failRecommend(expl, "policy.route", err, &respOut, req.Explain)
+	}
 	expl.Add("policy.route", map[string]any{
 		"chosen":            route.Chosen,
 		"reason_codes":      route.ReasonCodes,
 		"must_cite_sources": route.MustCiteSources,
 		"max_tool_calls":    route.MaxToolCalls,
 	})
+	metrics.GenRecAgentRouteDecisionsTotalMetric.WithLabelValues("reco_agent", base.Surface, route.Chosen).Inc()
 
-	metrics.GenRecAgentRouteDecisionsTotalMetric.WithLabelValues("reco_agent", req.Surface, route.Chosen).Inc()
-
-	// -----------------------------
-	// 3) 维护候选池（必要时 refill）
-	// -----------------------------
 	if a.poolRepo == nil || a.memoryRepo == nil {
-		err := errors.New("PoolRepo/MemoryRepo 未注入")
-		expl.Add("dependency.error", map[string]any{"error": err.Error()})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "dependency", errors.New("PoolRepo/MemoryRepo not injected"), &respOut, req.Explain)
 	}
 
-	// ✅ 关键修复：span 必须包住「取记忆 + 向量化 + 记忆分块召回」，否则 Jaeger 里会显示 0us
-	ctxProfile, spProfile := zlog.StartSpan(ctx, "retrieval.user_profile")
-
-	longMem, _, _ := a.memoryRepo.Get(ctxProfile, req.UserID, storage.MemoryLongTerm, "")
-	shortMem, _, _ := a.memoryRepo.Get(ctxProfile, req.UserID, storage.MemoryShortTerm, "")
-	periodicMem, _, _ := a.memoryRepo.Get(ctxProfile, req.UserID, storage.MemoryPeriodic, req.PeriodBucket)
-
-	// 记忆检索：使用 tokenize 分块后的 Milvus 先召回“最相关记忆片段”，避免把整段记忆塞进 prompt。
-	longHint := longMem.Content
-	shortHint := shortMem.Content
-	periodicHint := periodicMem.Content
-
-	var (
-		retrievedCnt int
-		embedMs      int64
-		searchMs     int64
-	)
-
-	if a.memoryChunkRepo != nil {
-		st := time.Now()
-		vec, err := service.TextVector(ctxProfile, req.Query)
-		embedMs = time.Since(st).Milliseconds()
-
-		if err == nil && len(vec) > 0 {
-			st2 := time.Now()
-			longChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctxProfile, req.UserID, storage.MemoryLongTerm, "", longMem.UpdatedAt, vec, 5)
-			shortChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctxProfile, req.UserID, storage.MemoryShortTerm, "", shortMem.UpdatedAt, vec, 5)
-			periodChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctxProfile, req.UserID, storage.MemoryPeriodic, req.PeriodBucket, periodicMem.UpdatedAt, vec, 5)
-			searchMs = time.Since(st2).Milliseconds()
-
-			retrievedCnt = len(longChunks) + len(shortChunks) + len(periodChunks)
-
-			// SearchMemoryChunks 返回的是内容字符串切片，直接拼接即可。
-			if len(longChunks) > 0 {
-				longHint = strings.Join(longChunks, "\n")
-			}
-			if len(shortChunks) > 0 {
-				shortHint = strings.Join(shortChunks, "\n")
-			}
-			if len(periodChunks) > 0 {
-				periodicHint = strings.Join(periodChunks, "\n")
-			}
-		}
+	// 3) retrieval.user_profile
+	profile, err := runStep(ctx, "retrieval.user_profile", func(ctx context.Context) (*profileRecallResult, error) {
+		return a.retrieveUserProfile(ctx, req.UserID, req.PeriodBucket, req.Query)
+	})
+	if err != nil {
+		return failRecommend(expl, "retrieval.user_profile", err, &respOut, req.Explain)
 	}
-
-	spProfile.End(zlog.StatusOK, nil,
-		zap.Any("retrieval", map[string]any{
-			"returned_doc_count": retrievedCnt,
-			"empty":              retrievedCnt == 0,
-			"embed_ms":           embedMs,
-			"chunk_search_ms":    searchMs,
-		}),
-	)
 	expl.Add("retrieval.user_profile", map[string]any{
 		"memory": map[string]any{
-			"long_mem":     longHint,
-			"short_mem":    shortHint,
-			"periodic_mem": periodicHint,
+			"long_mem":     profile.longHint,
+			"short_mem":    profile.shortHint,
+			"periodic_mem": profile.periodicHint,
 		},
-		"milvus_memory_chunk_recall": map[string]any{
-			"returned_doc_count": retrievedCnt,
-			"embed_ms":           embedMs,
-			"chunk_search_ms":    searchMs,
-			"enabled":            a.memoryChunkRepo != nil,
-		},
+		"milvus_memory_chunk_recall": profile.chunkRecallInfo,
 	})
 
-	// 多方向召回 query（满足“周期意图多方向推断”）
-	// 说明：这里生成的是“召回 query 文本”，真正的向量化与 Milvus 检索在 pool_refill/milvus_search 工具里完成。
-	ctxQGen, spQGen := zlog.StartSpan(ctx, "retrieval.intent_queries")
-	recallQueries, _ := a.generateRecallQueries(ctxQGen, req.Query, longHint, shortHint, periodicHint)
-	if len(recallQueries) == 0 {
-		recallQueries = []string{strings.TrimSpace(req.Query)}
+	// 4) retrieval.intent_queries
+	recallQueries, err := runStep(ctx, "retrieval.intent_queries", func(ctx context.Context) ([]string, error) {
+		q, e := a.generateRecallQueries(ctx, req.Query, profile.longHint, profile.shortHint, profile.periodicHint)
+		if len(q) == 0 {
+			q = []string{strings.TrimSpace(req.Query)}
+		}
+		return q, e
+	})
+	if err != nil {
+		return failRecommend(expl, "retrieval.intent_queries", err, &respOut, req.Explain)
 	}
-	spQGen.End(zlog.StatusOK, nil, zap.Any("decision", map[string]any{
-		"type":         "retrieve",
-		"chosen":       "intent_queries",
-		"reason_codes": []string{"FUSE_MEMORY"},
-		"signals":      map[string]any{"query_count": len(recallQueries)},
-	}))
 	expl.Add("retrieval.intent_queries", map[string]any{
 		"queries":     recallQueries,
 		"query_count": len(recallQueries),
 	})
 
-	// 池子数量检查 + refill
+	// 5) pool ensure (async)
 	longEnsure, err := a.ensurePoolAsync(ctx, req.UserID, storage.PoolLongTerm, "", recallQueries)
 	if err != nil {
-		expl.Add("pool.ensure.error", map[string]any{"pool": "long_term", "error": err.Error()})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "pool.ensure.long_term", err, &respOut, req.Explain)
 	}
 	shortEnsure, err := a.ensurePoolAsync(ctx, req.UserID, storage.PoolShortTerm, "", recallQueries)
 	if err != nil {
-		expl.Add("pool.ensure.error", map[string]any{"pool": "short_term", "error": err.Error()})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "pool.ensure.short_term", err, &respOut, req.Explain)
 	}
 	periodEnsure, err := a.ensurePoolAsync(ctx, req.UserID, storage.PoolPeriodic, req.PeriodBucket, recallQueries)
 	if err != nil {
-		expl.Add("pool.ensure.error", map[string]any{"pool": "periodic", "bucket": req.PeriodBucket, "error": err.Error()})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "pool.ensure.periodic", err, &respOut, req.Explain)
 	}
 	expl.Add("pool_refill_async", map[string]any{
 		"recall_queries": recallQueries,
@@ -341,74 +181,44 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		},
 	})
 
-	// -----------------------------
-	// 4) 从池子拿候选（不删除，最终推荐后再出池）
-	// -----------------------------
+	// 6) collect candidates
 	candidates, err := a.collectCandidates(ctx, req.UserID, req.PeriodBucket)
 	if err != nil {
-		expl.Add("candidates.collect.error", map[string]any{"error": err.Error()})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "candidates.collect", err, &respOut, req.Explain)
 	}
-	expl.Add("candidates.collect", map[string]any{
-		"count": len(candidates),
-	})
-
-	metrics.GenRecAgentRetrievalRequestsTotalMetric.WithLabelValues("reco_agent", req.Surface).Inc()
-	metrics.GenRecAgentRetrievalReturnedDocsMetric.WithLabelValues("reco_agent", req.Surface).Observe(float64(len(candidates)))
+	expl.Add("candidates.collect", map[string]any{"count": len(candidates)})
+	metrics.GenRecAgentRetrievalRequestsTotalMetric.WithLabelValues("reco_agent", base.Surface).Inc()
+	metrics.GenRecAgentRetrievalReturnedDocsMetric.WithLabelValues("reco_agent", base.Surface).Observe(float64(len(candidates)))
 
 	n := config.Cfg.Pools.Recommend.TakeSize
 	if n <= 0 {
 		n = 20
 	}
-	if len(candidates) == 0 {
-		fallback = true
-		expl.Add("rank.rerank", map[string]any{
-			"candidate_in":  0,
-			"candidate_out": 0,
-			"top_reason":    "",
-		})
+
+	fallback := len(candidates) == 0
+	if fallback {
+		expl.Add("rank.rerank", map[string]any{"candidate_in": 0, "candidate_out": 0})
 		respOut.Status = "fallback"
-		respOut.IDs = []string{}
-		respOut.ArticleIDs = []string{}
-		respOut.Explanation = ""
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
 		return respOut, nil
 	}
 
-	// -----------------------------
-	// 5) AI 精排序
-	// -----------------------------
-	reranked, err := a.aiRerank(ctx, req.UserID, intent.Label, candidates)
+	// 7) ai_rerank
+	reranked, err := runStep(ctx, "rank.rerank", func(ctx context.Context) ([]RerankItem, error) {
+		return a.aiRerank(ctx, req.UserID, intent.Label, candidates)
+	})
 	if err != nil {
-		expl.Add("rank.rerank.error", map[string]any{"error": err.Error()})
-		respOut.Status = "error"
-		retErr = err
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, err
+		return failRecommend(expl, "rank.rerank", err, &respOut, req.Explain)
+	}
+	topReason := ""
+	if len(reranked) > 0 {
+		topReason = reranked[0].Reason
 	}
 	expl.Add("rank.rerank", map[string]any{
 		"candidate_in":  len(candidates),
 		"candidate_out": len(reranked),
-		"top_reason": func() string {
-			if len(reranked) == 0 {
-				return ""
-			}
-			return reranked[0].Reason
-		}(),
+		"top_reason":    topReason,
 	})
 
-	// 取 topN
 	if len(reranked) > n {
 		reranked = reranked[:n]
 	}
@@ -421,9 +231,8 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		fallback = true
 	}
 
-	// -----------------------------
-	// 6) validate.output（基础质量校验）
-	// -----------------------------
+	// 8) validate.output
+	degraded := false
 	quality := map[string]any{
 		"schema_valid":          true,
 		"citation_valid":        true,
@@ -435,36 +244,20 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		quality["claim_grounding_check"] = "FAIL_CLAIMED_BUT_EMPTY"
 		quality["violations"] = []string{"CITATION_MISSING", "GROUNDED_CLAIM_INCONSISTENT"}
 		degraded = true
-	} else {
-		// ok
 	}
-	// validation_total 会在 defer 中统一上报，这里只需标记 degraded。
-
-	_, spVal := zlog.StartSpan(ctx, "validate.output")
-	spVal.End(zlog.StatusOK, nil, zap.Any("quality", quality), zap.Int64("latency_ms", 1))
+	_, _ = runStep(ctx, "validate.output", func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, nil
+	})
 	expl.Add("validate.output", map[string]any{"quality": quality, "degraded": degraded})
 
-	// -----------------------------
-	// 7) side_effect：出池（推荐后移除）
-	// -----------------------------
+	// 9) side_effect: pool_remove
 	if config.Cfg.Pools.Recommend.RemoveAfterRecommend {
-		ctxSE, sp := zlog.StartSpan(ctx, "side_effect.pool_remove")
-		if err := a.removeFromPools(ctxSE, req.UserID, req.PeriodBucket, finalIDs); err != nil {
-			sp.End(zlog.StatusError, err)
-			expl.Add("side_effect.pool_remove.error", map[string]any{"error": err.Error()})
-			respOut.Status = "error"
-			retErr = err
-			respOut.Explanation = expl.Text()
-			if req.Explain {
-				respOut.ExplainTrace = expl.Trace()
-			}
-			return respOut, err
+		_, err = runStep(ctx, "side_effect.pool_remove", func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, a.removeFromPools(ctx, req.UserID, req.PeriodBucket, finalIDs)
+		})
+		if err != nil {
+			return failRecommend(expl, "side_effect.pool_remove", err, &respOut, req.Explain)
 		}
-		sp.End(zlog.StatusOK, nil, zap.Any("side_effect", map[string]any{
-			"type":        "pool_remove",
-			"outcome":     "OK",
-			"article_ids": finalIDs,
-		}))
 	}
 
 	explain := ""
@@ -472,7 +265,6 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		explain = reranked[0].Reason
 	}
 
-	// 最终返回：Explanation 汇总每步观测信息；不再用 top1 的短 reason 覆盖。
 	if fallback {
 		respOut.Status = "fallback"
 	} else {
@@ -481,7 +273,6 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 	respOut.IDs = finalIDs
 	respOut.ArticleIDs = finalIDs
 	respOut.Explanation = explain
-
 	return respOut, nil
 }
 
@@ -1002,6 +793,64 @@ func (a *RecoAgent) removeFromPools(ctx context.Context, userID string, periodBu
 		return err
 	}
 	return nil
+}
+
+type profileRecallResult struct {
+	longHint        string
+	shortHint       string
+	periodicHint    string
+	chunkRecallInfo map[string]any
+}
+
+// retrieveUserProfile loads user memory from PG and recalls relevant chunks from Milvus.
+func (a *RecoAgent) retrieveUserProfile(ctx context.Context, userID, periodBucket, query string) (*profileRecallResult, error) {
+	longMem, _, _ := a.memoryRepo.Get(ctx, userID, storage.MemoryLongTerm, "")
+	shortMem, _, _ := a.memoryRepo.Get(ctx, userID, storage.MemoryShortTerm, "")
+	periodicMem, _, _ := a.memoryRepo.Get(ctx, userID, storage.MemoryPeriodic, periodBucket)
+
+	longHint := longMem.Content
+	shortHint := shortMem.Content
+	periodicHint := periodicMem.Content
+
+	var retrievedCnt int
+	var embedMs, searchMs int64
+
+	if a.memoryChunkRepo != nil {
+		st := time.Now()
+		vec, err := embeddingservice.TextVector(ctx, query)
+		embedMs = time.Since(st).Milliseconds()
+		if err == nil && len(vec) > 0 {
+			st2 := time.Now()
+			longChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctx, userID, storage.MemoryLongTerm, "", longMem.UpdatedAt, vec, 5)
+			shortChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctx, userID, storage.MemoryShortTerm, "", shortMem.UpdatedAt, vec, 5)
+			periodChunks, _ := a.memoryChunkRepo.SearchMemoryChunks(ctx, userID, storage.MemoryPeriodic, periodBucket, periodicMem.UpdatedAt, vec, 5)
+			searchMs = time.Since(st2).Milliseconds()
+
+			retrievedCnt = len(longChunks) + len(shortChunks) + len(periodChunks)
+			if len(longChunks) > 0 {
+				longHint = strings.Join(longChunks, "\n")
+			}
+			if len(shortChunks) > 0 {
+				shortHint = strings.Join(shortChunks, "\n")
+			}
+			if len(periodChunks) > 0 {
+				periodicHint = strings.Join(periodChunks, "\n")
+			}
+		}
+	}
+
+	return &profileRecallResult{
+		longHint:     longHint,
+		shortHint:    shortHint,
+		periodicHint: periodicHint,
+		chunkRecallInfo: map[string]any{
+			"returned_doc_count": retrievedCnt,
+			"empty":              retrievedCnt == 0,
+			"embed_ms":           embedMs,
+			"chunk_search_ms":    searchMs,
+			"enabled":            a.memoryChunkRepo != nil,
+		},
+	}, nil
 }
 
 func randID() string {

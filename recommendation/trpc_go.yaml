@@ -3,6 +3,8 @@ global:
   env_name: dev
 
 server:
+  filter:
+    - observability
   app: sea
   server: recommendation
   service:

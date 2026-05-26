@@ -11,6 +11,7 @@ import (
 	v1 "sea/api/recommendation/v1"
 	"sea/config"
 	"sea/infra"
+	_ "sea/internal/filter"
 	"sea/internal/handler"
 	"sea/kafka"
 	"sea/metrics"
