@@ -16,54 +16,26 @@ import (
 	"sea/storage"
 	"sea/zlog"
 
+	"trpc.group/trpc-go/trpc-agent-go/tool"
+	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 	"github.com/milvus-io/milvus/client/v2/column"
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
 	"github.com/openai/openai-go/v3"
 	"go.uber.org/zap"
 )
 
-type ToolDocIngest struct {
-	articleRepo *storage.ArticleRepo
-	ai          *openai.Client
+type DocIngestInput struct {
+	ArticleID   string  `json:"article_id" jsonschema:"description=文章 ID，可选"`
+	Score       float64 `json:"score" jsonschema:"description=文章基础分,default=0"`
+	ArticleJSON string  `json:"article_json" jsonschema:"description=结构化文章 JSON"`
+	Markdown    string  `json:"markdown" jsonschema:"description=Markdown 文章"`
+	Title       string  `json:"title" jsonschema:"description=文章标题"`
+	Cover       string  `json:"cover" jsonschema:"description=文章封面"`
+	TypeTags    []string `json:"type_tags" jsonschema:"description=类型标签列表"`
+	Tags        []string `json:"tags" jsonschema:"description=标签列表"`
 }
 
-func New(dbRepo *storage.ArticleRepo, ai *openai.Client) *ToolDocIngest {
-	return &ToolDocIngest{articleRepo: dbRepo, ai: ai}
-}
-
-func (t *ToolDocIngest) Name() string {
-	return "doc_ingest"
-}
-
-func (t *ToolDocIngest) Description() string {
-	return "将文章切分、向量化，并写入 PG、Milvus 与可选 GraphRAG。"
-}
-
-func (t *ToolDocIngest) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"article_id":   map[string]any{"type": "string", "description": "文章 ID，可选"},
-			"score":        map[string]any{"type": "number", "description": "文章基础分", "default": 0},
-			"article_json": map[string]any{"type": "string", "description": "结构化文章 JSON"},
-			"markdown":     map[string]any{"type": "string", "description": "Markdown 文章"},
-		},
-		"required": []string{},
-	}
-}
-
-type ingestArgs struct {
-	ArticleID   string   `json:"article_id"`
-	Score       float64  `json:"score"`
-	ArticleJSON string   `json:"article_json"`
-	Markdown    string   `json:"markdown"`
-	Title       string   `json:"title"`
-	Cover       string   `json:"cover"`
-	TypeTags    []string `json:"type_tags"`
-	Tags        []string `json:"tags"`
-}
-
-type ingestResult struct {
+type DocIngestOutput struct {
 	ArticleID            string `json:"article_id"`
 	CoarseVectorInserted bool   `json:"coarse_vector_inserted"`
 	FineVectorInserted   int    `json:"fine_vector_inserted"`
@@ -74,9 +46,116 @@ type ingestResult struct {
 	GraphWriteOK         bool   `json:"graph_write_ok"`
 }
 
-func (t *ToolDocIngest) generateCoarseIntro(ctx context.Context, article chunk.Article, splitRes chunk.SplitResult) (string, string, error) {
+func New(dbRepo *storage.ArticleRepo, ai *openai.Client) tool.CallableTool {
+	return function.NewFunctionTool(
+		func(ctx context.Context, args DocIngestInput) (DocIngestOutput, error) {
+			article, err := parseArticle(args)
+			if err != nil {
+				return DocIngestOutput{}, err
+			}
+			article.Score = args.Score
+
+			splitRes, err := chunk.SplitArticle(
+				article,
+				config.Cfg.Split.ChunkMaxTokens,
+				config.Cfg.Split.ChunkOverlapTokens,
+				config.Cfg.Split.KeywordTopK,
+			)
+			if err != nil {
+				return DocIngestOutput{}, err
+			}
+
+			coarseIntro, introModel, introErr := generateCoarseIntro(ctx, ai, article, splitRes)
+			if introErr != nil {
+				zlog.L().Warn("generate coarse intro failed, fallback to deterministic intro", zap.Error(introErr), zap.String("article_id", article.ArticleID))
+			}
+			if strings.TrimSpace(coarseIntro) != "" {
+				splitRes.CoarseIntro = strings.TrimSpace(coarseIntro)
+				splitRes.CoarseText = chunk.ComposeCoarseText(splitRes.CoarseRawText, splitRes.CoarseIntro, splitRes.KeywordScore)
+			}
+
+			if dbRepo == nil {
+				return DocIngestOutput{}, errors.New("article repo 未注入")
+			}
+			if err := DeleteArticleState(ctx, dbRepo, article.ArticleID); err != nil {
+				return DocIngestOutput{}, err
+			}
+			if err := dbRepo.UpsertArticle(ctx, article); err != nil {
+				return DocIngestOutput{}, err
+			}
+
+			allChunks := append([]chunk.Chunk{}, splitRes.FineChunks...)
+			allChunks = append(allChunks, splitRes.ImageChunks...)
+			if err := dbRepo.UpsertChunks(ctx, allChunks); err != nil {
+				return DocIngestOutput{}, err
+			}
+
+			cli := infra.Milvus()
+			if cli == nil {
+				return DocIngestOutput{}, errors.New("Milvus 客户端未初始化")
+			}
+
+			coarseInserted, err := insertCoarse(ctx, cli, article, splitRes.CoarseText, splitRes.Keywords, splitRes.KeywordScore)
+			if err != nil {
+				return DocIngestOutput{}, err
+			}
+
+			fineInserted, fineVectors, err := insertFine(ctx, cli, article, splitRes.FineChunks, splitRes.Keywords)
+			if err != nil {
+				return DocIngestOutput{}, err
+			}
+
+			imageInserted, err := insertImages(ctx, cli, article, splitRes.ImageChunks, splitRes.Keywords)
+			if err != nil {
+				return DocIngestOutput{}, err
+			}
+
+			graphEnabled := false
+			graphWriteOK := false
+			if drv := infra.Neo4j(); drv != nil {
+				graphEnabled = true
+				store := graphschema.NewStore(drv)
+				if store != nil {
+					if err := ingestGraphRAG(ctx, store, article, splitRes, fineVectors); err == nil {
+						graphWriteOK = true
+					} else {
+						zlog.L().Warn("GraphRAG 写入失败，已降级", zap.Error(err), zap.String("article_id", article.ArticleID))
+					}
+				}
+			}
+
+			_, sp := zlog.StartSpan(ctx, "side_effect.doc_ingest")
+			sp.End(zlog.StatusOK, nil, zap.Any("side_effect", map[string]any{
+				"type":               "doc_ingest",
+				"outcome":            "OK",
+				"article_id":         article.ArticleID,
+				"coarse_intro_model": introModel,
+				"keyword_score":      splitRes.KeywordScore,
+				"fine_chunk_count":   len(splitRes.FineChunks),
+				"image_chunk_count":  len(splitRes.ImageChunks),
+				"graph_enabled":      graphEnabled,
+				"graph_write_ok":     graphWriteOK,
+			}))
+
+			return DocIngestOutput{
+				ArticleID:            article.ArticleID,
+				CoarseVectorInserted: coarseInserted,
+				FineVectorInserted:   fineInserted,
+				FineChunkCount:       len(splitRes.FineChunks),
+				ImageVectorInserted:  imageInserted,
+				ImageChunkCount:      len(splitRes.ImageChunks),
+				GraphEnabled:         graphEnabled,
+				GraphWriteOK:         graphWriteOK,
+			}, nil
+		},
+		function.WithName("doc_ingest"),
+		function.WithDescription("将文章切分、向量化，并写入 PG、Milvus 与可选 GraphRAG。"),
+	)
+}
+
+func generateCoarseIntro(ctx context.Context, ai *openai.Client, article chunk.Article, splitRes chunk.SplitResult) (string, string, error) {
 	fallback := strings.TrimSpace(splitRes.CoarseIntro)
-	if t.ai == nil {
+	if ai == nil {
 		return fallback, "", nil
 	}
 
@@ -89,7 +168,7 @@ func (t *ToolDocIngest) generateCoarseIntro(ctx context.Context, article chunk.A
 		"task: write a compact intro in Chinese, within 120 Chinese characters when possible, article-like but retrieval-friendly.",
 	}, "\n"))
 
-	resp, err := t.ai.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+	resp, err := ai.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 		Model: config.Cfg.Agent.Model,
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(sys),
@@ -111,112 +190,7 @@ func (t *ToolDocIngest) generateCoarseIntro(ctx context.Context, article chunk.A
 	return content, config.Cfg.Agent.Model, nil
 }
 
-func (t *ToolDocIngest) Invoke(ctx context.Context, argsRaw json.RawMessage) (any, error) {
-	var args ingestArgs
-	if err := json.Unmarshal(argsRaw, &args); err != nil {
-		return nil, err
-	}
-
-	article, err := parseArticle(args)
-	if err != nil {
-		return nil, err
-	}
-	article.Score = args.Score
-
-	splitRes, err := chunk.SplitArticle(
-		article,
-		config.Cfg.Split.ChunkMaxTokens,
-		config.Cfg.Split.ChunkOverlapTokens,
-		config.Cfg.Split.KeywordTopK,
-	)
-	if err != nil {
-		return nil, err
-	}
-	coarseIntro, introModel, introErr := t.generateCoarseIntro(ctx, article, splitRes)
-	if introErr != nil {
-		zlog.L().Warn("generate coarse intro failed, fallback to deterministic intro", zap.Error(introErr), zap.String("article_id", article.ArticleID))
-	}
-	if strings.TrimSpace(coarseIntro) != "" {
-		splitRes.CoarseIntro = strings.TrimSpace(coarseIntro)
-		splitRes.CoarseText = chunk.ComposeCoarseText(splitRes.CoarseRawText, splitRes.CoarseIntro, splitRes.KeywordScore)
-	}
-
-	if t.articleRepo == nil {
-		return nil, errors.New("article repo 未注入")
-	}
-	if err := DeleteArticleState(ctx, t.articleRepo, article.ArticleID); err != nil {
-		return nil, err
-	}
-	if err := t.articleRepo.UpsertArticle(ctx, article); err != nil {
-		return nil, err
-	}
-
-	allChunks := append([]chunk.Chunk{}, splitRes.FineChunks...)
-	allChunks = append(allChunks, splitRes.ImageChunks...)
-	if err := t.articleRepo.UpsertChunks(ctx, allChunks); err != nil {
-		return nil, err
-	}
-
-	cli := infra.Milvus()
-	if cli == nil {
-		return nil, errors.New("Milvus 客户端未初始化")
-	}
-
-	coarseInserted, err := insertCoarse(ctx, cli, article, splitRes.CoarseText, splitRes.Keywords, splitRes.KeywordScore)
-	if err != nil {
-		return nil, err
-	}
-
-	fineInserted, fineVectors, err := insertFine(ctx, cli, article, splitRes.FineChunks, splitRes.Keywords)
-	if err != nil {
-		return nil, err
-	}
-
-	imageInserted, err := insertImages(ctx, cli, article, splitRes.ImageChunks, splitRes.Keywords)
-	if err != nil {
-		return nil, err
-	}
-
-	graphEnabled := false
-	graphWriteOK := false
-	if drv := infra.Neo4j(); drv != nil {
-		graphEnabled = true
-		store := graphschema.NewStore(drv)
-		if store != nil {
-			if err := ingestGraphRAG(ctx, store, article, splitRes, fineVectors); err == nil {
-				graphWriteOK = true
-			} else {
-				zlog.L().Warn("GraphRAG 写入失败，已降级", zap.Error(err), zap.String("article_id", article.ArticleID))
-			}
-		}
-	}
-
-	_, sp := zlog.StartSpan(ctx, "side_effect.doc_ingest")
-	sp.End(zlog.StatusOK, nil, zap.Any("side_effect", map[string]any{
-		"type":               "doc_ingest",
-		"outcome":            "OK",
-		"article_id":         article.ArticleID,
-		"coarse_intro_model": introModel,
-		"keyword_score":      splitRes.KeywordScore,
-		"fine_chunk_count":   len(splitRes.FineChunks),
-		"image_chunk_count":  len(splitRes.ImageChunks),
-		"graph_enabled":      graphEnabled,
-		"graph_write_ok":     graphWriteOK,
-	}))
-
-	return ingestResult{
-		ArticleID:            article.ArticleID,
-		CoarseVectorInserted: coarseInserted,
-		FineVectorInserted:   fineInserted,
-		FineChunkCount:       len(splitRes.FineChunks),
-		ImageVectorInserted:  imageInserted,
-		ImageChunkCount:      len(splitRes.ImageChunks),
-		GraphEnabled:         graphEnabled,
-		GraphWriteOK:         graphWriteOK,
-	}, nil
-}
-
-func parseArticle(args ingestArgs) (chunk.Article, error) {
+func parseArticle(args DocIngestInput) (chunk.Article, error) {
 	var article chunk.Article
 	if strings.TrimSpace(args.ArticleJSON) != "" {
 		if err := json.Unmarshal([]byte(args.ArticleJSON), &article); err != nil {

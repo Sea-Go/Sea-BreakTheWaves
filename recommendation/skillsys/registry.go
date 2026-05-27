@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"sea/metrics"
-
 	"sea/zlog"
 
 	"go.uber.org/zap"
@@ -34,8 +33,8 @@ func NewRegistry() *Registry {
 func (r *Registry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools[t.Name()] = t
-	zlog.L().Info("注册工具", zap.String("tool", t.Name()))
+	r.tools[t.Declaration().Name] = t
+	zlog.L().Info("注册工具", zap.String("tool", t.Declaration().Name))
 }
 
 func (r *Registry) Get(name string) (Tool, bool) {
@@ -65,7 +64,7 @@ func (r *Registry) Invoke(ctx context.Context, toolName string, argsRaw json.Raw
 	// 工具调用也纳入 agent trace/span（execute_tool.xxx）
 	ctx2, sp := zlog.StartSpan(ctx, "execute_tool."+toolName)
 
-	out, err := t.Invoke(ctx2, argsRaw)
+	out, err := t.Call(ctx2, argsRaw)
 	if err != nil {
 		metrics.GenRecAgentToolCallsTotalMetric.WithLabelValues(toolName, "error").Inc()
 		sp.End(zlog.StatusError, err)

@@ -2,116 +2,61 @@ package pool_manage
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"sea/config"
 	"sea/poolrefill"
 	searchsvc "sea/service"
 	"sea/storage"
-
 	types "sea/type"
+
+	"trpc.group/trpc-go/trpc-agent-go/tool"
+	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
 
 // =========================
 // Tool 1: pool_get_size
 // =========================
 
-type ToolPoolGetSize struct {
-	poolRepo *storage.PoolRepo
+type PoolGetSizeInput struct {
+	UserID       string `json:"user_id" jsonschema:"description=用户 ID,required"`
+	PoolType     string `json:"pool_type" jsonschema:"description=候选池类型,required,enum=long_term,enum=short_term,enum=periodic"`
+	PeriodBucket string `json:"period_bucket" jsonschema:"description=periodic 池使用的时间桶，例如 d1 / w1 / weekend"`
 }
 
-func NewPoolGetSize(poolRepo *storage.PoolRepo) *ToolPoolGetSize {
-	return &ToolPoolGetSize{poolRepo: poolRepo}
+type PoolGetSizeOutput struct {
+	Count int `json:"count" jsonschema:"description=当前池中候选项数量"`
 }
 
-func (t *ToolPoolGetSize) Name() string { return "pool_get_size" }
-func (t *ToolPoolGetSize) Description() string {
-	return "查看指定用户在 long_term/short_term/periodic 候选池中的当前数量。"
-}
-
-func (t *ToolPoolGetSize) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"user_id":       map[string]any{"type": "string"},
-			"pool_type":     map[string]any{"type": "string", "enum": []string{"long_term", "short_term", "periodic"}},
-			"period_bucket": map[string]any{"type": "string", "description": "periodic 池使用的时间桶，例如 d1 / w1 / weekend"},
+func NewPoolGetSize(poolRepo *storage.PoolRepo) tool.CallableTool {
+	return function.NewFunctionTool(
+		func(ctx context.Context, args PoolGetSizeInput) (PoolGetSizeOutput, error) {
+			if poolRepo == nil {
+				return PoolGetSizeOutput{}, errors.New("PoolRepo 未注入")
+			}
+			cnt, err := poolRepo.GetPoolSize(ctx, args.UserID, storage.PoolType(args.PoolType), args.PeriodBucket)
+			if err != nil {
+				return PoolGetSizeOutput{}, err
+			}
+			return PoolGetSizeOutput{Count: cnt}, nil
 		},
-		"required": []string{"user_id", "pool_type"},
-	}
-}
-
-type poolGetSizeArgs struct {
-	UserID       string `json:"user_id"`
-	PoolType     string `json:"pool_type"`
-	PeriodBucket string `json:"period_bucket"`
-}
-
-type poolGetSizeResult struct {
-	Count int `json:"count"`
-}
-
-func (t *ToolPoolGetSize) Invoke(ctx context.Context, argsRaw json.RawMessage) (any, error) {
-	var args poolGetSizeArgs
-	if err := json.Unmarshal(argsRaw, &args); err != nil {
-		return nil, err
-	}
-	if t.poolRepo == nil {
-		return nil, errors.New("PoolRepo 未注入")
-	}
-	cnt, err := t.poolRepo.GetPoolSize(ctx, args.UserID, storage.PoolType(args.PoolType), args.PeriodBucket)
-	if err != nil {
-		return nil, err
-	}
-	return poolGetSizeResult{Count: cnt}, nil
+		function.WithName("pool_get_size"),
+		function.WithDescription("查看指定用户在 long_term/short_term/periodic 候选池中的当前数量。"),
+	)
 }
 
 // =========================
 // Tool 2: pool_refill
 // =========================
 
-type ToolPoolRefill struct {
-	runner poolrefill.PoolRefillRunner
+type PoolRefillInput struct {
+	UserID       string `json:"user_id" jsonschema:"description=用户 ID,required"`
+	PoolType     string `json:"pool_type" jsonschema:"description=候选池类型,required,enum=long_term,enum=short_term,enum=periodic"`
+	PeriodBucket string `json:"period_bucket" jsonschema:"description=periodic 池使用的时间桶"`
+	QueryText    string `json:"query_text" jsonschema:"description=用于补池的召回 query 文本,required"`
 }
 
-func NewPoolRefill(
-	poolRepo *storage.PoolRepo,
-	articleRepo *storage.ArticleRepo,
-	sourceLikeRepo *storage.SourceLikeRepo,
-	reranker searchsvc.RerankInvoker,
-) *ToolPoolRefill {
-	return &ToolPoolRefill{
-		runner: poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, sourceLikeRepo, reranker),
-	}
-}
-
-func (t *ToolPoolRefill) Name() string { return "pool_refill" }
-func (t *ToolPoolRefill) Description() string {
-	return "按 query_text 执行 coarse->fine->rerank->pass 的补池流程，并把结果写入 Postgres 候选池。"
-}
-
-func (t *ToolPoolRefill) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"user_id":       map[string]any{"type": "string"},
-			"pool_type":     map[string]any{"type": "string", "enum": []string{"long_term", "short_term", "periodic"}},
-			"period_bucket": map[string]any{"type": "string"},
-			"query_text":    map[string]any{"type": "string", "description": "用于补池的召回 query 文本"},
-		},
-		"required": []string{"user_id", "pool_type", "query_text"},
-	}
-}
-
-type poolRefillArgs struct {
-	UserID       string `json:"user_id"`
-	PoolType     string `json:"pool_type"`
-	PeriodBucket string `json:"period_bucket"`
-	QueryText    string `json:"query_text"`
-}
-
-type poolRefillResult struct {
+type PoolRefillOutput struct {
 	PoolType         string  `json:"pool_type"`
 	PeriodBucket     string  `json:"period_bucket"`
 	Inserted         int     `json:"inserted"`
@@ -121,93 +66,74 @@ type poolRefillResult struct {
 	CoverageScore    float32 `json:"coverage_score"`
 }
 
-func (t *ToolPoolRefill) Invoke(ctx context.Context, argsRaw json.RawMessage) (any, error) {
-	var args poolRefillArgs
-	if err := json.Unmarshal(argsRaw, &args); err != nil {
-		return nil, err
-	}
-	if t.runner == nil {
-		return nil, errors.New("PoolRefillRunner 未注入")
-	}
-
-	result, err := t.runner.Run(ctx, types.PoolRefillJob{
-		UserID:       args.UserID,
-		PoolType:     args.PoolType,
-		PeriodBucket: args.PeriodBucket,
-		QueryTexts:   []string{args.QueryText},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return poolRefillResult{
-		PoolType:         string(result.PoolType),
-		PeriodBucket:     result.PeriodBucket,
-		Inserted:         result.Inserted,
-		Considered:       result.Considered,
-		PoolSizeAfter:    result.PoolSizeAfter,
-		ReturnedDocCount: result.ReturnedDocCount,
-		CoverageScore:    result.CoverageScore,
-	}, nil
+func NewPoolRefill(
+	poolRepo *storage.PoolRepo,
+	articleRepo *storage.ArticleRepo,
+	sourceLikeRepo *storage.SourceLikeRepo,
+	reranker searchsvc.RerankInvoker,
+) tool.CallableTool {
+	runner := poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, sourceLikeRepo, reranker)
+	return function.NewFunctionTool(
+		func(ctx context.Context, args PoolRefillInput) (PoolRefillOutput, error) {
+			if runner == nil {
+				return PoolRefillOutput{}, errors.New("PoolRefillRunner 未注入")
+			}
+			result, err := runner.Run(ctx, types.PoolRefillJob{
+				UserID:       args.UserID,
+				PoolType:     args.PoolType,
+				PeriodBucket: args.PeriodBucket,
+				QueryTexts:   []string{args.QueryText},
+			})
+			if err != nil {
+				return PoolRefillOutput{}, err
+			}
+			return PoolRefillOutput{
+				PoolType:         string(result.PoolType),
+				PeriodBucket:     result.PeriodBucket,
+				Inserted:         result.Inserted,
+				Considered:       result.Considered,
+				PoolSizeAfter:    result.PoolSizeAfter,
+				ReturnedDocCount: result.ReturnedDocCount,
+				CoverageScore:    result.CoverageScore,
+			}, nil
+		},
+		function.WithName("pool_refill"),
+		function.WithDescription("按 query_text 执行 coarse->fine->rerank->pass 的补池流程，并把结果写入 Postgres 候选池。"),
+	)
 }
 
 // =========================
 // Tool 3: pool_pop_topk
 // =========================
 
-type ToolPoolPopTopK struct {
-	poolRepo *storage.PoolRepo
+type PoolPopInput struct {
+	UserID       string `json:"user_id" jsonschema:"description=用户 ID,required"`
+	PoolType     string `json:"pool_type" jsonschema:"description=候选池类型,required,enum=long_term,enum=short_term,enum=periodic"`
+	PeriodBucket string `json:"period_bucket" jsonschema:"description=periodic 池使用的时间桶"`
+	TopK         int    `json:"topk" jsonschema:"description=取出数量,default=20"`
+	Remove       bool   `json:"remove" jsonschema:"description=是否从池中移除,default=true"`
 }
 
-func NewPoolPopTopK(poolRepo *storage.PoolRepo) *ToolPoolPopTopK {
-	return &ToolPoolPopTopK{poolRepo: poolRepo}
-}
-
-func (t *ToolPoolPopTopK) Name() string { return "pool_pop_topk" }
-func (t *ToolPoolPopTopK) Description() string {
-	return "从候选池中按 remark_score 取出 topK 候选，可选是否出池。"
-}
-
-func (t *ToolPoolPopTopK) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"user_id":       map[string]any{"type": "string"},
-			"pool_type":     map[string]any{"type": "string", "enum": []string{"long_term", "short_term", "periodic"}},
-			"period_bucket": map[string]any{"type": "string"},
-			"topk":          map[string]any{"type": "integer", "default": 20},
-			"remove":        map[string]any{"type": "boolean", "default": true},
-		},
-		"required": []string{"user_id", "pool_type"},
-	}
-}
-
-type poolPopArgs struct {
-	UserID       string `json:"user_id"`
-	PoolType     string `json:"pool_type"`
-	PeriodBucket string `json:"period_bucket"`
-	TopK         int    `json:"topk"`
-	Remove       bool   `json:"remove"`
-}
-
-type poolPopResult struct {
+type PoolPopOutput struct {
 	Items []storage.PoolItem `json:"items"`
 }
 
-func (t *ToolPoolPopTopK) Invoke(ctx context.Context, argsRaw json.RawMessage) (any, error) {
-	var args poolPopArgs
-	if err := json.Unmarshal(argsRaw, &args); err != nil {
-		return nil, err
-	}
-	if t.poolRepo == nil {
-		return nil, errors.New("PoolRepo 未注入")
-	}
-	if args.TopK <= 0 {
-		args.TopK = config.Cfg.Pools.Recommend.TakeSize
-	}
-	items, err := t.poolRepo.PopTopK(ctx, args.UserID, storage.PoolType(args.PoolType), args.PeriodBucket, args.TopK, args.Remove)
-	if err != nil {
-		return nil, err
-	}
-	return poolPopResult{Items: items}, nil
+func NewPoolPopTopK(poolRepo *storage.PoolRepo) tool.CallableTool {
+	return function.NewFunctionTool(
+		func(ctx context.Context, args PoolPopInput) (PoolPopOutput, error) {
+			if poolRepo == nil {
+				return PoolPopOutput{}, errors.New("PoolRepo 未注入")
+			}
+			if args.TopK <= 0 {
+				args.TopK = config.Cfg.Pools.Recommend.TakeSize
+			}
+			items, err := poolRepo.PopTopK(ctx, args.UserID, storage.PoolType(args.PoolType), args.PeriodBucket, args.TopK, args.Remove)
+			if err != nil {
+				return PoolPopOutput{}, err
+			}
+			return PoolPopOutput{Items: items}, nil
+		},
+		function.WithName("pool_pop_topk"),
+		function.WithDescription("从候选池中按 remark_score 取出 topK 候选，可选是否出池。"),
+	)
 }
