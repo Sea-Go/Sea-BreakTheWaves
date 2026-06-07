@@ -29,6 +29,8 @@ description: 旅游规划需求准入分析。Use when the user asks for a trave
 | `transport_mode` | 交通方式 | "自驾"、"高铁"、"飞机"、"混合" |
 | `travel_style` | 旅行风格数组 | ["自然风光","历史文化","美食"] |
 | `pace` | 节奏 | "轻松"、"均衡"、"紧凑" |
+| `high_altitude_acceptance` | 高海拔接受度 | "可接受高海拔"、"不接受高海拔" |
+| `daily_driving_preference` | 日均驾驶强度偏好 | "4小时内"、"4-6小时"、"可接受较长日均驾驶" |
 
 ## 信息分级
 
@@ -53,6 +55,8 @@ description: 旅游规划需求准入分析。Use when the user asks for a trave
 - `must_visit`：必去地点（默认[]）
 - `avoid_places`：不想去的地点（默认[]）
 - `special_constraints`：特殊限制（默认[]）
+- `high_altitude_acceptance`：高海拔接受度（高原/川西/藏东南路线建议至少确认一次）
+- `daily_driving_preference`：日均驾驶强度偏好（自驾长线建议至少确认一次）
 
 ## 长周期旅行规则
 
