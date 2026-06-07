@@ -39,7 +39,7 @@ func main() {
 		zlog.L().Warn("source postgres init failed, title/author search disabled", zap.Error(err))
 	}
 	if err := infra.MilvusInit(); err != nil {
-		zlog.L().Fatal("milvus init failed", zap.Error(err))
+		zlog.L().Warn("milvus init failed, continue with metadata search only", zap.Error(err))
 	}
 	if err := infra.Neo4jInit(); err != nil {
 		zlog.L().Warn("neo4j init failed, continue with milvus only", zap.Error(err))
