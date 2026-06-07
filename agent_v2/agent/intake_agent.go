@@ -50,6 +50,8 @@ const intakeAgentInstruction = `
 - transport_mode: 交通方式（自驾/高铁/飞机/混合）
 - travel_style: 旅行风格数组（自然风光/历史文化/美食/摄影/慢旅行/亲子）
 - pace: 节奏（轻松/均衡/紧凑）
+- high_altitude_acceptance: 高海拔接受度（可接受/不接受/待确认）
+- daily_driving_preference: 日均驾驶强度偏好（4小时内/4-6小时/可接受长途）
 
 ## 示例
 
