@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"agent_v2/graph"
 
@@ -12,7 +13,7 @@ import (
 
 // checkAfterMacroPlanning validates the completeness of macro planning results.
 // If expectedTotalDays > 0, it also verifies Phase dayCount sum matches.
-func (a *graphWorkflowAgent) checkAfterMacroPlanning(ctx context.Context, tripPlanID string, expectedTotalDays int) error {
+func (a *graphWorkflowAgent) checkAfterMacroPlanning(ctx context.Context, tripPlanID string, expectedTotalDays int, requirements ...TravelRequirementSnapshot) error {
 	// 1. TripPlan must exist
 	tp, err := a.graphClient.FindTripPlanByID(ctx, tripPlanID)
 	if err != nil {
@@ -43,6 +44,13 @@ func (a *graphWorkflowAgent) checkAfterMacroPlanning(ctx context.Context, tripPl
 
 	// 4. Validate Phase seq continuity and required fields
 	totalDayCount := 0
+	var geoConstraint TravelGeoConstraint
+	if len(requirements) > 0 {
+		geoConstraint = buildTravelGeoConstraint(requirements[0], tp.RawRequirements)
+	} else {
+		geoConstraint = buildTravelGeoConstraintFromOverview(overview)
+	}
+	var geoViolations []TravelGeoViolation
 	for i, p := range phases {
 		seq := int(getFloat(p, "seq"))
 		if seq != i+1 {
@@ -59,6 +67,16 @@ func (a *graphWorkflowAgent) checkAfterMacroPlanning(ctx context.Context, tripPl
 			return fmt.Errorf("Phase[%d] (%s) dayCount 无效: %d", i, getStr(p, "name"), dayCount)
 		}
 		totalDayCount += dayCount
+		if geoConstraint.Enabled {
+			label := getStr(p, "region")
+			text := strings.Join([]string{getStr(p, "region"), getStr(p, "name"), getStr(p, "theme")}, " ")
+			if violation := geoConstraint.CheckText(label, text, true); violation != nil {
+				geoViolations = append(geoViolations, *violation)
+			}
+		}
+	}
+	if len(geoViolations) > 0 {
+		return &TravelGeoScopeError{Violations: geoViolations}
 	}
 
 	// 5. If expectedTotalDays is provided, verify sum
