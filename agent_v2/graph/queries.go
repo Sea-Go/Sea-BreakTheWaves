@@ -16,6 +16,65 @@ ON MATCH SET tp.updatedAt = timestamp()
 RETURN tp.id AS id
 `
 
+// --- Exploration history ---
+
+const cypherUpsertExplorationRun = `
+MERGE (run:ExplorationRun {id: $id})
+ON CREATE SET run.createdAt = $createdAt
+SET run.threadId = $threadId,
+    run.userId = $userId,
+    run.sessionId = $sessionId,
+    run.tripPlanId = CASE WHEN $tripPlanId <> '' THEN $tripPlanId ELSE coalesce(run.tripPlanId, '') END,
+    run.title = CASE WHEN $title <> '' THEN $title ELSE coalesce(run.title, '旅行规划') END,
+    run.stage = CASE WHEN $stage <> '' THEN $stage ELSE coalesce(run.stage, 'requirement_intake') END,
+    run.status = CASE WHEN $status <> '' THEN $status ELSE coalesce(run.status, 'running') END,
+    run.lastMessage = CASE WHEN $lastMessage <> '' THEN $lastMessage ELSE coalesce(run.lastMessage, '') END,
+    run.finalSummary = CASE WHEN $finalSummary <> '' THEN $finalSummary ELSE coalesce(run.finalSummary, '') END,
+    run.updatedAt = $updatedAt
+RETURN run.id AS id
+`
+
+const cypherAppendExplorationStep = `
+MATCH (run:ExplorationRun {id: $runId})
+CREATE (step:ExplorationStep {
+    id: $id,
+    runId: $runId,
+    threadId: $threadId,
+    seq: $seq,
+    level: $level,
+    actionType: $actionType,
+    eventType: $eventType,
+    publicAction: $publicAction,
+    thoughtSummary: $thoughtSummary,
+    recordedFacts: $recordedFacts,
+    messageRole: $messageRole,
+    message: $message,
+    payloadJSON: $payloadJSON,
+    status: $status,
+    createdAt: $createdAt
+})
+MERGE (run)-[:HAS_STEP]->(step)
+SET run.updatedAt = $createdAt,
+    run.lastMessage = CASE WHEN $message <> '' THEN $message ELSE coalesce(run.lastMessage, '') END
+RETURN step.id AS id
+`
+
+const cypherListExplorationRunsByUser = `
+MATCH (run:ExplorationRun {userId: $userId})
+WHERE $cursor = '' OR run.updatedAt < $cursor
+RETURN run
+ORDER BY run.updatedAt DESC
+LIMIT $limit
+`
+
+const cypherGetExplorationRunDetail = `
+MATCH (run:ExplorationRun {id: $runId, userId: $userId})
+OPTIONAL MATCH (run)-[:HAS_STEP]->(step:ExplorationStep)
+WITH run, step
+ORDER BY step.seq ASC, step.createdAt ASC
+RETURN run, collect(step) AS steps
+`
+
 // --- Generic split ---
 
 const cypherSplitParent = `
@@ -38,6 +97,7 @@ const cypherUpsertPOI = `
 MERGE (poi:POI {id: $poiID})
 SET poi.name = $name, poi.type = $type, poi.lat = $lat, poi.lng = $lng,
     poi.address = $address, poi.district = $district, poi.city = $city,
+    poi.description = $description,
     poi.amapPOIID = $amapPOIID, poi.visitOrder = $visitOrder,
     poi.startTime = $startTime, poi.endTime = $endTime, poi.duration = $duration,
     poi.isMainStop = $isMainStop, poi.isOptional = $isOptional,
@@ -55,7 +115,8 @@ const cypherWriteRoute = `
 MATCH (from:POI {id: $fromPOIID}), (to:POI {id: $toPOIID})
 MERGE (from)-[r:ROUTES_TO]->(to)
 SET r.transportMode = $transportMode, r.distanceMeters = $distanceMeters,
-    r.durationMin = $durationMin, r.estimatedCost = $estimatedCost, r.notes = $notes,
+    r.durationMin = $durationMin, r.estimatedCost = $estimatedCost,
+    r.polyline = $polyline, r.notes = $notes,
     r.fromPOIID = $fromPOIID, r.toPOIID = $toPOIID
 RETURN true AS ok
 `
@@ -66,7 +127,7 @@ const cypherWriteGuideInsight = `
 CREATE (gi:GuideInsight {
     id: $id, source: $source, sourceTitle: $sourceTitle, sourceURL: $sourceURL,
     authorName: $authorName, contentSummary: $contentSummary,
-    keywords: $keywords, sentiment: $sentiment,
+    keywords: $keywords, sentiment: $sentiment, status: $status, score: $score, reasons: $reasons,
     matchedPOIs: $matchedPOIs, matchedRegion: $matchedRegion
 })
 WITH gi
@@ -187,10 +248,11 @@ OPTIONAL MATCH (phase)-[:HAS_MONTH]->(month:Month)
 OPTIONAL MATCH (month)-[:HAS_WEEK]->(week:Week)
 OPTIONAL MATCH (week)-[:HAS_DAY]->(day:Day)
 RETURN tp,
-       collect(DISTINCT phase {.id, .name, .seq, .region, .season, .status, .dayCount, .startDate, .endDate}) AS phases,
+       collect(DISTINCT phase {.id, .name, .seq, .region, .season, .theme, .status, .dayCount, .startDate, .endDate}) AS phases,
        collect(DISTINCT month {.id, .name, .yearMonth, .seq, .region, .status, .weekCount}) AS months,
        collect(DISTINCT week {.id, .name, .seq, .primaryLocation, .status}) AS weeks,
-       collect(DISTINCT day {.id, .date, .dayIndex, .theme, .status}) AS days
+       collect(DISTINCT day {.id, .date, .dayIndex, .theme, .primaryArea, .routeOverview, .thinkingNotes, .status,
+          phaseID: phase.id, phaseSeq: phase.seq, phaseName: phase.name, phaseRegion: phase.region, phaseTheme: phase.theme}) AS days
 `
 
 // --- Read: weather context ---
