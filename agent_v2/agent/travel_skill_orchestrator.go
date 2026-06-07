@@ -80,6 +80,22 @@ func (o *TravelSkillOrchestrator) updateRuntime(userID, sessionID string, fn fun
 	fn(rt)
 }
 
+func (o *TravelSkillOrchestrator) resetRuntimeForNewPlanningIntent(userID, sessionID string) {
+	key := userID + ":" + sessionID
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	now := time.Now().Unix()
+	o.runtimes[key] = &TravelSkillRuntime{
+		RunID:        uuid.NewString(),
+		UserID:       userID,
+		SessionID:    sessionID,
+		CurrentStage: StageRequirementIntake,
+		MaxAskRounds: 2,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Handle — 核心路由
 // ═══════════════════════════════════════════════════════════════
@@ -94,26 +110,33 @@ func (o *TravelSkillOrchestrator) Handle(
 ) (*SkillResult, error) {
 
 	rt := o.LoadOrInitRuntime(userID, sessionID)
+	latestUserMessage := latestUserTurnText(userMessage)
+	if rt.CurrentStage != StageRequirementIntake && rt.CurrentStage != "" && isLikelyNewPlanningRequest(latestUserMessage) {
+		log.Infof("[orchestrator] detected new planning intent, resetting runtime: userID=%s sessionID=%s oldStage=%s",
+			userID, sessionID, rt.CurrentStage)
+		o.resetRuntimeForNewPlanningIntent(userID, sessionID)
+		rt = o.LoadOrInitRuntime(userID, sessionID)
+	}
 	o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
-		r.LastUserMessage = userMessage
+		r.LastUserMessage = latestUserMessage
 	})
 
 	log.Infof("[orchestrator] handle: userID=%s sessionID=%s stage=%s msgLen=%d",
-		userID, sessionID, rt.CurrentStage, len(userMessage))
+		userID, sessionID, rt.CurrentStage, len(latestUserMessage))
 
 	switch rt.CurrentStage {
 	case StageRequirementIntake, "":
-		return o.runRequirementIntake(ctx, userID, sessionID, userMessage, intakeAgent)
+		return o.runRequirementIntake(ctx, userID, sessionID, latestUserMessage, intakeAgent)
 
 	case StageAwaitingUserInfo:
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			r.PreviousStage = r.CurrentStage
 			r.CurrentStage = StageRequirementMerge
 		})
-		return o.runRequirementMerge(ctx, userID, sessionID, userMessage, intakeAgent)
+		return o.runRequirementMerge(ctx, userID, sessionID, latestUserMessage, intakeAgent)
 
 	case StageRequirementMerge:
-		return o.runRequirementMerge(ctx, userID, sessionID, userMessage, intakeAgent)
+		return o.runRequirementMerge(ctx, userID, sessionID, latestUserMessage, intakeAgent)
 
 	case StageMacroPlanning, StageGraphSplitting, StageDayExpansion, StageReview, StageFinalOutput:
 		rt = o.LoadOrInitRuntime(userID, sessionID)
@@ -130,7 +153,7 @@ func (o *TravelSkillOrchestrator) Handle(
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			r.CurrentStage = StageRequirementIntake
 		})
-		return o.runRequirementIntake(ctx, userID, sessionID, userMessage, intakeAgent)
+		return o.runRequirementIntake(ctx, userID, sessionID, latestUserMessage, intakeAgent)
 	}
 }
 
@@ -180,6 +203,11 @@ func (o *TravelSkillOrchestrator) runRequirementIntake(
 	if snap, ok := result.Result["requirement"].(map[string]any); ok {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			mergeSnapshotFromMap(&r.Requirement, snap)
+			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
+		})
+	} else {
+		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
+			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
 		})
 	}
 
@@ -205,11 +233,11 @@ func (o *TravelSkillOrchestrator) runRequirementIntake(
 	} else {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			r.AskedRounds++
-			r.Requirement.MissingFields = append(decision.MissingP0, decision.MissingP1...)
+			r.Requirement.MissingFields = append(append(decision.MissingP0, decision.MissingP1...), decision.MissingP2...)
 			r.CurrentStage = StageAwaitingUserInfo
 		})
 		result.RequirementReady = false
-		result.MissingFields = append(decision.MissingP0, decision.MissingP1...)
+		result.MissingFields = append(append(decision.MissingP0, decision.MissingP1...), decision.MissingP2...)
 		result.FollowUpQuestions = decision.Questions
 		result.NextStage = StageAwaitingUserInfo
 		result.StopWorkflow = true
@@ -271,6 +299,11 @@ func (o *TravelSkillOrchestrator) runRequirementMerge(
 	if snap, ok := result.Result["requirement"].(map[string]any); ok {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			mergeSnapshotFromMap(&r.Requirement, snap)
+			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
+		})
+	} else {
+		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
+			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
 		})
 	}
 
@@ -304,13 +337,13 @@ func (o *TravelSkillOrchestrator) runRequirementMerge(
 				r.CurrentStage = StageAwaitingUserInfo
 			})
 			return &SkillResult{
-				SkillName:        "travel-requirement-merge",
-				Status:           "need_user_input",
-				ErrorCode:        ErrCodeRequirementNotReady,
-				MissingFields:    decision.MissingP0,
+				SkillName:         "travel-requirement-merge",
+				Status:            "need_user_input",
+				ErrorCode:         ErrCodeRequirementNotReady,
+				MissingFields:     decision.MissingP0,
 				FollowUpQuestions: decision.Questions,
-				StopWorkflow:     true,
-				Output:           formatPlanningQuestions(decision.Questions),
+				StopWorkflow:      true,
+				Output:            formatPlanningQuestions(decision.Questions),
 			}, nil
 		}
 		// 达上限 + P0 满足 + P1 缺失 → 默认 P1/P2，进入 planning
@@ -329,11 +362,11 @@ func (o *TravelSkillOrchestrator) runRequirementMerge(
 	// Step 10: 未达上限 → 继续追问
 	o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 		r.AskedRounds++ // 只在发起新追问时 +1
-		r.Requirement.MissingFields = append(decision.MissingP0, decision.MissingP1...)
+		r.Requirement.MissingFields = append(append(decision.MissingP0, decision.MissingP1...), decision.MissingP2...)
 		r.CurrentStage = StageAwaitingUserInfo
 	})
 	result.RequirementReady = false
-	result.MissingFields = append(decision.MissingP0, decision.MissingP1...)
+	result.MissingFields = append(append(decision.MissingP0, decision.MissingP1...), decision.MissingP2...)
 	result.FollowUpQuestions = decision.Questions
 	result.NextStage = StageAwaitingUserInfo
 	result.StopWorkflow = true
@@ -361,8 +394,7 @@ func buildPlanningDecision(
 	missingP1 := computeMissingP1Fields(snap)
 	missingP2 := computeMissingP2Fields(snap)
 
-	defaultIntent := detectDefaultIntent(userMessage)
-	isLongTrip := snap.TotalDays >= 30 || snap.TotalDays == 0
+	defaultIntent := detectDefaultIntent(latestUserTurnText(userMessage))
 
 	decision := TravelPlanningDecision{
 		MissingP0:     missingP0,
@@ -379,31 +411,22 @@ func buildPlanningDecision(
 		return decision
 	}
 
-	// ── 短途（<30天）→ P0 满足即 ready ──
-	if !isLongTrip {
-		decision.Ready = true
-		decision.ShouldApplyDefault = true
-		return decision
-	}
-
-	// ── 长周期（≥30天）→ P1 必须至少问一轮 ──
-	if len(missingP1) > 0 {
-		// 用户明确说"按默认/别问了" → 允许默认
+	// ── P1/P2 缺失 → 所有行程至少追问一轮 ──
+	missingDetailFields := append(append([]string{}, missingP1...), missingP2...)
+	if len(missingDetailFields) > 0 {
 		if defaultIntent == DefaultIntentExplicit {
 			decision.Ready = true
 			decision.ShouldApplyDefault = true
 			return decision
 		}
-		// 达追问上限 → 允许默认
-		if askedRounds >= maxAskRounds {
+		if askedRounds >= 1 || askedRounds >= maxAskRounds {
 			decision.Ready = true
 			decision.ShouldApplyDefault = true
 			return decision
 		}
-		// 还需要问
 		decision.Ready = false
 		decision.ShouldAskUser = true
-		decision.Questions = buildPlanningQuestions(missingP1)
+		decision.Questions = buildPlanningQuestions(missingDetailFields)
 		return decision
 	}
 
@@ -463,6 +486,12 @@ func computeMissingP1Fields(snap TravelRequirementSnapshot) []string {
 	if snap.StartDate == "" {
 		m = append(m, "start_date")
 	}
+	if requiresHighAltitudeCheck(snap) && snap.HighAltitudeAcceptance == "" {
+		m = append(m, "high_altitude_acceptance")
+	}
+	if requiresDrivingIntensityCheck(snap) && snap.DailyDrivingPreference == "" {
+		m = append(m, "daily_driving_preference")
+	}
 	return m
 }
 
@@ -496,6 +525,12 @@ func applyDefaultsForOptionalFields(snap *TravelRequirementSnapshot) {
 	if len(snap.TravelStyle) == 0 {
 		snap.TravelStyle = []string{"自然风光", "历史文化"}
 	}
+	if snap.HighAltitudeAcceptance == "" && requiresHighAltitudeCheck(*snap) {
+		snap.HighAltitudeAcceptance = "默认可接受常规高原行程，出现高反风险时降低强度"
+	}
+	if snap.DailyDrivingPreference == "" && requiresDrivingIntensityCheck(*snap) {
+		snap.DailyDrivingPreference = "默认日均驾驶控制在4-6小时，必要转移日可更长"
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -528,6 +563,8 @@ func buildIntakePrompt(userMessage string, rt TravelSkillRuntime) string {
 - transport_mode: 交通方式（自驾/高铁/飞机/混合）
 - travel_style: 旅行风格（自然风光/历史文化/美食/摄影/慢旅行/亲子/城市打卡）
 - pace: 节奏（轻松/均衡/紧凑）
+- high_altitude_acceptance: 高海拔接受度（可接受/不接受/待确认）
+- daily_driving_preference: 日均驾驶强度偏好
 - accommodation_style: 住宿偏好
 - food_preference: 饮食偏好
 - must_visit: 必去地点
@@ -557,6 +594,8 @@ func buildMergePrompt(userMessage string, snapshotJSON string) string {
 - "10万预算"→ budget_total=10万
 - "高铁为主"→ transport_mode=高铁为主
 - "慢一点"→ pace=轻松/慢节奏
+- "能接受高海拔/怕高反"→ high_altitude_acceptance
+- "能接受长途/不想开太久"→ daily_driving_preference
 - "就这样吧/按默认/别问了"→ 在 result 中标记 default_intent
 
 只输出 JSON，不要 markdown，不要解释。`, snapshotJSON, userMessage)
@@ -584,6 +623,8 @@ func mergeSnapshotFromMap(snap *TravelRequirementSnapshot, m map[string]any) {
 	setString("budget_monthly", func(v string) { snap.BudgetMonthly = v })
 	setString("transport_mode", func(v string) { snap.TransportMode = v })
 	setString("pace", func(v string) { snap.Pace = v })
+	setString("high_altitude_acceptance", func(v string) { snap.HighAltitudeAcceptance = v })
+	setString("daily_driving_preference", func(v string) { snap.DailyDrivingPreference = v })
 	setString("accommodation_style", func(v string) { snap.AccommodationStyle = v })
 
 	if v, ok := m["total_days"].(float64); ok && v > 0 {
@@ -608,6 +649,9 @@ func mergeSnapshotFromMap(snap *TravelRequirementSnapshot, m map[string]any) {
 	if arr, ok := m["special_constraints"].([]any); ok {
 		snap.SpecialConstraints = anySliceToStringSlice(arr)
 	}
+	if arr, ok := m["destination_anchors"].([]any); ok {
+		snap.DestinationAnchors = anySliceToDestinationAnchors(arr)
+	}
 }
 
 func anySliceToStringSlice(arr []any) []string {
@@ -617,6 +661,44 @@ func anySliceToStringSlice(arr []any) []string {
 		if s != "" {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+func anySliceToDestinationAnchors(arr []any) []DestinationAnchorSnapshot {
+	out := make([]DestinationAnchorSnapshot, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		mapString := func(key string) string {
+			if v, ok := m[key]; ok && v != nil {
+				return strings.TrimSpace(fmt.Sprint(v))
+			}
+			return ""
+		}
+		anchor := DestinationAnchorSnapshot{
+			Destination: mapString("destination"),
+			Name:        mapString("name"),
+			Kind:        mapString("kind"),
+			Origin:      mapString("origin"),
+			Query:       mapString("query"),
+			Reason:      mapString("reason"),
+		}
+		if anchor.Name == "" {
+			continue
+		}
+		if v, ok := m["priority"].(float64); ok {
+			anchor.Priority = int(v)
+		}
+		if v, ok := m["must_cover"].(bool); ok {
+			anchor.MustCover = v
+		}
+		if arr, ok := m["themes"].([]any); ok {
+			anchor.Themes = anySliceToStringSlice(arr)
+		}
+		out = append(out, anchor)
 	}
 	return out
 }
@@ -650,6 +732,14 @@ func buildPlanningQuestions(missing []string) []string {
 			questions = append(questions, "每日节奏希望轻松、均衡，还是尽量多打卡？")
 		case "start_date":
 			questions = append(questions, "计划什么时候开始？如果还没确定，我可以默认从下个月开始。")
+		case "high_altitude_acceptance":
+			questions = append(questions, "这条路线会涉及高海拔和高反风险，你能接受高海拔行程吗？")
+		case "daily_driving_preference":
+			questions = append(questions, "自驾部分你能接受每天大概多长驾驶时间？例如4小时内、4-6小时，还是可接受更长转移日？")
+		case "accommodation_style":
+			questions = append(questions, "住宿更偏好经济舒适、精品民宿，还是酒店为主？")
+		case "food_preference":
+			questions = append(questions, "饮食上有什么偏好或忌口？比如当地特色、清淡、素食、亲子友好等。")
 		}
 	}
 	return questions
