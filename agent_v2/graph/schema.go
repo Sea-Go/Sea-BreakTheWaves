@@ -21,6 +21,10 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 		{"day_id", "CREATE CONSTRAINT day_id IF NOT EXISTS FOR (n:Day) REQUIRE n.id IS UNIQUE"},
 		{"poi_id", "CREATE CONSTRAINT poi_id IF NOT EXISTS FOR (n:POI) REQUIRE n.id IS UNIQUE"},
 		{"review_result_id", "CREATE CONSTRAINT review_result_id IF NOT EXISTS FOR (n:ReviewResult) REQUIRE n.id IS UNIQUE"},
+		{"exploration_run_id", "CREATE CONSTRAINT exploration_run_id IF NOT EXISTS FOR (n:ExplorationRun) REQUIRE n.id IS UNIQUE"},
+		{"exploration_step_id", "CREATE CONSTRAINT exploration_step_id IF NOT EXISTS FOR (n:ExplorationStep) REQUIRE n.id IS UNIQUE"},
+		{"map_anchor_id", "CREATE CONSTRAINT map_anchor_id IF NOT EXISTS FOR (n:MapAnchor) REQUIRE n.id IS UNIQUE"},
+		{"route_candidate_id", "CREATE CONSTRAINT route_candidate_id IF NOT EXISTS FOR (n:RouteCandidate) REQUIRE n.id IS UNIQUE"},
 	}
 
 	indexes := []struct {
@@ -29,6 +33,10 @@ func (c *Client) EnsureSchema(ctx context.Context) error {
 	}{
 		{"trip_plan_user_id", "CREATE INDEX trip_plan_user_id IF NOT EXISTS FOR (n:TripPlan) ON (n.userId)"},
 		{"trip_plan_session_id", "CREATE INDEX trip_plan_session_id IF NOT EXISTS FOR (n:TripPlan) ON (n.sessionId)"},
+		{"exploration_run_user_updated", "CREATE INDEX exploration_run_user_updated IF NOT EXISTS FOR (n:ExplorationRun) ON (n.userId, n.updatedAt)"},
+		{"exploration_step_run_seq", "CREATE INDEX exploration_step_run_seq IF NOT EXISTS FOR (n:ExplorationStep) ON (n.runId, n.seq)"},
+		{"map_anchor_visibility", "CREATE INDEX map_anchor_visibility IF NOT EXISTS FOR (n:MapAnchor) ON (n.visibilityStatus)"},
+		{"route_candidate_visibility", "CREATE INDEX route_candidate_visibility IF NOT EXISTS FOR (n:RouteCandidate) ON (n.visibilityStatus)"},
 	}
 
 	// Check existing constraints to avoid errors on re-run
