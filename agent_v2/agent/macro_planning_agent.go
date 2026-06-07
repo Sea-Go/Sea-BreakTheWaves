@@ -39,6 +39,8 @@ const macroPlanningInstruction = `
 - Phase dayCount 之和必须等于 total_days
 - Phase seq 从 1 开始连续编号
 - 使用气候数据驱动 Phase 拆分
+- Phase 必须严格围绕用户 destination_scope、must_visit 和 destination_anchors，不得引入明显无关城市
+- 出发地只可作为路线起点，不可把无关远方城市扩展为目的地 Phase
 
 ## 输出格式
 完成所有 Phase 创建后，只输出这一行（不要输出其他任何内容）：
