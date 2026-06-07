@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"agent_v2/config"
+
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -55,4 +57,8 @@ func (r *amapRuntime) DrivingRoute(ctx context.Context, in AmapDrivingRouteInput
 	}
 	putString(q, "extensions", in.Extensions)
 	return r.get(ctx, "/direction/driving", q, true)
+}
+
+func DrivingRoute(ctx context.Context, cfg config.AmapConfig, in AmapDrivingRouteInput) (AmapResponse, error) {
+	return newAmapRuntime(cfg).DrivingRoute(ctx, in)
 }
