@@ -2,44 +2,54 @@ package graph
 
 // Node type constants.
 const (
-	NodeTypeTripPlan       = "TripPlan"
-	NodeTypePhase          = "Phase"
-	NodeTypeMonth          = "Month"
-	NodeTypeWeek           = "Week"
-	NodeTypeDay            = "Day"
-	NodeTypePOI            = "POI"
-	NodeTypeRouteSegment   = "RouteSegment"
-	NodeTypeArea           = "Area"
-	NodeTypeGuideInsight   = "GuideInsight"
-	NodeTypeReviewResult   = "ReviewResult"
-	NodeTypeClimateData    = "ClimateData"
-	NodeTypeSeasonalEvent  = "SeasonalEvent"
+	NodeTypeTripPlan          = "TripPlan"
+	NodeTypePhase             = "Phase"
+	NodeTypeMonth             = "Month"
+	NodeTypeWeek              = "Week"
+	NodeTypeDay               = "Day"
+	NodeTypePOI               = "POI"
+	NodeTypeRouteSegment      = "RouteSegment"
+	NodeTypeArea              = "Area"
+	NodeTypeGuideInsight      = "GuideInsight"
+	NodeTypeReviewResult      = "ReviewResult"
+	NodeTypeClimateData       = "ClimateData"
+	NodeTypeSeasonalEvent     = "SeasonalEvent"
 	NodeTypeWeatherConstraint = "WeatherConstraint"
+	NodeTypeExplorationRun    = "ExplorationRun"
+	NodeTypeExplorationStep   = "ExplorationStep"
+	NodeTypeMapAnchor         = "MapAnchor"
+	NodeTypeRouteCandidate    = "RouteCandidate"
 )
 
 // Relationship type constants.
 const (
-	RelHasPhase        = "HAS_PHASE"
-	RelHasMonth        = "HAS_MONTH"
-	RelHasWeek         = "HAS_WEEK"
-	RelHasDay          = "HAS_DAY"
-	RelNextPhase       = "NEXT_PHASE"
-	RelNextMonth       = "NEXT_MONTH"
-	RelNextWeek        = "NEXT_WEEK"
-	RelNextDay         = "NEXT_DAY"
-	RelVisitsPOI       = "VISITS_POI"
-	RelRoutesTo        = "ROUTES_TO"
-	RelLocatedIn       = "LOCATED_IN"
-	RelHasClimate      = "HAS_CLIMATE"
-	RelExpectedWeather = "EXPECTED_WEATHER"
-	RelAffectedBy      = "AFFECTED_BY"
+	RelHasPhase         = "HAS_PHASE"
+	RelHasMonth         = "HAS_MONTH"
+	RelHasWeek          = "HAS_WEEK"
+	RelHasDay           = "HAS_DAY"
+	RelNextPhase        = "NEXT_PHASE"
+	RelNextMonth        = "NEXT_MONTH"
+	RelNextWeek         = "NEXT_WEEK"
+	RelNextDay          = "NEXT_DAY"
+	RelVisitsPOI        = "VISITS_POI"
+	RelRoutesTo         = "ROUTES_TO"
+	RelLocatedIn        = "LOCATED_IN"
+	RelHasClimate       = "HAS_CLIMATE"
+	RelExpectedWeather  = "EXPECTED_WEATHER"
+	RelAffectedBy       = "AFFECTED_BY"
 	RelHasSeasonalEvent = "HAS_SEASONAL_EVENT"
-	RelHasBackup       = "HAS_BACKUP"
+	RelHasBackup        = "HAS_BACKUP"
 	RelInsightForRegion = "INSIGHT_FOR_REGION"
-	RelInsightForPOI   = "INSIGHT_FOR_POI"
+	RelInsightForPOI    = "INSIGHT_FOR_POI"
 	RelInsightBelongsTo = "INSIGHT_BELONGS_TO"
-	RelReviewedBy      = "REVIEWED_BY"
-	RelBelongsTo       = "BELONGS_TO"
+	RelReviewedBy       = "REVIEWED_BY"
+	RelBelongsTo        = "BELONGS_TO"
+	RelHasRun           = "HAS_RUN"
+	RelHasStep          = "HAS_STEP"
+	RelHasMapAnchor     = "HAS_MAP_ANCHOR"
+	RelHasCandidate     = "HAS_CANDIDATE"
+	RelSelectedRoute    = "SELECTED_ROUTE"
+	RelSupersededBy     = "SUPERSEDED_BY"
 )
 
 // Status constants.
@@ -50,6 +60,9 @@ const (
 	StatusVerified   = "verified"
 	StatusReviewed   = "reviewed"
 	StatusDone       = "done"
+	StatusRejected   = "rejected"
+	StatusDimmed     = "dimmed"
+	StatusSelected   = "selected"
 )
 
 // TripPlanNode is the root for an entire trip planning session.
@@ -71,35 +84,39 @@ type TripPlanNode struct {
 	UserID                          string   `json:"userId"`
 	SessionID                       string   `json:"sessionId"`
 	RequestID                       string   `json:"requestId"`
+	VisibilityStatus                string   `json:"visibilityStatus"`
+	SoftDeletedAt                   string   `json:"softDeletedAt"`
+	SoftDeletedReason               string   `json:"softDeletedReason"`
+	SupersededBy                    string   `json:"supersededBy"`
 }
 
 // PhaseNode represents a seasonal/geographic phase (1-6 phases per year).
 type PhaseNode struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Seq            int      `json:"seq"`
-	StartDate      string   `json:"startDate"`
-	EndDate        string   `json:"endDate"`
-	Region         string   `json:"region"`
-	Season         string   `json:"season"`
-	Theme          string   `json:"theme"`
-	ClimateSummary string   `json:"climateSummary"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Seq             int     `json:"seq"`
+	StartDate       string  `json:"startDate"`
+	EndDate         string  `json:"endDate"`
+	Region          string  `json:"region"`
+	Season          string  `json:"season"`
+	Theme           string  `json:"theme"`
+	ClimateSummary  string  `json:"climateSummary"`
 	EstimatedBudget float64 `json:"estimatedBudget"`
-	Status         string   `json:"status"`
-	DayCount       int      `json:"dayCount"`
+	Status          string  `json:"status"`
+	DayCount        int     `json:"dayCount"`
 }
 
 // MonthNode represents one calendar month within a Phase.
 type MonthNode struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	YearMonth    string  `json:"yearMonth"`
-	Seq          int     `json:"seq"`
-	Region       string  `json:"region"`
-	PrimaryCity  string  `json:"primaryCity"`
-	WeekCount    int     `json:"weekCount"`
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	YearMonth     string  `json:"yearMonth"`
+	Seq           int     `json:"seq"`
+	Region        string  `json:"region"`
+	PrimaryCity   string  `json:"primaryCity"`
+	WeekCount     int     `json:"weekCount"`
 	MonthlyBudget float64 `json:"monthlyBudget"`
-	Status       string  `json:"status"`
+	Status        string  `json:"status"`
 }
 
 // WeekNode represents one week within a Month.
@@ -143,6 +160,7 @@ type POINode struct {
 	Address          string  `json:"address"`
 	District         string  `json:"district"`
 	City             string  `json:"city"`
+	Description      string  `json:"description"`
 	VisitOrder       int     `json:"visitOrder"`
 	StartTime        string  `json:"startTime"`
 	EndTime          string  `json:"endTime"`
@@ -168,6 +186,76 @@ type RouteSegmentNode struct {
 	Notes          string  `json:"notes"`
 }
 
+type ExplorationRunNode struct {
+	ID           string `json:"id"`
+	ThreadID     string `json:"threadId"`
+	UserID       string `json:"userId"`
+	SessionID    string `json:"sessionId"`
+	TripPlanID   string `json:"tripPlanId"`
+	Title        string `json:"title"`
+	Stage        string `json:"stage"`
+	Status       string `json:"status"`
+	LastMessage  string `json:"lastMessage"`
+	FinalSummary string `json:"finalSummary"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+}
+
+type ExplorationStepNode struct {
+	ID             string   `json:"id"`
+	RunID          string   `json:"runId"`
+	ThreadID       string   `json:"threadId"`
+	Seq            int64    `json:"seq"`
+	Level          string   `json:"level"`
+	ActionType     string   `json:"actionType"`
+	EventType      string   `json:"eventType"`
+	PublicAction   string   `json:"publicAction"`
+	ThoughtSummary string   `json:"thoughtSummary"`
+	RecordedFacts  []string `json:"recordedFacts"`
+	MessageRole    string   `json:"messageRole"`
+	Message        string   `json:"message"`
+	PayloadJSON    string   `json:"payloadJSON"`
+	Status         string   `json:"status"`
+	CreatedAt      string   `json:"createdAt"`
+}
+
+type ExplorationRunDetail struct {
+	Run   ExplorationRunNode    `json:"run"`
+	Steps []ExplorationStepNode `json:"steps"`
+}
+
+type MapAnchorNode struct {
+	ID                string  `json:"id"`
+	OwnerNodeID       string  `json:"ownerNodeId"`
+	Level             string  `json:"level"`
+	Label             string  `json:"label"`
+	Kind              string  `json:"kind"`
+	Lng               float64 `json:"lng"`
+	Lat               float64 `json:"lat"`
+	VisibilityStatus  string  `json:"visibilityStatus"`
+	SoftDeletedAt     string  `json:"softDeletedAt"`
+	SoftDeletedReason string  `json:"softDeletedReason"`
+}
+
+type RouteCandidateNode struct {
+	ID                  string  `json:"id"`
+	Level               string  `json:"level"`
+	Label               string  `json:"label"`
+	Status              string  `json:"status"`
+	TransportMode       string  `json:"transportMode"`
+	OriginAnchorID      string  `json:"originAnchorId"`
+	DestinationAnchorID string  `json:"destinationAnchorId"`
+	DistanceMeters      float64 `json:"distanceMeters"`
+	DurationMin         float64 `json:"durationMin"`
+	EstimatedCost       float64 `json:"estimatedCost"`
+	Polyline            string  `json:"polyline"`
+	Score               float64 `json:"score"`
+	Reason              string  `json:"reason"`
+	VisibilityStatus    string  `json:"visibilityStatus"`
+	SoftDeletedAt       string  `json:"softDeletedAt"`
+	SoftDeletedReason   string  `json:"softDeletedReason"`
+}
+
 // AreaNode represents a geographic cluster within a city/region.
 type AreaNode struct {
 	ID          string  `json:"id"`
@@ -190,46 +278,49 @@ type GuideInsightNode struct {
 	ContentSummary string   `json:"contentSummary"`
 	Keywords       []string `json:"keywords"`
 	Sentiment      string   `json:"sentiment"`
+	Status         string   `json:"status"`
+	Score          float64  `json:"score"`
+	Reasons        []string `json:"reasons"`
 	MatchedPOIs    []string `json:"matchedPOIs"`
 	MatchedRegion  string   `json:"matchedRegion"`
 }
 
 // ReviewResultNode is attached to plan nodes at any level.
 type ReviewResultNode struct {
-	ID                  string              `json:"id"`
-	Level               string              `json:"level"`
-	Dimension           string              `json:"dimension"`
-	Score               int                 `json:"score"`
-	Passed              bool                `json:"passed"`
-	CriticalIssues      []string            `json:"criticalIssues"`
-	Issues              []string            `json:"issues"`
-	Suggestions         []string            `json:"suggestions"`
-	Summary             string              `json:"summary"`
+	ID                   string                `json:"id"`
+	Level                string                `json:"level"`
+	Dimension            string                `json:"dimension"`
+	Score                int                   `json:"score"`
+	Passed               bool                  `json:"passed"`
+	CriticalIssues       []string              `json:"criticalIssues"`
+	Issues               []string              `json:"issues"`
+	Suggestions          []string              `json:"suggestions"`
+	Summary              string                `json:"summary"`
 	ConstraintViolations []ConstraintViolation `json:"constraintViolations"`
 }
 
 // ConstraintViolation records a specific hard-constraint breach.
 type ConstraintViolation struct {
-	Dimension string  `json:"dimension"`
-	Rule      string  `json:"rule"`
-	Actual    string  `json:"actual"`
-	Threshold string  `json:"threshold"`
-	Severity  string  `json:"severity"`
+	Dimension string `json:"dimension"`
+	Rule      string `json:"rule"`
+	Actual    string `json:"actual"`
+	Threshold string `json:"threshold"`
+	Severity  string `json:"severity"`
 }
 
 // ClimateDataNode holds monthly historical climate averages for a region.
 type ClimateDataNode struct {
-	ID                string  `json:"id"`
-	Region            string  `json:"region"`
-	Month             int     `json:"month"`
-	AvgHighTemp       float64 `json:"avgHighTemp"`
-	AvgLowTemp        float64 `json:"avgLowTemp"`
-	Precipitation     float64 `json:"precipitation"`
-	Humidity          float64 `json:"humidity"`
-	RainyDays         int     `json:"rainyDays"`
-	SunriseTime       string  `json:"sunriseTime"`
-	SunsetTime        string  `json:"sunsetTime"`
-	ExtremeWeatherRisk string `json:"extremeWeatherRisk"`
+	ID                 string  `json:"id"`
+	Region             string  `json:"region"`
+	Month              int     `json:"month"`
+	AvgHighTemp        float64 `json:"avgHighTemp"`
+	AvgLowTemp         float64 `json:"avgLowTemp"`
+	Precipitation      float64 `json:"precipitation"`
+	Humidity           float64 `json:"humidity"`
+	RainyDays          int     `json:"rainyDays"`
+	SunriseTime        string  `json:"sunriseTime"`
+	SunsetTime         string  `json:"sunsetTime"`
+	ExtremeWeatherRisk string  `json:"extremeWeatherRisk"`
 }
 
 // SeasonalEventNode represents seasonal natural/cultural events.
@@ -245,14 +336,14 @@ type SeasonalEventNode struct {
 
 // WeatherConstraintNode represents weather-based travel constraints.
 type WeatherConstraintNode struct {
-	ID                 string `json:"id"`
-	Region             string `json:"region"`
-	Month              int    `json:"month"`
-	ConstraintType     string `json:"constraintType"`
-	Severity           string `json:"severity"`
+	ID                 string   `json:"id"`
+	Region             string   `json:"region"`
+	Month              int      `json:"month"`
+	ConstraintType     string   `json:"constraintType"`
+	Severity           string   `json:"severity"`
 	AffectedActivities []string `json:"affectedActivities"`
-	Threshold          string `json:"threshold"`
-	Description        string `json:"description"`
+	Threshold          string   `json:"threshold"`
+	Description        string   `json:"description"`
 }
 
 // OutputChunkNode represents a paginated output chunk for cursor-based reading.
