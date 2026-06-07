@@ -108,17 +108,22 @@ func main() {
 		os.Setenv("ZHIHU_GLOBAL_SEARCH_URL", searchURL)
 	}
 
-	handler, cleanup, err := agent.NewTravelPlanningAGUIHandler()
+	aguiHandler, cleanup, err := agent.NewTravelPlanningAGUIHandler()
 	if err != nil {
 		log.Fatalf("create amap agui handler failed: %v", err)
 	}
 	defer cleanup()
 
+	mux := http.NewServeMux()
+	mux.Handle("/agui", aguiHandler)
+	mux.Handle("/agui/", aguiHandler)
+	mux.Handle("/travel/", agent.NewTravelPlanningStreamHandler())
+
 	addr := "127.0.0.1:8088"
 
-	log.Info("Amap AG-UI server listening on http://%s/agui", addr)
+	log.Info("Travel planning server listening on http://%s/agui and http://%s/travel/stream", addr, addr)
 
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server stopped with error: %v", err)
 	}
 }
