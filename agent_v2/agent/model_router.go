@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,8 +21,8 @@ type ModelLevel int
 
 const (
 	ModelLevelHigh   ModelLevel = iota // 复杂推理、多步规划、深度审查
-	ModelLevelMedium                    // 清单对照、工具调用、格式检查
-	ModelLevelLow                       // 摘要压缩、信息提取
+	ModelLevelMedium                   // 清单对照、工具调用、格式检查
+	ModelLevelLow                      // 摘要压缩、信息提取
 )
 
 func (l ModelLevel) String() string {
@@ -161,7 +162,10 @@ func (m *loggingModel) Info() model.Info {
 
 func (m *loggingModel) GenerateContent(ctx context.Context, req *model.Request) (<-chan *model.Response, error) {
 	limit := modelLimits[m.modelName]
-	used := tracker.budgets[m.modelName].used.Load()
+	var used int64
+	if budget := tracker.budgets[m.modelName]; budget != nil {
+		used = budget.used.Load()
+	}
 	log.Infof("[model-router] agent=%s level=%s model=%s remaining_tpm=%d/%d",
 		m.agentName, m.level.String(), m.modelName, limit.TPM-used, limit.TPM)
 
@@ -186,11 +190,57 @@ func (m *loggingModel) GenerateContent(ctx context.Context, req *model.Request) 
 					resp.Usage.CompletionTokens,
 					resp.Usage.TotalTokens,
 				)
+				if emitter := traceEmitterFromContext(ctx); emitter != nil {
+					emitter.EmitModelUsage(ctx, PublicModelUsage{
+						AgentLabel:       publicAgentUsageLabel(m.agentName),
+						Model:            m.modelName,
+						ModelLevel:       m.level.String(),
+						PromptTokens:     resp.Usage.PromptTokens,
+						CompletionTokens: resp.Usage.CompletionTokens,
+						TotalTokens:      resp.Usage.TotalTokens,
+					}, stageForAgentUsage(m.agentName))
+				}
 			}
 			out <- resp
 		}
 	}()
 	return out, nil
+}
+
+func publicAgentUsageLabel(agentName string) string {
+	switch {
+	case strings.Contains(agentName, "intake"):
+		return "需求识别"
+	case strings.Contains(agentName, "macro") || strings.Contains(agentName, "dili360"):
+		return "宏观规划"
+	case strings.Contains(agentName, "amap") || strings.Contains(agentName, "phase2"):
+		return "地点验证"
+	case strings.Contains(agentName, "review"):
+		return "审核"
+	case strings.Contains(agentName, "day-output"):
+		return "最终输出"
+	case strings.Contains(agentName, "summary"):
+		return "摘要整理"
+	default:
+		return "规划模型"
+	}
+}
+
+func stageForAgentUsage(agentName string) string {
+	switch {
+	case strings.Contains(agentName, "intake"):
+		return string(StageRequirementIntake)
+	case strings.Contains(agentName, "macro") || strings.Contains(agentName, "dili360"):
+		return string(StageMacroPlanning)
+	case strings.Contains(agentName, "amap") || strings.Contains(agentName, "phase2"):
+		return string(StageDayExpansion)
+	case strings.Contains(agentName, "review"):
+		return string(StageReview)
+	case strings.Contains(agentName, "day-output"):
+		return string(StageFinalOutput)
+	default:
+		return "planning"
+	}
 }
 
 // newModelForLevel 创建一个带日志打点的模型实例。
