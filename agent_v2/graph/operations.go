@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -25,7 +26,7 @@ func (c *Client) CreateTripPlan(ctx context.Context, tp TripPlanNode) (string, e
 			"transportMode": tp.TransportMode, "interests": tp.Interests, "mustVisit": tp.MustVisit,
 			"avoid": tp.Avoid, "rawRequirements": tp.RawRequirements, "status": tp.Status,
 			"maxConsecutiveHighIntensityDays": tp.MaxConsecutiveHighIntensityDays,
-			"userId": tp.UserID, "sessionId": tp.SessionID, "requestId": tp.RequestID,
+			"userId":                          tp.UserID, "sessionId": tp.SessionID, "requestId": tp.RequestID,
 		})
 		return nil, err
 	})
@@ -61,6 +62,155 @@ func (c *Client) FindTripPlanByID(ctx context.Context, id string) (*TripPlanNode
 		SessionID: fmt.Sprint(m["sessionId"]),
 		RequestID: fmt.Sprint(m["requestId"]),
 	}, nil
+}
+
+func (c *Client) UpsertExplorationRun(ctx context.Context, run ExplorationRunNode) error {
+	if run.ID == "" {
+		run.ID = uuid.NewString()
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	if run.CreatedAt == "" {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == "" {
+		run.UpdatedAt = now
+	}
+	if run.Status == "" {
+		run.Status = "running"
+	}
+	if run.Stage == "" {
+		run.Stage = "requirement_intake"
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherUpsertExplorationRun, map[string]any{
+			"id":           run.ID,
+			"threadId":     run.ThreadID,
+			"userId":       run.UserID,
+			"sessionId":    run.SessionID,
+			"tripPlanId":   run.TripPlanID,
+			"title":        run.Title,
+			"stage":        run.Stage,
+			"status":       run.Status,
+			"lastMessage":  run.LastMessage,
+			"finalSummary": run.FinalSummary,
+			"createdAt":    run.CreatedAt,
+			"updatedAt":    run.UpdatedAt,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: upsert exploration run: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) AppendExplorationStep(ctx context.Context, step ExplorationStepNode) error {
+	if step.ID == "" {
+		step.ID = uuid.NewString()
+	}
+	if step.CreatedAt == "" {
+		step.CreatedAt = time.Now().Format(time.RFC3339Nano)
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherAppendExplorationStep, map[string]any{
+			"id":             step.ID,
+			"runId":          step.RunID,
+			"threadId":       step.ThreadID,
+			"seq":            step.Seq,
+			"level":          step.Level,
+			"actionType":     step.ActionType,
+			"eventType":      step.EventType,
+			"publicAction":   step.PublicAction,
+			"thoughtSummary": step.ThoughtSummary,
+			"recordedFacts":  step.RecordedFacts,
+			"messageRole":    step.MessageRole,
+			"message":        step.Message,
+			"payloadJSON":    step.PayloadJSON,
+			"status":         step.Status,
+			"createdAt":      step.CreatedAt,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: append exploration step: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) ListExplorationRunsByUser(ctx context.Context, userID string, limit int, cursor string) ([]ExplorationRunNode, string, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	readLimit := limit + 1
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherListExplorationRunsByUser, map[string]any{
+			"userId": userID,
+			"limit":  readLimit,
+			"cursor": cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		runs := make([]ExplorationRunNode, 0, readLimit)
+		for rec.Next(ctx) {
+			value, ok := rec.Record().Get("run")
+			if !ok {
+				continue
+			}
+			if node, ok := value.(neo4j.Node); ok {
+				runs = append(runs, nodeToExplorationRunNode(node))
+			}
+		}
+		return runs, rec.Err()
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("graph: list exploration runs: %w", err)
+	}
+	runs, _ := result.([]ExplorationRunNode)
+	nextCursor := ""
+	if len(runs) > limit {
+		nextCursor = runs[limit-1].UpdatedAt
+		runs = runs[:limit]
+	}
+	return runs, nextCursor, nil
+}
+
+func (c *Client) GetExplorationRunDetail(ctx context.Context, userID, runID string) (*ExplorationRunDetail, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetExplorationRunDetail, map[string]any{
+			"userId": userID,
+			"runId":  runID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !rec.Next(ctx) {
+			return nil, rec.Err()
+		}
+		return rec.Record().AsMap(), rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get exploration run detail: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	m := result.(map[string]any)
+	detail := &ExplorationRunDetail{}
+	if node, ok := m["run"].(neo4j.Node); ok {
+		detail.Run = nodeToExplorationRunNode(node)
+	}
+	if rawSteps, ok := m["steps"].([]any); ok {
+		for _, raw := range rawSteps {
+			if node, ok := raw.(neo4j.Node); ok {
+				detail.Steps = append(detail.Steps, nodeToExplorationStepNode(node))
+			}
+		}
+	}
+	return detail, nil
 }
 
 // SplitChildInput describes a single child node to create during a split.
@@ -139,6 +289,7 @@ type POIInput struct {
 	Address          string  `json:"address"`
 	District         string  `json:"district"`
 	City             string  `json:"city"`
+	Description      string  `json:"description"`
 	VisitOrder       int     `json:"visitOrder"`
 	StartTime        string  `json:"startTime"`
 	EndTime          string  `json:"endTime"`
@@ -161,7 +312,8 @@ func (c *Client) UpsertPOIToDay(ctx context.Context, dayID string, poi POIInput)
 			"poiID": poi.ID, "dayID": dayID,
 			"name": poi.Name, "type": poi.Type, "lat": poi.Lat, "lng": poi.Lng,
 			"address": poi.Address, "district": poi.District, "city": poi.City,
-			"amapPOIID": poi.AmapPOIID, "visitOrder": poi.VisitOrder,
+			"description": poi.Description,
+			"amapPOIID":   poi.AmapPOIID, "visitOrder": poi.VisitOrder,
 			"startTime": poi.StartTime, "endTime": poi.EndTime, "duration": poi.Duration,
 			"isMainStop": poi.IsMainStop, "isOptional": poi.IsOptional,
 			"isRainyDayBackup": poi.IsRainyDayBackup, "notes": poi.Notes,
@@ -180,8 +332,20 @@ type RouteInput struct {
 	FromPOIID      string  `json:"fromPOIID"`
 	ToPOIID        string  `json:"toPOIID"`
 	TransportMode  string  `json:"transportMode"`
+	Accuracy       string  `json:"accuracy"`
+	Source         string  `json:"source"`
+	PhaseID        string  `json:"phaseId"`
+	PhaseSeq       int     `json:"phaseSeq"`
+	PhaseName      string  `json:"phaseName"`
+	DayID          string  `json:"dayId"`
+	DayIndex       int     `json:"dayIndex"`
+	SegmentIndex   int     `json:"segmentIndex"`
+	FromNodeID     string  `json:"fromNodeId"`
+	ToNodeID       string  `json:"toNodeId"`
+	ConnectionType string  `json:"connectionType"`
 	DistanceMeters float64 `json:"distanceMeters"`
 	DurationMin    float64 `json:"durationMin"`
+	Polyline       string  `json:"polyline"`
 	EstimatedCost  float64 `json:"estimatedCost"`
 	Notes          string  `json:"notes"`
 }
@@ -193,7 +357,7 @@ func (c *Client) WriteRoute(ctx context.Context, route RouteInput) error {
 			"fromPOIID": route.FromPOIID, "toPOIID": route.ToPOIID,
 			"transportMode": route.TransportMode, "distanceMeters": route.DistanceMeters,
 			"durationMin": route.DurationMin, "estimatedCost": route.EstimatedCost,
-			"notes": route.Notes,
+			"polyline": route.Polyline, "notes": route.Notes,
 		})
 		return nil, err
 	})
@@ -201,6 +365,16 @@ func (c *Client) WriteRoute(ctx context.Context, route RouteInput) error {
 		return fmt.Errorf("graph: write route: %w", err)
 	}
 	return nil
+}
+
+// SoftDeleteNode keeps a node in the graph while marking it dimmed for UI rendering.
+func (c *Client) SoftDeleteNode(ctx context.Context, nodeID, reason string) error {
+	return c.UpdateNode(ctx, nodeID, map[string]any{
+		"visibilityStatus":  StatusDimmed,
+		"softDeletedAt":     time.Now().Format(time.RFC3339),
+		"softDeletedReason": reason,
+		"status":            StatusRejected,
+	})
 }
 
 // GuideInsightInput describes a guide insight to write.
@@ -213,6 +387,9 @@ type GuideInsightInput struct {
 	ContentSummary string   `json:"contentSummary"`
 	Keywords       []string `json:"keywords"`
 	Sentiment      string   `json:"sentiment"`
+	Status         string   `json:"status"`
+	Score          float64  `json:"score"`
+	Reasons        []string `json:"reasons"`
 	MatchedPOIs    []string `json:"matchedPOIs"`
 	MatchedRegion  string   `json:"matchedRegion"`
 }
@@ -228,7 +405,9 @@ func (c *Client) WriteGuideInsight(ctx context.Context, tripPlanID string, insig
 			"source": insight.Source, "sourceTitle": insight.SourceTitle,
 			"sourceURL": insight.SourceURL, "authorName": insight.AuthorName,
 			"contentSummary": insight.ContentSummary, "keywords": insight.Keywords,
-			"sentiment": insight.Sentiment, "matchedPOIs": insight.MatchedPOIs,
+			"sentiment": insight.Sentiment, "status": insight.Status,
+			"score": insight.Score, "reasons": insight.Reasons,
+			"matchedPOIs":   insight.MatchedPOIs,
 			"matchedRegion": insight.MatchedRegion,
 		})
 		return nil, err
@@ -671,8 +850,23 @@ func getIntProp(props map[string]any, key string) int {
 	switch v := props[key].(type) {
 	case int64:
 		return int(v)
+	case int:
+		return v
 	case float64:
 		return int(v)
+	default:
+		return 0
+	}
+}
+
+func getInt64Prop(props map[string]any, key string) int64 {
+	switch v := props[key].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
 	default:
 		return 0
 	}
@@ -696,6 +890,45 @@ func getStringSlice(props map[string]any, key string) []string {
 	return nil
 }
 
+func nodeToExplorationRunNode(n neo4j.Node) ExplorationRunNode {
+	p := n.Props
+	return ExplorationRunNode{
+		ID:           getStringProp(p, "id"),
+		ThreadID:     getStringProp(p, "threadId"),
+		UserID:       getStringProp(p, "userId"),
+		SessionID:    getStringProp(p, "sessionId"),
+		TripPlanID:   getStringProp(p, "tripPlanId"),
+		Title:        getStringProp(p, "title"),
+		Stage:        getStringProp(p, "stage"),
+		Status:       getStringProp(p, "status"),
+		LastMessage:  getStringProp(p, "lastMessage"),
+		FinalSummary: getStringProp(p, "finalSummary"),
+		CreatedAt:    getStringProp(p, "createdAt"),
+		UpdatedAt:    getStringProp(p, "updatedAt"),
+	}
+}
+
+func nodeToExplorationStepNode(n neo4j.Node) ExplorationStepNode {
+	p := n.Props
+	return ExplorationStepNode{
+		ID:             getStringProp(p, "id"),
+		RunID:          getStringProp(p, "runId"),
+		ThreadID:       getStringProp(p, "threadId"),
+		Seq:            getInt64Prop(p, "seq"),
+		Level:          getStringProp(p, "level"),
+		ActionType:     getStringProp(p, "actionType"),
+		EventType:      getStringProp(p, "eventType"),
+		PublicAction:   getStringProp(p, "publicAction"),
+		ThoughtSummary: getStringProp(p, "thoughtSummary"),
+		RecordedFacts:  getStringSlice(p, "recordedFacts"),
+		MessageRole:    getStringProp(p, "messageRole"),
+		Message:        getStringProp(p, "message"),
+		PayloadJSON:    getStringProp(p, "payloadJSON"),
+		Status:         getStringProp(p, "status"),
+		CreatedAt:      getStringProp(p, "createdAt"),
+	}
+}
+
 func nodeToTripPlanNode(n neo4j.Node) TripPlanNode {
 	p := n.Props
 	return TripPlanNode{
@@ -705,11 +938,11 @@ func nodeToTripPlanNode(n neo4j.Node) TripPlanNode {
 		TravelStyle: getStringProp(p, "travelStyle"), TransportMode: getStringProp(p, "transportMode"),
 		Interests: getStringSlice(p, "interests"), MustVisit: getStringSlice(p, "mustVisit"),
 		Avoid: getStringSlice(p, "avoid"), RawRequirements: getStringProp(p, "rawRequirements"),
-		Status: getStringProp(p, "status"),
+		Status:                          getStringProp(p, "status"),
 		MaxConsecutiveHighIntensityDays: getIntProp(p, "maxConsecutiveHighIntensityDays"),
-		UserID:    getStringProp(p, "userId"),
-		SessionID: getStringProp(p, "sessionId"),
-		RequestID: getStringProp(p, "requestId"),
+		UserID:                          getStringProp(p, "userId"),
+		SessionID:                       getStringProp(p, "sessionId"),
+		RequestID:                       getStringProp(p, "requestId"),
 	}
 }
 
@@ -731,8 +964,9 @@ func nodeToPOINode(n neo4j.Node) POINode {
 		AmapPOIID: getStringProp(p, "amapPOIID"), Type: getStringProp(p, "type"),
 		Lat: getFloatProp(p, "lat"), Lng: getFloatProp(p, "lng"),
 		Address: getStringProp(p, "address"), District: getStringProp(p, "district"),
-		City: getStringProp(p, "city"), VisitOrder: getIntProp(p, "visitOrder"),
-		StartTime: getStringProp(p, "startTime"), EndTime: getStringProp(p, "endTime"),
+		City: getStringProp(p, "city"), Description: getStringProp(p, "description"),
+		VisitOrder: getIntProp(p, "visitOrder"),
+		StartTime:  getStringProp(p, "startTime"), EndTime: getStringProp(p, "endTime"),
 		Duration: getIntProp(p, "duration"), IsMainStop: getBoolProp(p, "isMainStop"),
 		IsOptional: getBoolProp(p, "isOptional"), IsRainyDayBackup: getBoolProp(p, "isRainyDayBackup"),
 		Notes: getStringProp(p, "notes"), VerifiedBy: getStringProp(p, "verifiedBy"),
@@ -747,6 +981,8 @@ func nodeToGuideInsightNode(n neo4j.Node) GuideInsightNode {
 		SourceTitle: getStringProp(p, "sourceTitle"), SourceURL: getStringProp(p, "sourceURL"),
 		AuthorName: getStringProp(p, "authorName"), ContentSummary: getStringProp(p, "contentSummary"),
 		Keywords: getStringSlice(p, "keywords"), Sentiment: getStringProp(p, "sentiment"),
+		Status: getStringProp(p, "status"), Score: getFloatProp(p, "score"),
+		Reasons:     getStringSlice(p, "reasons"),
 		MatchedPOIs: getStringSlice(p, "matchedPOIs"), MatchedRegion: getStringProp(p, "matchedRegion"),
 	}
 }
@@ -802,9 +1038,9 @@ func nodeToWeatherConstraintNode(n neo4j.Node) WeatherConstraintNode {
 	return WeatherConstraintNode{
 		ID: getStringProp(p, "id"), Region: getStringProp(p, "region"),
 		Month: getIntProp(p, "month"), ConstraintType: getStringProp(p, "constraintType"),
-		Severity: getStringProp(p, "severity"),
+		Severity:           getStringProp(p, "severity"),
 		AffectedActivities: getStringSlice(p, "affectedActivities"),
-		Threshold: getStringProp(p, "threshold"), Description: getStringProp(p, "description"),
+		Threshold:          getStringProp(p, "threshold"), Description: getStringProp(p, "description"),
 	}
 }
 
