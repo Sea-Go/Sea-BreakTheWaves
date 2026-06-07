@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"agent_v2/config"
+
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -29,4 +31,8 @@ func (r *amapRuntime) Geocode(ctx context.Context, in AmapGeocodeInput) (AmapRes
 	putString(q, "address", in.Address)
 	putString(q, "city", in.City)
 	return r.get(ctx, "/geocode/geo", q, true)
+}
+
+func GeocodeAddress(ctx context.Context, cfg config.AmapConfig, in AmapGeocodeInput) (AmapResponse, error) {
+	return newAmapRuntime(cfg).Geocode(ctx, in)
 }
