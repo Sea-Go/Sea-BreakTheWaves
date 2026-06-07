@@ -58,14 +58,14 @@ func newCreateTripPlanTool(client *graph.Client) tool.Tool {
 				return CreateTripPlanOutput{Success: false}, fmt.Errorf("request_id is required")
 			}
 			tp := graph.TripPlanNode{
-				ID: in.TripPlanID,
+				ID:   in.TripPlanID,
 				Name: in.Name, StartDate: in.StartDate, EndDate: in.EndDate,
 				TotalDays: in.TotalDays, BudgetTotal: in.BudgetTotal,
 				TravelStyle: in.TravelStyle, TransportMode: in.TransportMode,
 				Interests: in.Interests, MustVisit: in.MustVisit, Avoid: in.Avoid,
-				RawRequirements: in.RawRequirements,
+				RawRequirements:                 in.RawRequirements,
 				MaxConsecutiveHighIntensityDays: in.MaxConsecutiveHighIntensityDays,
-				UserID: in.UserID, SessionID: in.SessionID, RequestID: in.RequestID,
+				UserID:                          in.UserID, SessionID: in.SessionID, RequestID: in.RequestID,
 			}
 			id, err := client.CreateTripPlan(ctx, tp)
 			if err != nil {
@@ -138,6 +138,7 @@ type UpsertPOIToDayInput struct {
 	Address          string  `json:"address" jsonschema:"description=地址"`
 	District         string  `json:"district" jsonschema:"description=所在区县"`
 	City             string  `json:"city" jsonschema:"description=所在城市"`
+	Description      string  `json:"description" jsonschema:"description=面向用户展示的地点介绍、推荐亮点或游玩说明"`
 	AmapPOIID        string  `json:"amap_poi_id" jsonschema:"description=高德POI ID"`
 	VisitOrder       int     `json:"visit_order" jsonschema:"required,description=当天访问顺序"`
 	StartTime        string  `json:"start_time" jsonschema:"description=预计到达时间 HH:MM"`
@@ -165,7 +166,8 @@ func newUpsertPOIToDayTool(client *graph.Client) tool.Tool {
 			poi := graph.POIInput{
 				ID: in.POIID, Name: in.Name, Type: in.Type, Lat: in.Lat, Lng: in.Lng,
 				Address: in.Address, District: in.District, City: in.City,
-				AmapPOIID: in.AmapPOIID, VisitOrder: in.VisitOrder,
+				Description: in.Description,
+				AmapPOIID:   in.AmapPOIID, VisitOrder: in.VisitOrder,
 				StartTime: in.StartTime, EndTime: in.EndTime, Duration: in.Duration,
 				IsMainStop: in.IsMainStop, IsOptional: in.IsOptional,
 				IsRainyDayBackup: in.IsRainyDayBackup, Notes: in.Notes,
@@ -190,6 +192,7 @@ type WriteRouteInput struct {
 	TransportMode  string  `json:"transport_mode" jsonschema:"required,description=交通方式 walking/driving/transit/bicycling"`
 	DistanceMeters float64 `json:"distance_meters" jsonschema:"required,description=距离 米"`
 	DurationMin    float64 `json:"duration_min" jsonschema:"required,description=耗时 分钟"`
+	Polyline       string  `json:"polyline" jsonschema:"description=路线轨迹，经纬度串"`
 	EstimatedCost  float64 `json:"estimated_cost" jsonschema:"description=预估费用"`
 	Notes          string  `json:"notes" jsonschema:"description=备注"`
 }
@@ -207,7 +210,8 @@ func newWriteRouteTool(client *graph.Client) tool.Tool {
 			route := graph.RouteInput{
 				FromPOIID: in.FromPOIID, ToPOIID: in.ToPOIID,
 				TransportMode: in.TransportMode, DistanceMeters: in.DistanceMeters,
-				DurationMin: in.DurationMin, EstimatedCost: in.EstimatedCost, Notes: in.Notes,
+				DurationMin: in.DurationMin, Polyline: in.Polyline,
+				EstimatedCost: in.EstimatedCost, Notes: in.Notes,
 			}
 			if err := client.WriteRoute(ctx, route); err != nil {
 				return WriteRouteOutput{Success: false}, err
@@ -230,6 +234,9 @@ type WriteGuideInsightInput struct {
 	ContentSummary string   `json:"content_summary" jsonschema:"required,description=内容摘要"`
 	Keywords       []string `json:"keywords" jsonschema:"description=关键词"`
 	Sentiment      string   `json:"sentiment" jsonschema:"description=情感倾向 positive/negative/neutral"`
+	Status         string   `json:"status" jsonschema:"description=筛选状态 selected/review/raw/rejected"`
+	Score          float64  `json:"score" jsonschema:"description=素材评分"`
+	Reasons        []string `json:"reasons" jsonschema:"description=筛选理由"`
 	MatchedPOIs    []string `json:"matched_pois" jsonschema:"description=关联的POI ID列表"`
 	MatchedRegion  string   `json:"matched_region" jsonschema:"description=关联的区域"`
 }
@@ -248,7 +255,8 @@ func newWriteGuideInsightTool(client *graph.Client) tool.Tool {
 			insight := graph.GuideInsightInput{
 				Source: in.Source, SourceTitle: in.SourceTitle, SourceURL: in.SourceURL,
 				AuthorName: in.AuthorName, ContentSummary: in.ContentSummary,
-				Keywords: in.Keywords, Sentiment: in.Sentiment,
+				Keywords: in.Keywords, Sentiment: in.Sentiment, Status: in.Status,
+				Score: in.Score, Reasons: in.Reasons,
 				MatchedPOIs: in.MatchedPOIs, MatchedRegion: in.MatchedRegion,
 			}
 			id, err := client.WriteGuideInsight(ctx, in.TripPlanID, insight)
@@ -273,15 +281,15 @@ type ConstraintViolationSpec struct {
 }
 
 type WriteReviewResultInput struct {
-	TargetNodeID         string                     `json:"target_node_id" jsonschema:"required,description=被审查节点ID"`
-	Level                string                     `json:"level" jsonschema:"required,description=审查层级 TripPlan/Phase/Month/Week/Day/POI"`
-	Dimension            string                     `json:"dimension" jsonschema:"required,description=审查维度"`
-	Score                int                        `json:"score" jsonschema:"required,description=评分"`
-	Passed               bool                       `json:"passed" jsonschema:"required,description=是否通过"`
-	CriticalIssues       []string                   `json:"critical_issues" jsonschema:"description=关键问题"`
-	Issues               []string                   `json:"issues" jsonschema:"description=一般问题"`
-	Suggestions          []string                   `json:"suggestions" jsonschema:"description=改进建议"`
-	Summary              string                     `json:"summary" jsonschema:"description=审查摘要"`
+	TargetNodeID         string                    `json:"target_node_id" jsonschema:"required,description=被审查节点ID"`
+	Level                string                    `json:"level" jsonschema:"required,description=审查层级 TripPlan/Phase/Month/Week/Day/POI"`
+	Dimension            string                    `json:"dimension" jsonschema:"required,description=审查维度"`
+	Score                int                       `json:"score" jsonschema:"required,description=评分"`
+	Passed               bool                      `json:"passed" jsonschema:"required,description=是否通过"`
+	CriticalIssues       []string                  `json:"critical_issues" jsonschema:"description=关键问题"`
+	Issues               []string                  `json:"issues" jsonschema:"description=一般问题"`
+	Suggestions          []string                  `json:"suggestions" jsonschema:"description=改进建议"`
+	Summary              string                    `json:"summary" jsonschema:"description=审查摘要"`
 	ConstraintViolations []ConstraintViolationSpec `json:"constraint_violations" jsonschema:"description=约束违规详情"`
 }
 
@@ -350,16 +358,16 @@ func newUpdateNodeTool(client *graph.Client) tool.Tool {
 // --- write_climate_data ---
 
 type WriteClimateDataInput struct {
-	Region            string  `json:"region" jsonschema:"required,description=区域名称"`
-	Month             int     `json:"month" jsonschema:"required,description=月份 1-12"`
-	AvgHighTemp       float64 `json:"avg_high_temp" jsonschema:"required,description=平均最高温 °C"`
-	AvgLowTemp        float64 `json:"avg_low_temp" jsonschema:"required,description=平均最低温 °C"`
-	Precipitation     float64 `json:"precipitation" jsonschema:"description=降水量 mm"`
-	Humidity          float64 `json:"humidity" jsonschema:"description=湿度 %%"`
-	RainyDays         int     `json:"rainy_days" jsonschema:"description=雨天数"`
-	SunriseTime       string  `json:"sunrise_time" jsonschema:"description=日出时间 HH:MM"`
-	SunsetTime        string  `json:"sunset_time" jsonschema:"description=日落时间 HH:MM"`
-	ExtremeWeatherRisk string `json:"extreme_weather_risk" jsonschema:"description=极端天气风险 none/low/medium/high"`
+	Region             string  `json:"region" jsonschema:"required,description=区域名称"`
+	Month              int     `json:"month" jsonschema:"required,description=月份 1-12"`
+	AvgHighTemp        float64 `json:"avg_high_temp" jsonschema:"required,description=平均最高温 °C"`
+	AvgLowTemp         float64 `json:"avg_low_temp" jsonschema:"required,description=平均最低温 °C"`
+	Precipitation      float64 `json:"precipitation" jsonschema:"description=降水量 mm"`
+	Humidity           float64 `json:"humidity" jsonschema:"description=湿度 %%"`
+	RainyDays          int     `json:"rainy_days" jsonschema:"description=雨天数"`
+	SunriseTime        string  `json:"sunrise_time" jsonschema:"description=日出时间 HH:MM"`
+	SunsetTime         string  `json:"sunset_time" jsonschema:"description=日落时间 HH:MM"`
+	ExtremeWeatherRisk string  `json:"extreme_weather_risk" jsonschema:"description=极端天气风险 none/low/medium/high"`
 }
 
 type WriteClimateDataOutput struct {
