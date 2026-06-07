@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,11 +34,11 @@ import (
 type graphWorkflowAgent struct {
 	name         string
 	description  string
-	coordinator  agentcore.Agent              // macro_planning 完整 coordinator（有图/地图/攻略工具）
-	intakeAgent  agentcore.Agent              // intake/merge 精简 Agent（只有 skill 工具）
+	coordinator  agentcore.Agent // macro_planning 完整 coordinator（有图/地图/攻略工具）
+	intakeAgent  agentcore.Agent // intake/merge 精简 Agent（只有 skill 工具）
 	graphClient  *graph.Client
-	reviewAgents []reviewAgentSpec            // cached review agents for Phase 3
-	orchestrator *TravelSkillOrchestrator     // skills 编排中央控制器
+	reviewAgents []reviewAgentSpec        // cached review agents for Phase 3
+	orchestrator *TravelSkillOrchestrator // skills 编排中央控制器
 }
 
 type reviewAgentSpec struct {
@@ -78,6 +80,7 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 			userID = invocation.Session.UserID
 			sessionID = invocation.Session.ID
 		}
+		trace := traceEmitterFromInvocation(invocation)
 
 		// ================================================================
 		// 1. Orchestrator 决定本轮执行哪个 stage
@@ -92,6 +95,9 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 		// 2. StopWorkflow → 直接返回追问/提示文本给用户
 		// ================================================================
 		if result.StopWorkflow {
+			if trace != nil {
+				trace.EmitStage(ctx, string(result.NextStage), "waiting", "等待补充信息", "当前信息还不足以进入地图规划，先在对话中补齐关键条件。")
+			}
 			if result.Output != "" {
 				a.emitTextEvent(outCh, invocation, result.Output)
 			}
@@ -109,6 +115,10 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 				if !rt.Requirement.RequirementReady {
 					a.emitErrorEvent(outCh, invocation, "需求未完成，不能进入宏观规划")
 					return
+				}
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageMacroPlanning), "running", "建立大规划", "需求已经足够，开始建立区域级大方向。")
+					emitRequirementMapEvents(ctx, trace, rt.Requirement)
 				}
 				expectedTripPlanID := uuid.NewString()
 				augmentedMsg := buildMacroPrompt(msg, rt, expectedTripPlanID)
@@ -129,11 +139,67 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 					a.emitErrorEvent(outCh, invocation, "TripPlanID 未找到，无法拆分")
 					return
 				}
-				if err := a.runGraphSplitting(ctx, rt2.TripPlanID); err != nil {
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageGraphSplitting), "running", "拆分小规划", "开始把大规划拆成月、周、日，地图会保留上层方向并逐步展开。")
+				}
+				if err := a.runGraphSplitting(ctx, rt2.TripPlanID, rt2.Requirement); err != nil {
 					a.emitErrorEvent(outCh, invocation, fmt.Sprintf("图拆分失败: %v", err))
 					return
 				}
-				a.emitTextEvent(outCh, invocation, "图拆分完成，已创建 Month/Week/Day 层级。开始逐日生成行程...")
+				if trace != nil {
+					if overview, err := a.graphClient.GetTripOverview(ctx, rt2.TripPlanID); err == nil {
+						emitGraphSplittingMapEvents(ctx, trace, overview)
+						emitGuideEvidenceForTrip(ctx, trace, a.graphClient, rt2.TripPlanID, overview)
+					}
+				}
+				a.orchestrator.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
+					r.CurrentStage = StageDayExpansion
+				})
+				a.emitTextEvent(outCh, invocation, "图拆分完成，已创建 Month/Week/Day 层级。开始逐日验证地点和路线...")
+				result.NextStage = StageDayExpansion
+
+			case StageDayExpansion:
+				rtDay := a.orchestrator.LoadOrInitRuntime(userID, sessionID)
+				if rtDay.TripPlanID == "" {
+					a.emitErrorEvent(outCh, invocation, "TripPlanID 未找到，无法展开日级规划")
+					return
+				}
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageDayExpansion), "running", "展开日级地点和路线", "开始逐日验证 POI、坐标和路线，地图会实时加入真实地点和路线。")
+				}
+				if err := a.runPhase2(ctx, rtDay.TripPlanID, trace); err != nil {
+					a.emitErrorEvent(outCh, invocation, fmt.Sprintf("日级地点和路线展开失败: %v", err))
+					return
+				}
+				a.orchestrator.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
+					r.CurrentStage = StageReview
+				})
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageDayExpansion), "completed", "地点和路线已展开", "已完成日级地点与路线验证，准备进入审核。")
+				}
+				a.emitTextEvent(outCh, invocation, "日级地点和路线已展开，开始审核规划质量...")
+				result.NextStage = StageReview
+
+			case StageReview:
+				rtReview := a.orchestrator.LoadOrInitRuntime(userID, sessionID)
+				if rtReview.TripPlanID == "" {
+					a.emitErrorEvent(outCh, invocation, "TripPlanID 未找到，无法审核")
+					return
+				}
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageReview), "running", "审核规划质量", "开始检查地点、日程、路线和约束是否合理，审核结果会进入地图证据层。")
+				}
+				if err := a.runPhase3(ctx, rtReview.TripPlanID, trace, rtReview.Requirement); err != nil {
+					a.emitErrorEvent(outCh, invocation, fmt.Sprintf("审核失败: %v", err))
+					return
+				}
+				a.orchestrator.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
+					r.CurrentStage = StageFinalOutput
+				})
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageReview), "completed", "审核完成", "审核结果已经写入地图证据层，开始生成最终方案。")
+				}
+				a.emitTextEvent(outCh, invocation, "审核完成，开始生成最终方案...")
 				result.NextStage = StageFinalOutput
 
 			case StageFinalOutput:
@@ -141,6 +207,9 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 				if rt3.TripPlanID == "" {
 					a.emitErrorEvent(outCh, invocation, "TripPlanID 未找到")
 					return
+				}
+				if trace != nil {
+					trace.EmitStage(ctx, string(StageFinalOutput), "running", "生成最终方案", "地图结构已经建立，开始组织最终旅行方案文本。")
 				}
 				// Use background context for final output to avoid request timeout
 				bgCtx := context.Background()
@@ -151,11 +220,6 @@ func (a *graphWorkflowAgent) Run(ctx context.Context, invocation *agentcore.Invo
 				}
 				a.emitFinalEvent(outCh, invocation, finalJSON)
 				log.Infof("[workflow-runner] final output complete: %d chars", len(finalJSON))
-				return
-
-			case StageDayExpansion, StageReview:
-				a.emitTextEvent(outCh, invocation,
-					fmt.Sprintf("%s 阶段（待后续 PR 实现）", result.NextStage))
 				return
 
 			default:
@@ -185,6 +249,9 @@ func (a *graphWorkflowAgent) emitTextEvent(outCh chan<- *event.Event, inv *agent
 }
 
 func (a *graphWorkflowAgent) emitErrorEvent(outCh chan<- *event.Event, inv *agentcore.Invocation, errMsg string) {
+	if trace := traceEmitterFromInvocation(inv); trace != nil {
+		trace.EmitError(context.Background(), errMsg)
+	}
 	msgID := fmt.Sprintf("wf-err-%d", time.Now().UnixNano())
 	outCh <- &event.Event{
 		Response: &model.Response{
@@ -231,6 +298,9 @@ func (a *graphWorkflowAgent) runMacroPlanningOnly(
 	outCh chan<- *event.Event,
 	invocation *agentcore.Invocation,
 ) (string, error) {
+	if trace := traceEmitterFromInvocation(invocation); trace != nil {
+		trace.EmitStage(ctx, string(StageMacroPlanning), "running", "生成阶段节点", "正在把长周期需求压缩成可在地图上逐层展开的阶段。")
+	}
 	cfg := config.Cfg
 	appName := cfg.Agent.AppName + "macro-planning"
 
@@ -299,7 +369,12 @@ func (a *graphWorkflowAgent) runMacroPlanningOnly(
 	}
 
 	// Phase completeness validation
-	if err := a.checkAfterMacroPlanning(ctx, expectedTripPlanID, 0); err != nil {
+	rtForValidation := a.orchestrator.LoadOrInitRuntime(userID, sessionID)
+	if err := a.checkAfterMacroPlanning(ctx, expectedTripPlanID, 0, rtForValidation.Requirement); err != nil {
+		var geoErr *TravelGeoScopeError
+		if errors.As(err, &geoErr) && traceEmitterFromInvocation(invocation) != nil {
+			emitGeoScopeViolationAnnotations(ctx, traceEmitterFromInvocation(invocation), "overview", expectedTripPlanID, geoErr.Violations)
+		}
 		log.Errorf("[workflow-runner] macro_planning: phase validation failed: %v", err)
 		a.saveWorkflowDebugSnapshot(userID, sessionID, requestID, expectedTripPlanID, "macro_planning_validation", out.String(), err.Error())
 		return "", fmt.Errorf("宏观规划校验失败: %w", err)
@@ -310,6 +385,16 @@ func (a *graphWorkflowAgent) runMacroPlanningOnly(
 	phaseCount := 0
 	if err == nil {
 		phaseCount = len(overview.Phases)
+	}
+	if trace := traceEmitterFromInvocation(invocation); trace != nil {
+		trace.EmitStage(ctx, string(StageMacroPlanning), "completed", "大规划已建立", fmt.Sprintf("已创建 %d 个阶段节点，地图正在绘制阶段方向。", phaseCount))
+		if overview != nil {
+			emitPhaseOverviewMapEvents(ctx, trace, overview)
+			if rt := a.orchestrator.LoadOrInitRuntime(userID, sessionID); rt.Requirement.RequirementReady {
+				emitMacroRouteMapEvents(ctx, trace, rt.Requirement, overview)
+			}
+			emitGuideEvidenceForTrip(ctx, trace, a.graphClient, expectedTripPlanID, overview)
+		}
 	}
 
 	a.emitTextEvent(outCh, invocation,
@@ -342,6 +427,17 @@ func buildMacroPrompt(originalMsg string, rt TravelSkillRuntime, expectedTripPla
 2. 使用 get_weather_context 获取区域气候数据
 3. 规划 3-8 个 Phase（region, season, theme, dayCount, start/end anchor）
 4. 使用 split_parent_node 拆分 TripPlan → Phase
+
+## 锚点覆盖约束
+- requirement.destination_anchors 中 origin=user_explicit 的目的地是用户明确要去的目的地，必须在 Phase 中覆盖，不能只写成泛化目的地范围。
+- requirement.destination_anchors 中 origin=system_inferred 的自然景观锚点是候选核心体验，尤其是雪山、峡谷、湖泊、森林、草原、徒步观景点。
+- 如果天数不足以覆盖全部显式目的地或核心自然锚点，必须在 phase theme/region 中体现取舍，不要用城市到达、酒店、餐厅替代自然风光体验。
+
+## 目的地范围硬约束
+- Phase 的 region/name/theme 只能围绕 destination_scope、must_visit 和 destination_anchors 展开。
+- 用户限定为某个区域（例如西南、川滇藏、云南、香格里拉等）时，禁止引入明显无关的远方城市或区域。
+- 出发地只允许作为路线起点或转移说明，不能把出发地以外的无关城市扩展成目的地 Phase。
+- 若不确定某城市是否属于用户目的地范围，宁可保留在公开权衡说明中，也不要创建该城市的 Phase。
 
 禁止：Month/Week/Day 拆分、攻略采集、POI 验证、审查、逐日输出。
 
@@ -489,7 +585,12 @@ func calculateDate(startDate string, offset int) string {
 
 // --- Phase 2: Day-by-Day POI Verification ---
 
-func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string) error {
+func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, emitters ...*TraceEmitter) error {
+	var trace *TraceEmitter
+	if len(emitters) > 0 {
+		trace = emitters[0]
+	}
+
 	overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
 	if err != nil {
 		return fmt.Errorf("get trip overview: %w", err)
@@ -499,38 +600,150 @@ func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string) e
 	if totalDays == 0 {
 		return fmt.Errorf("no days found for tripPlanID: %s", tripPlanID)
 	}
+	geoConstraint := buildTravelGeoConstraintFromOverview(overview)
 
-	// Collect day IDs ordered by dayIndex
-	dayIDs := make([]string, 0, totalDays)
+	type dayRunInfo struct {
+		id  string
+		ctx dayExpansionContext
+	}
+	dayInfos := make([]dayRunInfo, 0, totalDays)
+	dayContexts := dayExpansionContextsFromOverview(overview)
 	for _, d := range overview.Days {
 		if id, ok := d["id"].(string); ok && id != "" {
-			dayIDs = append(dayIDs, id)
+			ctx := dayContexts[id]
+			if ctx.DayIndex == 0 {
+				ctx.DayIndex = int(getFloat(d, "dayIndex"))
+			}
+			ctx.GeoConstraint = geoConstraint
+			dayInfos = append(dayInfos, dayRunInfo{id: id, ctx: ctx})
 		}
 	}
+	sort.SliceStable(dayInfos, func(i, j int) bool {
+		left := dayInfos[i].ctx.DayIndex
+		right := dayInfos[j].ctx.DayIndex
+		if left == right {
+			return dayInfos[i].id < dayInfos[j].id
+		}
+		if left <= 0 {
+			return false
+		}
+		if right <= 0 {
+			return true
+		}
+		return left < right
+	})
 
-	log.Infof("[workflow-runner] Phase 2: verifying POIs for %d days", len(dayIDs))
+	log.Infof("[workflow-runner] Phase 2: verifying POIs for %d days", len(dayInfos))
 
-	for i, dayID := range dayIDs {
-		log.Infof("[workflow-runner] Phase 2: day %d/%d (%s)", i+1, len(dayIDs), dayID)
-		if err := a.verifyDayPOIs(ctx, dayID); err != nil {
+	var previousDayID string
+	var previousDayCtx dayExpansionContext
+	var previousPOIs []graph.POIInput
+	for i, info := range dayInfos {
+		dayID := info.id
+		dayCtx := info.ctx
+		if dayCtx.DayIndex == 0 {
+			dayCtx.DayIndex = i + 1
+		}
+		log.Infof("[workflow-runner] Phase 2: day %d/%d (%s)", i+1, len(dayInfos), dayID)
+		if trace != nil {
+			trace.Emit(ctx, PublicPlanningEvent{
+				Type:           EventMapAnnotationAdded,
+				Level:          "day",
+				NodeID:         dayID,
+				Status:         "active",
+				PublicAction:   "验证当天地点",
+				ThoughtSummary: fmt.Sprintf("正在验证第 %d/%d 天的 POI 和路线。", i+1, len(dayInfos)),
+				Annotation: &PublicMapAnnotation{
+					ID:      stablePlanningAnnotationID("day-expansion-progress", dayID, fmt.Sprint(i+1)),
+					Kind:    "thought",
+					Source:  "planning",
+					Title:   fmt.Sprintf("第 %d 天地点验证", i+1),
+					Summary: fmt.Sprintf("正在验证第 %d/%d 天的地点、坐标和路线。", i+1, len(dayInfos)),
+					Status:  "active",
+					Anchor:  PublicMapAnnotationAnchor{Type: "scope", NodeID: dayID, Label: fmt.Sprintf("Day %d", i+1)},
+				},
+			})
+		}
+		writtenPOIs, err := a.verifyDayPOIs(ctx, dayID, trace, dayCtx)
+		if err != nil {
 			log.Errorf("[workflow-runner] Phase 2 day %s failed: %v", dayID, err)
+			if trace != nil {
+				trace.Emit(ctx, PublicPlanningEvent{
+					Type:           EventMapAnnotationAdded,
+					Level:          "day",
+					NodeID:         dayID,
+					Status:         "review",
+					PublicAction:   "记录地点验证失败",
+					ThoughtSummary: "这一天的地点或路线验证失败，先记录失败原因并继续处理后续日程。",
+					Annotation: &PublicMapAnnotation{
+						ID:      stablePlanningAnnotationID("day-expansion-error", dayID, err.Error()),
+						Kind:    "thought",
+						Source:  "planning",
+						Title:   "地点验证失败",
+						Summary: truncateGuideText(err.Error(), maxGuideAnnotationSummary),
+						Status:  "review",
+						Anchor:  PublicMapAnnotationAnchor{Type: "scope", NodeID: dayID, Label: dayID},
+					},
+				})
+			}
 			// Continue to next day
+		}
+		if len(previousPOIs) > 0 && len(writtenPOIs) > 0 {
+			previousSorted := sortedPOIsByVisitOrder(previousPOIs)
+			currentSorted := sortedPOIsByVisitOrder(writtenPOIs)
+			from := previousSorted[len(previousSorted)-1]
+			to := currentSorted[0]
+			parentNodeID := previousDayID + "-to-" + dayID
+			route := buildRouteBetweenPOIsDirect(ctx, from, to, trace, parentNodeID)
+			enrichRouteDisplayMetadata(&route, from, to, routeDisplayContext{
+				PhaseID:        previousDayCtx.PhaseID,
+				PhaseSeq:       previousDayCtx.PhaseSeq,
+				PhaseName:      previousDayCtx.PhaseName,
+				DayID:          previousDayID,
+				DayIndex:       previousDayCtx.DayIndex,
+				SegmentIndex:   1,
+				ConnectionType: "cross_day",
+			})
+			if err := a.graphClient.WriteRoute(ctx, route); err != nil {
+				log.Errorf("[workflow-runner] write cross-day route: %v", err)
+			}
+			emitRouteSegmentMapEvents(ctx, trace, "day", parentNodeID, []graph.POIInput{from, to}, []graph.RouteInput{route}, routeDisplayContext{
+				PhaseID:        previousDayCtx.PhaseID,
+				PhaseSeq:       previousDayCtx.PhaseSeq,
+				PhaseName:      previousDayCtx.PhaseName,
+				DayID:          previousDayID,
+				DayIndex:       previousDayCtx.DayIndex,
+				SegmentIndex:   1,
+				ConnectionType: "cross_day",
+			})
+		}
+		if len(writtenPOIs) > 0 {
+			previousDayID = dayID
+			previousDayCtx = dayCtx
+			previousPOIs = writtenPOIs
 		}
 	}
 
 	return nil
 }
 
-func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string) error {
+func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, trace *TraceEmitter, contexts ...dayExpansionContext) ([]graph.POIInput, error) {
+	dayContext := dayExpansionContext{}
+	if len(contexts) > 0 {
+		dayContext = contexts[0]
+	}
 	subgraph, err := a.graphClient.GetDaySubgraph(ctx, dayID)
 	if err != nil {
-		return fmt.Errorf("get day subgraph: %w", err)
+		return nil, fmt.Errorf("get day subgraph: %w", err)
 	}
 	if subgraph == nil {
-		return fmt.Errorf("day subgraph is nil for %s", dayID)
+		return nil, fmt.Errorf("day subgraph is nil for %s", dayID)
 	}
 
 	day := subgraph.Day
+	if dayContext.DayIndex == 0 {
+		dayContext.DayIndex = day.DayIndex
+	}
 
 	// Build a structured prompt for amap-agent
 	prompt := fmt.Sprintf(`请验证并完善以下旅行日的 POI 安排：
@@ -540,12 +753,15 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string) er
 主题: %s
 主要区域: %s
 起点: %s
+路线/锚点说明: %s
+规划记录: %s
 
 请执行以下验证：
-1. 对该区域进行 POI 关键词搜索（景点、餐饮、住宿），找出 2-3 个最合适的 POI
-2. 对每个 POI 调用 amap_geocode 获取精确坐标
-3. 对 POI 之间的路线调用 amap_route_driving 获取距离和耗时
-4. 返回结构化的 POI 数据和路线数据
+1. 如果主题或锚点说明包含雪山、峡谷、湖泊、森林、草原、徒步、观景等自然风光词，必须优先搜索自然景点或观景点；不能用市区、酒店、餐厅替代当天主体验
+2. 对该区域进行 POI 关键词搜索（核心景点优先，餐饮、住宿仅作为补给），找出 2-3 个最合适的 POI
+3. 对每个 POI 调用 amap_geocode 获取精确坐标
+4. 对 POI 之间的路线调用 amap_route_driving 获取距离和耗时
+5. 返回结构化的 POI 数据和路线数据
 
 输出格式（JSON）：
 {
@@ -571,19 +787,43 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string) er
       "transportMode": "driving",
       "distanceMeters": 5000,
       "durationMin": 15,
-      "estimatedCost": 20
+      "estimatedCost": 20,
+      "polyline": "[[116.1,39.9],[116.2,39.95]]",
+      "notes": "路线选择理由"
     }
   ]
-}`, day.Date, day.DayIndex, day.Theme, day.PrimaryArea, day.StartPoint)
+}`, day.Date, day.DayIndex, day.Theme, day.PrimaryArea, day.StartPoint, day.RouteOverview, day.ThinkingNotes)
 
 	// Run amap-agent
 	amapResult, err := runAmapAgentStandalone(ctx, prompt)
 	if err != nil {
-		return fmt.Errorf("amap-agent failed: %w", err)
+		log.Warnf("[workflow-runner] amap-agent day %s failed, using deterministic POI fallback: %v", dayID, err)
+		emitDayExpansionNotice(ctx, trace, dayID, "结构化地点验证未完成", "改用确定性的地图搜索兜底，只接受带真实坐标的地点。", "review")
 	}
 
-	// Parse and write POIs
-	pois, rawRoutes := parseAmapPOIResult(amapResult)
+	// Parse POIs, then re-check coordinates with direct geocoding before exposing them.
+	pois, _ := parseAmapPOIResult(amapResult)
+	if len(pois) > 0 {
+		pois = exactifyParsedPOIs(ctx, pois, day, dayContext, trace)
+		if isNaturalSceneryDay(day, dayContext) && !hasNaturalMainStop(pois) {
+			emitDayExpansionNotice(ctx, trace, dayID, "主景点不匹配", "结构化结果没有覆盖自然风光主景点，改用核心锚点关键词重新搜索。", "review")
+			pois = nil
+		}
+	}
+	if len(pois) == 0 {
+		fallbackPOIs, fallbackErr := discoverDayPOIsDirect(ctx, day, dayContext, trace)
+		if fallbackErr != nil {
+			emitDayExpansionNotice(ctx, trace, dayID, "地点搜索暂不可用", fallbackErr.Error(), "review")
+		}
+		pois = fallbackPOIs
+	}
+	if len(pois) == 0 {
+		return nil, fmt.Errorf("no exact POIs found for day %s", dayID)
+	}
+	pois = filterPOIsByGeoConstraint(ctx, trace, dayID, pois, dayContext.GeoConstraint)
+	if len(pois) == 0 {
+		return nil, fmt.Errorf("day %s 的候选地点均超出用户目的地范围", dayID)
+	}
 
 	// Pre-generate POI IDs before any writes, so routes can reference them correctly.
 	for i := range pois {
@@ -591,49 +831,40 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string) er
 			pois[i].ID = fmt.Sprintf("poi-%s", uuid.NewString())
 		}
 	}
+	routes := buildDayRoutesDirect(ctx, pois, trace, dayID, dayContext)
 
-	// Rebuild routes using the pre-generated POI IDs
-	var routes []graph.RouteInput
-	for _, rr := range rawRoutes {
-		if rr.TransportMode == "" {
-			continue
-		}
-		if rr.FromPOI >= len(pois) || rr.ToPOI >= len(pois) {
-			continue
-		}
-		routes = append(routes, graph.RouteInput{
-			FromPOIID:      pois[rr.FromPOI].ID,
-			ToPOIID:        pois[rr.ToPOI].ID,
-			TransportMode:  rr.TransportMode,
-			DistanceMeters: rr.DistanceMeters,
-			DurationMin:    rr.DurationMin,
-			EstimatedCost:  rr.EstimatedCost,
-			Notes:          rr.Notes,
-		})
-	}
-
+	writtenPOIs := make([]graph.POIInput, 0, len(pois))
 	for _, poi := range pois {
 		poiID, err := a.graphClient.UpsertPOIToDay(ctx, dayID, poi)
 		if err != nil {
 			log.Errorf("[workflow-runner] upsert POI %s to day %s: %v", poi.Name, dayID, err)
 			continue
 		}
+		poi.ID = poiID
+		writtenPOIs = append(writtenPOIs, poi)
 		log.Infof("[workflow-runner]   POI: %s (%s) id=%s", poi.Name, poi.Type, poiID)
+	}
+	displayCtx := routeDisplayContext{
+		PhaseID:        dayContext.PhaseID,
+		PhaseSeq:       dayContext.PhaseSeq,
+		PhaseName:      dayContext.PhaseName,
+		DayID:          dayID,
+		DayIndex:       dayContext.DayIndex,
+		ConnectionType: "day_segment",
+	}
+	emitExactPOIMapBatch(ctx, trace, "day", dayID, writtenPOIs, displayCtx)
 
-		// Write routes for this POI
-		for _, route := range routes {
-			if route.FromPOIID == poiID || route.ToPOIID == poiID {
-				if err := a.graphClient.WriteRoute(ctx, route); err != nil {
-					log.Errorf("[workflow-runner] write route: %v", err)
-				}
-			}
+	for _, route := range routes {
+		if err := a.graphClient.WriteRoute(ctx, route); err != nil {
+			log.Errorf("[workflow-runner] write route: %v", err)
 		}
 	}
+	emitRouteSegmentMapEvents(ctx, trace, "day", dayID, writtenPOIs, routes, displayCtx)
 
 	// Mark day as verified
 	_ = a.graphClient.UpdateNode(ctx, dayID, map[string]any{"status": "verified"})
 
-	return nil
+	return writtenPOIs, nil
 }
 
 type parsedAmapResult struct {
@@ -648,6 +879,7 @@ type rawAmapRoute struct {
 	DistanceMeters float64 `json:"distanceMeters"`
 	DurationMin    float64 `json:"durationMin"`
 	EstimatedCost  float64 `json:"estimatedCost"`
+	Polyline       any     `json:"polyline"`
 	Notes          string  `json:"notes"`
 }
 
@@ -668,6 +900,19 @@ func parseAmapPOIResult(result string) ([]graph.POIInput, []rawAmapRoute) {
 	}
 
 	return pois, parsed.RawRoutes
+}
+
+func normalizeRawPolyline(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		b, err := json.Marshal(v)
+		if err == nil {
+			return string(b)
+		}
+	}
+	return ""
 }
 
 func extractJSONBlock(text string) string {
@@ -730,7 +975,9 @@ const amapPOIVerifyInstruction = `
       "toPOI": 1,
       "transportMode": "driving",
       "distanceMeters": 5000,
-      "durationMin": 15
+      "durationMin": 15,
+      "polyline": "[[116.1,39.9],[116.2,39.95]]",
+      "notes": "路线选择理由"
     }
   ]
 }
@@ -793,7 +1040,7 @@ func runAmapAgentStandalone(ctx context.Context, prompt string) (string, error) 
 
 // --- Phase 3: Full Review ---
 
-func (a *graphWorkflowAgent) runPhase3(ctx context.Context, tripPlanID string) error {
+func (a *graphWorkflowAgent) runPhase3(ctx context.Context, tripPlanID string, trace *TraceEmitter, requirements ...TravelRequirementSnapshot) error {
 	overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
 	if err != nil {
 		return fmt.Errorf("get trip overview: %w", err)
@@ -804,6 +1051,25 @@ func (a *graphWorkflowAgent) runPhase3(ctx context.Context, tripPlanID string) e
 
 	for i, dayID := range dayIDs {
 		log.Infof("[workflow-runner] Phase 3: day %d/%d (%s)", i+1, len(dayIDs), dayID)
+		if trace != nil {
+			trace.Emit(ctx, PublicPlanningEvent{
+				Type:           EventMapAnnotationAdded,
+				Level:          "day",
+				NodeID:         dayID,
+				Status:         "active",
+				PublicAction:   "启动当天审核",
+				ThoughtSummary: fmt.Sprintf("正在审核第 %d/%d 天的地点、路线和内容质量。", i+1, len(dayIDs)),
+				Annotation: &PublicMapAnnotation{
+					ID:      stablePlanningAnnotationID("review-day-progress", dayID, fmt.Sprint(i+1)),
+					Kind:    "review",
+					Source:  "review",
+					Title:   fmt.Sprintf("第 %d 天审核中", i+1),
+					Summary: "审核 Agent 正在检查地点密度、路线合理性和内容质量。",
+					Status:  "active",
+					Anchor:  PublicMapAnnotationAnchor{Type: "scope", NodeID: dayID, Label: fmt.Sprintf("Day %d", i+1)},
+				},
+			})
+		}
 
 		subgraph, err := a.graphClient.GetDaySubgraph(ctx, dayID)
 		if err != nil || subgraph == nil {
@@ -816,13 +1082,15 @@ func (a *graphWorkflowAgent) runPhase3(ctx context.Context, tripPlanID string) e
 			poiReview := runPOIReview(ctx, subgraph, poi)
 			if poiReview != nil {
 				_, _ = a.graphClient.WriteReviewResult(ctx, poi.ID, *poiReview)
+				emitReviewAnnotation(ctx, trace, "day", poi.ID, poi.Name, "POI 审核", "point", *poiReview)
 			}
 		}
 
 		// L4: Day-level content review — run 5 agents in parallel
 		dayReviewResults := a.runDayContentReviews(ctx, subgraph)
 		for _, r := range dayReviewResults {
-			_, _ = a.graphClient.WriteReviewResult(ctx, dayID, r)
+			_, _ = a.graphClient.WriteReviewResult(ctx, dayID, r.Review)
+			emitReviewAnnotation(ctx, trace, "day", dayID, subgraph.Day.Date, r.AgentName, "scope", r.Review)
 		}
 	}
 
@@ -832,10 +1100,225 @@ func (a *graphWorkflowAgent) runPhase3(ctx context.Context, tripPlanID string) e
 		weekReview := runWeekReview(ctx, weekID)
 		if weekReview != nil {
 			_, _ = a.graphClient.WriteReviewResult(ctx, weekID, *weekReview)
+			emitReviewAnnotation(ctx, trace, "week", weekID, weekID, "周级审核", "scope", *weekReview)
 		}
 	}
 
+	if err := a.reviewGeoScope(ctx, tripPlanID, overview, trace, requirements...); err != nil {
+		return err
+	}
+
+	if err := a.reviewAnchorCoverage(ctx, tripPlanID, overview, trace, requirements...); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+type anchorCoverageFinding struct {
+	Anchor   DestinationAnchorSnapshot
+	Covered  bool
+	Critical bool
+	Matches  []string
+	Reason   string
+}
+
+func (a *graphWorkflowAgent) reviewAnchorCoverage(ctx context.Context, tripPlanID string, overview *graph.TripOverview, trace *TraceEmitter, requirements ...TravelRequirementSnapshot) error {
+	anchors := deriveAnchorsForGraphSplitting(overview, requirements...)
+	if len(anchors) == 0 {
+		return nil
+	}
+	findings, err := a.evaluateAnchorCoverage(ctx, overview, anchors)
+	if err != nil {
+		return err
+	}
+
+	var criticalMissing []string
+	for _, finding := range findings {
+		emitAnchorCoverageAnnotation(ctx, trace, tripPlanID, finding)
+		if finding.Critical && !finding.Covered {
+			criticalMissing = append(criticalMissing, finding.Anchor.Name)
+		}
+	}
+	if len(criticalMissing) == 0 {
+		review := graph.ReviewInput{
+			Level:       "trip",
+			Dimension:   "anchor_coverage",
+			Score:       92,
+			Passed:      true,
+			Summary:     "核心目的地与自然风光锚点覆盖审核通过。",
+			Suggestions: []string{"继续在最终方案中解释各锚点的观景窗口、体力和天气风险。"},
+		}
+		_, _ = a.graphClient.WriteReviewResult(ctx, tripPlanID, review)
+		emitReviewAnnotation(ctx, trace, "overview", tripPlanID, "锚点覆盖", "锚点覆盖审核", "scope", review)
+		return nil
+	}
+
+	review := graph.ReviewInput{
+		Level:     "trip",
+		Dimension: "anchor_coverage",
+		Score:     45,
+		Passed:    false,
+		Summary:   "核心景点覆盖不足，不能直接生成最终方案。",
+		CriticalIssues: []string{
+			"缺失核心锚点：" + strings.Join(criticalMissing, "、"),
+			"自然风光需求不能用城市到达、酒店或餐饮替代。",
+		},
+		Suggestions: []string{
+			"请延长天数、舍弃部分目的地，或接受更高强度转移日后重新规划。",
+			"也可以保留三地但明确哪些核心景点作为备选或放弃。",
+		},
+	}
+	_, _ = a.graphClient.WriteReviewResult(ctx, tripPlanID, review)
+	emitReviewAnnotation(ctx, trace, "overview", tripPlanID, "锚点覆盖", "锚点覆盖审核", "scope", review)
+	return fmt.Errorf("核心景点覆盖不足：%s。建议延长天数、舍弃部分目的地，或确认可接受更高强度自驾后重新规划", strings.Join(criticalMissing, "、"))
+}
+
+func (a *graphWorkflowAgent) evaluateAnchorCoverage(ctx context.Context, overview *graph.TripOverview, anchors []DestinationAnchorSnapshot) ([]anchorCoverageFinding, error) {
+	if overview == nil {
+		return nil, nil
+	}
+	coverageTextParts := []string{}
+	for _, day := range overview.Days {
+		dayID := getStr(day, "id")
+		if dayID == "" {
+			continue
+		}
+		subgraph, err := a.graphClient.GetDaySubgraph(ctx, dayID)
+		if err != nil || subgraph == nil {
+			continue
+		}
+		for _, poi := range subgraph.POIs {
+			if isLogisticsPOIType(poi.Type) || isGenericAdministrativePOI(graph.POIInput{Name: poi.Name, Type: poi.Type, Address: poi.Address}) {
+				continue
+			}
+			coverageTextParts = append(coverageTextParts,
+				poi.Name,
+				poi.Type,
+				poi.Address,
+				poi.District,
+				poi.City,
+				poi.Description,
+				poi.Notes,
+			)
+		}
+	}
+	coverageText := strings.Join(coverageTextParts, " ")
+	coveredHighPriorityByDestination := map[string]bool{}
+	topPriorityByDestination := map[string]int{}
+	for _, anchor := range anchors {
+		if anchor.Kind != "destination" && anchor.Priority > topPriorityByDestination[anchor.Destination] {
+			topPriorityByDestination[anchor.Destination] = anchor.Priority
+		}
+		if anchor.Kind != "destination" && anchor.Priority >= 90 && anchorCoveredByText(anchor, coverageText) {
+			coveredHighPriorityByDestination[anchor.Destination] = true
+		}
+	}
+
+	findings := make([]anchorCoverageFinding, 0, len(anchors))
+	for _, anchor := range anchors {
+		covered := anchorCoveredByText(anchor, coverageText)
+		critical := false
+		if anchor.Origin == anchorOriginUserExplicit && anchor.MustCover {
+			critical = !covered && !coveredHighPriorityByDestination[anchor.Destination]
+		}
+		if anchor.Origin == anchorOriginSystemInferred &&
+			anchor.Priority >= 90 &&
+			anchor.Priority == topPriorityByDestination[anchor.Destination] {
+			critical = true
+		}
+		reason := "已在日程、POI 或路线说明中覆盖。"
+		if !covered {
+			reason = "未在已验证 POI 或日程说明中找到，需要给出放弃原因或重新规划。"
+		}
+		findings = append(findings, anchorCoverageFinding{
+			Anchor:   anchor,
+			Covered:  covered,
+			Critical: critical,
+			Matches:  anchorMatchLabels(anchor, coverageText),
+			Reason:   reason,
+		})
+	}
+	return findings, nil
+}
+
+func anchorCoveredByText(anchor DestinationAnchorSnapshot, text string) bool {
+	if strings.TrimSpace(anchor.Name) == "" {
+		return false
+	}
+	names := []string{anchor.Name}
+	if strings.HasSuffix(anchor.Name, "峰") {
+		names = append(names, strings.TrimSuffix(anchor.Name, "峰"))
+	}
+	if strings.HasSuffix(anchor.Name, "国家公园") {
+		names = append(names, strings.TrimSuffix(anchor.Name, "国家公园"))
+	}
+	for _, name := range names {
+		if name != "" && strings.Contains(text, name) {
+			return true
+		}
+	}
+	if anchor.Kind == "destination" && anchor.Destination != "" && strings.Contains(text, anchor.Destination) {
+		return true
+	}
+	return false
+}
+
+func anchorMatchLabels(anchor DestinationAnchorSnapshot, text string) []string {
+	if anchorCoveredByText(anchor, text) {
+		return []string{"命中：" + anchor.Name}
+	}
+	return nil
+}
+
+func emitAnchorCoverageAnnotation(ctx context.Context, emitter *TraceEmitter, tripPlanID string, finding anchorCoverageFinding) {
+	if emitter == nil {
+		return
+	}
+	status := "selected"
+	if !finding.Covered {
+		status = "review"
+	}
+	if finding.Critical && !finding.Covered {
+		status = "rejected"
+	}
+	title := "锚点已覆盖"
+	if !finding.Covered {
+		title = "锚点待补齐"
+	}
+	summary := fmt.Sprintf("%s：%s", finding.Anchor.Name, finding.Reason)
+	tags := []string{"锚点覆盖", defaultIfEmpty(finding.Anchor.Destination, "目的地")}
+	if finding.Anchor.Kind != "" {
+		tags = append(tags, finding.Anchor.Kind)
+	}
+	if finding.Critical {
+		tags = append(tags, "关键")
+	}
+	emitter.Emit(ctx, PublicPlanningEvent{
+		Type:           EventMapAnnotationAdded,
+		Level:          "overview",
+		NodeID:         tripPlanID,
+		Status:         status,
+		PublicAction:   "展示锚点覆盖审核",
+		ThoughtSummary: "正在核对用户明确目的地和自然风光核心锚点是否被真实日程覆盖。",
+		RecordedFacts:  []string{summary},
+		Annotation: &PublicMapAnnotation{
+			ID:       stablePlanningAnnotationID("anchor-coverage", tripPlanID, finding.Anchor.Destination, finding.Anchor.Name),
+			Kind:     "anchor_coverage",
+			Source:   "review",
+			Title:    title,
+			Summary:  truncateGuideText(summary, maxGuideAnnotationSummary),
+			Status:   status,
+			Tags:     tags,
+			Reasons:  []string{defaultIfEmpty(finding.Anchor.Reason, "核心锚点覆盖检查")},
+			Evidence: append([]string(nil), finding.Matches...),
+			Anchor: PublicMapAnnotationAnchor{
+				Type:   "scope",
+				NodeID: tripPlanID,
+				Label:  defaultIfEmpty(finding.Anchor.Name, "锚点覆盖"),
+			},
+		},
+	})
 }
 
 func runPOIReview(ctx context.Context, subgraph *graph.DaySubgraph, poi graph.POINode) *graph.ReviewInput {
@@ -861,7 +1344,12 @@ POI: %s
 	return parseReviewOutput(output)
 }
 
-func (a *graphWorkflowAgent) runDayContentReviews(ctx context.Context, subgraph *graph.DaySubgraph) []graph.ReviewInput {
+type namedReviewResult struct {
+	AgentName string
+	Review    graph.ReviewInput
+}
+
+func (a *graphWorkflowAgent) runDayContentReviews(ctx context.Context, subgraph *graph.DaySubgraph) []namedReviewResult {
 	dayData, _ := json.Marshal(subgraph)
 	dayPrompt := fmt.Sprintf(`请审查以下旅行日的规划质量：
 
@@ -876,7 +1364,7 @@ POI 数量: %d
 请加载对应的 review skill 并输出审查结果 JSON。`, subgraph.Day.Date, subgraph.Day.Theme, subgraph.Day.PrimaryArea, len(subgraph.POIs), string(dayData))
 
 	var wg sync.WaitGroup
-	results := make(chan graph.ReviewInput, len(a.reviewAgents))
+	results := make(chan namedReviewResult, len(a.reviewAgents))
 
 	for _, ra := range a.reviewAgents {
 		wg.Add(1)
@@ -886,7 +1374,7 @@ POI 数量: %d
 				fmt.Sprintf("review-%s-%s", name, subgraph.Day.Date), dayPrompt)
 			if err == nil && output != "" {
 				if r := parseReviewOutput(output); r != nil {
-					results <- *r
+					results <- namedReviewResult{AgentName: publicReviewAgentLabel(name), Review: *r}
 				}
 			}
 		}(ra.name, ra.ag)
@@ -895,7 +1383,7 @@ POI 数量: %d
 	wg.Wait()
 	close(results)
 
-	var reviews []graph.ReviewInput
+	var reviews []namedReviewResult
 	for r := range results {
 		reviews = append(reviews, r)
 	}
@@ -984,34 +1472,34 @@ func (a *graphWorkflowAgent) runPhase4(ctx context.Context, tripPlanID string, m
 	}
 
 	// Weather context for each region, using actual month from Phase start date
-		overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
-		if err == nil {
-			for _, p := range overview.Phases {
-				region := getStr(p, "region")
-				startDate := getStr(p, "startDate")
-				if region == "" || startDate == "" {
-					continue
-				}
-				month := monthFromDate(startDate)
-				wc, wcErr := a.graphClient.GetWeatherContext(ctx, region, month)
-				if wcErr != nil || wc == nil {
-					continue
-				}
-				for _, cd := range wc.ClimateData {
-					notes.weatherNotes = append(notes.weatherNotes,
-						fmt.Sprintf("%s %d月: %.0f-%.0f°C, 极端天气风险=%s",
-							region, cd.Month, cd.AvgLowTemp, cd.AvgHighTemp, cd.ExtremeWeatherRisk))
-				}
-				for _, c := range wc.Constraints {
-					notes.weatherNotes = append(notes.weatherNotes,
-						fmt.Sprintf("%s: %s(%s) — %s", region, c.ConstraintType, c.Severity, c.Description))
-				}
-				for _, se := range wc.SeasonalEvents {
-					notes.seasonalEvents = append(notes.seasonalEvents,
-						fmt.Sprintf("%s (%d-%d月): %s", se.Name, se.StartMonth, se.EndMonth, se.Description))
-				}
+	overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
+	if err == nil {
+		for _, p := range overview.Phases {
+			region := getStr(p, "region")
+			startDate := getStr(p, "startDate")
+			if region == "" || startDate == "" {
+				continue
+			}
+			month := monthFromDate(startDate)
+			wc, wcErr := a.graphClient.GetWeatherContext(ctx, region, month)
+			if wcErr != nil || wc == nil {
+				continue
+			}
+			for _, cd := range wc.ClimateData {
+				notes.weatherNotes = append(notes.weatherNotes,
+					fmt.Sprintf("%s %d月: %.0f-%.0f°C, 极端天气风险=%s",
+						region, cd.Month, cd.AvgLowTemp, cd.AvgHighTemp, cd.ExtremeWeatherRisk))
+			}
+			for _, c := range wc.Constraints {
+				notes.weatherNotes = append(notes.weatherNotes,
+					fmt.Sprintf("%s: %s(%s) — %s", region, c.ConstraintType, c.Severity, c.Description))
+			}
+			for _, se := range wc.SeasonalEvents {
+				notes.seasonalEvents = append(notes.seasonalEvents,
+					fmt.Sprintf("%s (%d-%d月): %s", se.Name, se.StartMonth, se.EndMonth, se.Description))
 			}
 		}
+	}
 	return notes
 }
 
@@ -1385,19 +1873,23 @@ func (a *graphWorkflowAgent) saveWorkflowDebugSnapshot(
 
 // --- Graph Splitting: Phase → Month → Week → Day (mechanical, no LLM) ---
 
-func (a *graphWorkflowAgent) runGraphSplitting(ctx context.Context, tripPlanID string) error {
+func (a *graphWorkflowAgent) runGraphSplitting(ctx context.Context, tripPlanID string, requirements ...TravelRequirementSnapshot) error {
 	overview, err := a.graphClient.GetTripOverview(ctx, tripPlanID)
 	if err != nil {
 		return fmt.Errorf("get trip overview: %w", err)
 	}
+	tripAnchors := deriveAnchorsForGraphSplitting(overview, requirements...)
 
 	globalDayIdx := 1
 	for _, p := range overview.Phases {
 		phaseID := getStr(p, "id")
 		phaseName := getStr(p, "name")
 		phaseRegion := getStr(p, "region")
+		phaseTheme := getStr(p, "theme")
 		phaseStart := getStr(p, "startDate")
 		phaseEnd := getStr(p, "endDate")
+		phaseAnchors := anchorsForPhase(tripAnchors, phaseName, phaseRegion, phaseTheme, len(overview.Phases) <= 1)
+		phaseDayOffset := 0
 
 		if phaseStart == "" || phaseEnd == "" {
 			log.Warnf("[graph-splitting] Phase %s missing dates, skipping", phaseName)
@@ -1472,18 +1964,24 @@ func (a *graphWorkflowAgent) runGraphSplitting(ctx context.Context, tripPlanID s
 				for _, d := range days {
 					dayID := fmt.Sprintf("day-%s-%d", phaseID[:8], d.dayIndex)
 					globalDayIdx++
+					phaseDayOffset++
+					dayPlan := anchoredDayPlanForPhase(phaseAnchors, phaseDayOffset, phaseName, phaseRegion)
 					_, err := a.graphClient.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 						_, err := tx.Run(ctx,
 							`MATCH (w:Week {id: $weekID})
 							 CREATE (w)-[:HAS_DAY]->(d:Day {
 								id: $id, date: $date, dayIndex: $dayIndex, theme: $theme,
-								intensity: $intensity, primaryArea: $primaryArea, status: 'outlined'
+								intensity: $intensity, primaryArea: $primaryArea,
+								routeOverview: $routeOverview, thinkingNotes: $thinkingNotes,
+								status: 'outlined'
 							 }) RETURN d.id`,
 							map[string]any{
 								"weekID": weekID, "id": dayID,
 								"date": d.date, "dayIndex": d.dayIndex,
-								"theme": phaseName, "intensity": "均衡",
-								"primaryArea": phaseRegion,
+								"theme": dayPlan.Theme, "intensity": "均衡",
+								"primaryArea":   dayPlan.PrimaryArea,
+								"routeOverview": dayPlan.RouteOverview,
+								"thinkingNotes": dayPlan.ThinkingNotes,
 							})
 						return nil, err
 					})
@@ -1502,6 +2000,113 @@ func (a *graphWorkflowAgent) runGraphSplitting(ctx context.Context, tripPlanID s
 			len(overview2.Phases), len(overview2.Months), len(overview2.Weeks), len(overview2.Days))
 	}
 	return nil
+}
+
+type anchoredDayPlan struct {
+	Theme         string
+	PrimaryArea   string
+	RouteOverview string
+	ThinkingNotes string
+}
+
+func deriveAnchorsFromTripOverview(overview *graph.TripOverview) []DestinationAnchorSnapshot {
+	if overview == nil {
+		return nil
+	}
+	snap := TravelRequirementSnapshot{
+		DestinationScope: strings.Join(append([]string{
+			overview.TripPlan.Name,
+			overview.TripPlan.RawRequirements,
+		}, overview.TripPlan.MustVisit...), " "),
+		TotalDays:     overview.TripPlan.TotalDays,
+		TransportMode: overview.TripPlan.TransportMode,
+		TravelStyle:   append([]string{overview.TripPlan.TravelStyle}, overview.TripPlan.Interests...),
+		MustVisit:     append([]string(nil), overview.TripPlan.MustVisit...),
+	}
+	enrichRequirementWithDeterministicFields(&snap, snap.DestinationScope)
+	return snap.DestinationAnchors
+}
+
+func deriveAnchorsForGraphSplitting(overview *graph.TripOverview, requirements ...TravelRequirementSnapshot) []DestinationAnchorSnapshot {
+	if len(requirements) > 0 {
+		req := requirements[0]
+		if len(req.DestinationAnchors) == 0 {
+			enrichRequirementWithDeterministicFields(&req, strings.Join([]string{
+				req.DestinationScope,
+				strings.Join(req.MustVisit, " "),
+			}, " "))
+		}
+		if len(req.DestinationAnchors) > 0 {
+			return req.DestinationAnchors
+		}
+	}
+	return deriveAnchorsFromTripOverview(overview)
+}
+
+func anchorsForPhase(anchors []DestinationAnchorSnapshot, phaseName, phaseRegion, phaseTheme string, allowAll bool) []DestinationAnchorSnapshot {
+	text := strings.Join([]string{phaseName, phaseRegion, phaseTheme}, " ")
+	var matched []DestinationAnchorSnapshot
+	for _, anchor := range anchors {
+		if anchor.Kind == "destination" {
+			continue
+		}
+		if phaseTextMatchesAnchorDestination(text, anchor.Destination) || strings.Contains(text, anchor.Name) {
+			matched = append(matched, anchor)
+		}
+	}
+	if len(matched) == 0 && allowAll {
+		for _, anchor := range anchors {
+			if anchor.Kind != "destination" {
+				matched = append(matched, anchor)
+			}
+		}
+	}
+	sort.SliceStable(matched, func(i, j int) bool {
+		return matched[i].Priority > matched[j].Priority
+	})
+	return dedupeDestinationAnchors(matched)
+}
+
+func phaseTextMatchesAnchorDestination(text, destination string) bool {
+	if destination != "" && strings.Contains(text, destination) {
+		return true
+	}
+	switch destination {
+	case "香格里拉":
+		return containsAny(text, []string{"迪庆", "滇西北", "梅里", "德钦"})
+	case "稻城亚丁":
+		return containsAny(text, []string{"亚丁", "稻城", "川西", "甘孜"})
+	case "林芝":
+		return containsAny(text, []string{"林芝", "藏东南", "西藏东南", "鲁朗", "巴松措", "南迦巴瓦"})
+	default:
+		return false
+	}
+}
+
+func anchoredDayPlanForPhase(anchors []DestinationAnchorSnapshot, phaseDayOffset int, phaseName, phaseRegion string) anchoredDayPlan {
+	fallbackArea := firstNonEmptyString(phaseRegion, phaseName)
+	if len(anchors) == 0 {
+		return anchoredDayPlan{
+			Theme:         phaseName,
+			PrimaryArea:   fallbackArea,
+			RouteOverview: fmt.Sprintf("围绕%s展开，当天地点需要通过地图搜索复核。", fallbackArea),
+			ThinkingNotes: "未匹配到内置自然锚点，按阶段区域生成日级搜索。",
+		}
+	}
+	if phaseDayOffset <= 0 {
+		phaseDayOffset = 1
+	}
+	anchor := anchors[(phaseDayOffset-1)%len(anchors)]
+	return anchoredDayPlan{
+		Theme:         fmt.Sprintf("%s自然风光：%s", defaultIfEmpty(anchor.Destination, fallbackArea), anchor.Name),
+		PrimaryArea:   anchor.Name,
+		RouteOverview: fmt.Sprintf("围绕%s展开自然风光体验；它是%s的核心候选锚点，后续只用真实 POI 坐标上图。", anchor.Name, defaultIfEmpty(anchor.Destination, fallbackArea)),
+		ThinkingNotes: strings.TrimSpace(strings.Join([]string{
+			"anchor=" + anchor.Name,
+			"destination=" + anchor.Destination,
+			"reason=" + anchor.Reason,
+		}, "；")),
+	}
 }
 
 // --- Month/Week/Day splitting helpers ---
