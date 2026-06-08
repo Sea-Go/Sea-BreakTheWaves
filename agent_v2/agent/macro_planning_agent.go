@@ -24,7 +24,7 @@ const macroPlanningInstruction = `
 
 ## 允许的操作（仅以下 4 个工具）
 1. create_trip_plan — 创建 TripPlan 根节点，必须使用上述 trip_plan_id
-2. split_parent_node — 拆分 TripPlan → Phase（3-8 个 Phase）
+2. split_parent_node — 拆分 TripPlan → Phase（1-8 个 Phase）
 3. get_weather_context — 查询区域气候数据
 4. write_climate_data — 写入气候数据
 
@@ -35,12 +35,13 @@ const macroPlanningInstruction = `
 - 生成完整旅行方案文本
 
 ## Phase 规划规则
-- 规划 3-8 个 Phase，每个 Phase 包含 region, season, theme, dayCount
+- 规划 1-8 个 Phase，每个 Phase 包含 region, season, theme, dayCount
+- 1-2 天短行程允许 1 个 Phase；3-5 天行程通常 2-3 个 Phase；更长行程再拆成 3-8 个 Phase
 - Phase dayCount 之和必须等于 total_days
 - Phase seq 从 1 开始连续编号
 - 使用气候数据驱动 Phase 拆分
 - Phase 必须严格围绕用户 destination_scope、must_visit 和 destination_anchors，不得引入明显无关城市
-- 出发地只可作为路线起点，不可把无关远方城市扩展为目的地 Phase
+- 出发地只可作为路线起点或交通衔接；若出发地不在目的地范围内，不要把它填入 Phase.region
 
 ## 输出格式
 完成所有 Phase 创建后，只输出这一行（不要输出其他任何内容）：

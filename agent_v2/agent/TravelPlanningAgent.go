@@ -32,7 +32,7 @@ const graphInstruction = `
 
 ## MacroPlanning 阶段（仅允许以下操作）
 1. 基于需求快照创建 TripPlan（create_trip_plan，绑定 userId/sessionId/requestId）
-2. 规划 3-8 个 Phase（region, season, theme, dayCount）
+2. 规划 1-8 个 Phase（region, season, theme, dayCount；短行程可只保留 1 个 Phase）
 3. 使用 get_weather_context + dili360-agent 做气候驱动拆分
 
 ## 禁止
