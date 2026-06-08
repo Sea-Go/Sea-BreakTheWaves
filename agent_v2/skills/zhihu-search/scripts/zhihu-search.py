@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "https://developer.zhihu.com"
 REQUEST_TIMEOUT_SECONDS = 5
-MAX_SUMMARY_CHARS = 500
+MAX_SUMMARY_CHARS = 900
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")

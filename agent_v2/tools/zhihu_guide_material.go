@@ -33,6 +33,7 @@ type ZhihuGuideQuery struct {
 type ZhihuGuideSource struct {
 	Query  string `json:"query"`
 	Intent string `json:"intent"`
+	Scope  string `json:"scope"`
 }
 
 type ZhihuGuideCandidate struct {
@@ -46,6 +47,7 @@ type ZhihuGuideCandidate struct {
 	Sources      []ZhihuGuideSource  `json:"sources"`
 	SourceQuery  string              `json:"source_query"`
 	SourceIntent string              `json:"source_intent"`
+	SearchScope  string              `json:"search_scope"`
 	URLHash      string              `json:"url_hash"`
 	IsArticle    bool                `json:"is_article"`
 	Score        float64             `json:"score"`
@@ -56,12 +58,14 @@ type ZhihuGuideCandidate struct {
 }
 
 type ZhihuGuideStats struct {
-	RawCount      int `json:"raw_count"`
-	DedupedCount  int `json:"deduped_count"`
-	AcceptedCount int `json:"accepted_count"`
-	ReviewCount   int `json:"review_count"`
-	RejectedCount int `json:"rejected_count"`
-	SelectedCount int `json:"selected_count"`
+	RawCount             int `json:"raw_count"`
+	ZhihuSearchRawCount  int `json:"zhihu_search_raw_count"`
+	GlobalSearchRawCount int `json:"global_search_raw_count"`
+	DedupedCount         int `json:"deduped_count"`
+	AcceptedCount        int `json:"accepted_count"`
+	ReviewCount          int `json:"review_count"`
+	RejectedCount        int `json:"rejected_count"`
+	SelectedCount        int `json:"selected_count"`
 }
 
 type ZhihuGuideRun struct {
@@ -84,13 +88,17 @@ type ZhihuGuideLLMInput struct {
 }
 
 type ZhihuGuideLLMArticle struct {
-	Intent     string   `json:"intent"`
-	Title      string   `json:"title"`
-	URL        string   `json:"url"`
-	AuthorName string   `json:"author_name"`
-	Summary    string   `json:"summary"`
-	Score      float64  `json:"score"`
-	Evidence   []string `json:"evidence"`
+	Intent        string   `json:"intent"`
+	SearchScope   string   `json:"search_scope"`
+	Title         string   `json:"title"`
+	URL           string   `json:"url"`
+	AuthorName    string   `json:"author_name"`
+	Summary       string   `json:"summary"`
+	ContentBrief  string   `json:"content_brief"`
+	KeyPoints     []string `json:"key_points"`
+	SourceSignals []string `json:"source_signals"`
+	Score         float64  `json:"score"`
+	Evidence      []string `json:"evidence"`
 }
 
 type ZhihuGuideQueryError struct {
@@ -141,6 +149,10 @@ type zhihuGuideSearcher interface {
 	Search(context.Context, ZhihuSearchInput) (ZhihuSearchResult, error)
 }
 
+type zhihuGuideGlobalSearcher interface {
+	GlobalSearch(context.Context, ZhihuSearchInput) (ZhihuSearchResult, error)
+}
+
 type ZhihuGuideMaterialInput struct {
 	Topic                string   `json:"topic" jsonschema:"description=攻略主题，例如 大阪旅游攻略、东京亲子游"`
 	QueryCount           int      `json:"query_count,omitempty" jsonschema:"description=搜索词数量，默认使用配置，建议 8-12"`
@@ -154,19 +166,21 @@ type ZhihuGuideMaterialInput struct {
 }
 
 type ZhihuGuideMaterialResult struct {
-	RunID            string                       `json:"run_id"`
-	Topic            string                       `json:"topic"`
-	QueryCount       int                          `json:"query_count"`
-	RawCount         int                          `json:"raw_count"`
-	DedupedCount     int                          `json:"deduped_count"`
-	ReviewPoolCount  int                          `json:"review_pool_count"`
-	SelectedCount    int                          `json:"selected_count"`
-	SelectedForLLM   ZhihuGuideLLMInput           `json:"selected_for_llm"`
-	ReviewCandidates []ZhihuGuideCandidate        `json:"review_candidates,omitempty"`
-	ReviewDecisions  ZhihuGuideReviewDecisionFile `json:"review_decisions"`
-	QueryPlan        []ZhihuGuideQuery            `json:"query_plan"`
-	Errors           []ZhihuGuideQueryError       `json:"errors,omitempty"`
-	Message          string                       `json:"message"`
+	RunID                string                       `json:"run_id"`
+	Topic                string                       `json:"topic"`
+	QueryCount           int                          `json:"query_count"`
+	RawCount             int                          `json:"raw_count"`
+	ZhihuSearchRawCount  int                          `json:"zhihu_search_raw_count"`
+	GlobalSearchRawCount int                          `json:"global_search_raw_count"`
+	DedupedCount         int                          `json:"deduped_count"`
+	ReviewPoolCount      int                          `json:"review_pool_count"`
+	SelectedCount        int                          `json:"selected_count"`
+	SelectedForLLM       ZhihuGuideLLMInput           `json:"selected_for_llm"`
+	ReviewCandidates     []ZhihuGuideCandidate        `json:"review_candidates,omitempty"`
+	ReviewDecisions      ZhihuGuideReviewDecisionFile `json:"review_decisions"`
+	QueryPlan            []ZhihuGuideQuery            `json:"query_plan"`
+	Errors               []ZhihuGuideQueryError       `json:"errors,omitempty"`
+	Message              string                       `json:"message"`
 }
 
 func CollectZhihuGuideMaterial(ctx context.Context, zhihuCfg config.ZhihuConfig, topic string) (ZhihuGuideRun, error) {
@@ -244,22 +258,40 @@ func collectZhihuGuideMaterial(ctx context.Context, searcher zhihuGuideSearcher,
 	for _, query := range queryPlan {
 		result, err := searcher.Search(ctx, ZhihuSearchInput{Query: query.Query, Count: opts.PerQueryCount})
 		if err != nil {
-			run.Errors = append(run.Errors, ZhihuGuideQueryError{Query: query.Query, Error: err.Error()})
+			run.Errors = append(run.Errors, ZhihuGuideQueryError{Query: query.Query, Error: "zhihu_search: " + err.Error()})
+		} else if result.Code != 0 {
+			run.Errors = append(run.Errors, ZhihuGuideQueryError{Query: query.Query, Error: "zhihu_search: " + result.Message})
+		} else {
+			for _, item := range result.Items {
+				candidate := candidateFromSearchItem(item, query, "zhihu_search")
+				run.RawCandidates = append(run.RawCandidates, candidate)
+			}
+		}
+
+		globalSearcher, ok := searcher.(zhihuGuideGlobalSearcher)
+		if !ok {
+			continue
+		}
+		result, err = globalSearcher.GlobalSearch(ctx, ZhihuSearchInput{Query: query.Query, Count: opts.PerQueryCount})
+		if err != nil {
+			run.Errors = append(run.Errors, ZhihuGuideQueryError{Query: query.Query, Error: "global_search: " + err.Error()})
 			continue
 		}
 		if result.Code != 0 {
-			run.Errors = append(run.Errors, ZhihuGuideQueryError{Query: query.Query, Error: result.Message})
+			run.Errors = append(run.Errors, ZhihuGuideQueryError{Query: query.Query, Error: "global_search: " + result.Message})
 			continue
 		}
 		for _, item := range result.Items {
-			candidate := candidateFromSearchItem(item, query)
+			candidate := candidateFromSearchItem(item, query, "global_search")
 			run.RawCandidates = append(run.RawCandidates, candidate)
 		}
 	}
 
 	run.Stats.RawCount = len(run.RawCandidates)
+	run.Stats.ZhihuSearchRawCount, run.Stats.GlobalSearchRawCount = countZhihuGuideRawScopes(run.RawCandidates)
 	run.FilteredCandidates = scoreZhihuGuideCandidates(dedupZhihuGuideCandidates(run.RawCandidates), topic, opts)
 	run.Stats = computeZhihuGuideStats(run.Stats.RawCount, run.FilteredCandidates)
+	run.Stats.ZhihuSearchRawCount, run.Stats.GlobalSearchRawCount = countZhihuGuideRawScopes(run.RawCandidates)
 	run.ReviewPool = selectZhihuGuideReviewPool(run.FilteredCandidates, opts.ReviewPoolSize)
 	selected := selectZhihuGuideArticles(run.ReviewPool, opts.SelectedArticleCount)
 	run.SelectedForLLM = buildZhihuGuideLLMInput(topic, selected)
@@ -515,7 +547,7 @@ func normalizeGuideOptions(opts ZhihuGuideRunOptions) ZhihuGuideRunOptions {
 	})
 }
 
-func candidateFromSearchItem(item ZhihuSearchItem, source ZhihuGuideQuery) ZhihuGuideCandidate {
+func candidateFromSearchItem(item ZhihuSearchItem, source ZhihuGuideQuery, scope string) ZhihuGuideCandidate {
 	normalizedURL := normalizeZhihuURL(item.URL)
 	raw := item
 	return ZhihuGuideCandidate{
@@ -526,9 +558,10 @@ func candidateFromSearchItem(item ZhihuSearchItem, source ZhihuGuideQuery) Zhihu
 		VoteUpCount:  item.VoteUpCount,
 		CommentCount: item.CommentCount,
 		EditTime:     item.EditTime,
-		Sources:      []ZhihuGuideSource{{Query: source.Query, Intent: source.Intent}},
+		Sources:      []ZhihuGuideSource{{Query: source.Query, Intent: source.Intent, Scope: scope}},
 		SourceQuery:  source.Query,
 		SourceIntent: source.Intent,
+		SearchScope:  scope,
 		URLHash:      hashString(normalizedURL),
 		IsArticle:    isZhihuArticleURL(item.URL),
 		Raw:          &raw,
@@ -634,6 +667,10 @@ func scoreZhihuGuideCandidate(item ZhihuGuideCandidate, topic string, opts Zhihu
 		score += 3
 		reasons = append(reasons, "非专栏内容 +3.0")
 	}
+	if item.SearchScope == "global_search" {
+		score += 6
+		reasons = append(reasons, "global_search supplement +6.0")
+	}
 	if containsAny(item.AuthorName, opts.TrustedAuthors) {
 		score += 5
 		reasons = append(reasons, "作者命中白名单 +5.0")
@@ -724,13 +761,17 @@ func buildZhihuGuideLLMInput(topic string, selected []ZhihuGuideCandidate) Zhihu
 			evidence = evidence[:4]
 		}
 		input.Items = append(input.Items, ZhihuGuideLLMArticle{
-			Intent:     classifyGuideIntent(item),
-			Title:      item.Title,
-			URL:        item.URL,
-			AuthorName: item.AuthorName,
-			Summary:    item.Summary,
-			Score:      item.Score,
-			Evidence:   append([]string(nil), evidence...),
+			Intent:        classifyGuideIntent(item),
+			SearchScope:   item.SearchScope,
+			Title:         zhihuLLMTitle(item),
+			URL:           item.URL,
+			AuthorName:    item.AuthorName,
+			Summary:       item.Summary,
+			ContentBrief:  buildGuideContentBrief(item),
+			KeyPoints:     buildGuideKeyPoints(item),
+			SourceSignals: buildZhihuSourceSignals(item),
+			Score:         item.Score,
+			Evidence:      append([]string(nil), evidence...),
 		})
 	}
 	return input
@@ -751,19 +792,21 @@ func buildZhihuGuideMaterialResult(run ZhihuGuideRun) ZhihuGuideMaterialResult {
 		message += fmt.Sprintf(" 有 %d 个 query 失败，详见 errors。", len(run.Errors))
 	}
 	return ZhihuGuideMaterialResult{
-		RunID:            run.RunID,
-		Topic:            run.Topic,
-		QueryCount:       len(run.QueryPlan),
-		RawCount:         run.Stats.RawCount,
-		DedupedCount:     run.Stats.DedupedCount,
-		ReviewPoolCount:  len(run.ReviewPool),
-		SelectedCount:    run.Stats.SelectedCount,
-		SelectedForLLM:   run.SelectedForLLM,
-		ReviewCandidates: append([]ZhihuGuideCandidate(nil), reviewCandidates...),
-		ReviewDecisions:  BuildZhihuGuideReviewDecisions(run),
-		QueryPlan:        run.QueryPlan,
-		Errors:           run.Errors,
-		Message:          message,
+		RunID:                run.RunID,
+		Topic:                run.Topic,
+		QueryCount:           len(run.QueryPlan),
+		RawCount:             run.Stats.RawCount,
+		ZhihuSearchRawCount:  run.Stats.ZhihuSearchRawCount,
+		GlobalSearchRawCount: run.Stats.GlobalSearchRawCount,
+		DedupedCount:         run.Stats.DedupedCount,
+		ReviewPoolCount:      len(run.ReviewPool),
+		SelectedCount:        run.Stats.SelectedCount,
+		SelectedForLLM:       run.SelectedForLLM,
+		ReviewCandidates:     append([]ZhihuGuideCandidate(nil), reviewCandidates...),
+		ReviewDecisions:      BuildZhihuGuideReviewDecisions(run),
+		QueryPlan:            run.QueryPlan,
+		Errors:               run.Errors,
+		Message:              message,
 	}
 }
 
@@ -808,6 +851,18 @@ func computeZhihuGuideStats(rawCount int, items []ZhihuGuideCandidate) ZhihuGuid
 		}
 	}
 	return stats
+}
+
+func countZhihuGuideRawScopes(items []ZhihuGuideCandidate) (zhihuCount, globalCount int) {
+	for _, item := range items {
+		switch item.SearchScope {
+		case "global_search":
+			globalCount++
+		default:
+			zhihuCount++
+		}
+	}
+	return zhihuCount, globalCount
 }
 
 func BuildZhihuGuideRunID(topic string, now time.Time) string {
@@ -933,10 +988,10 @@ func containsAny(text string, needles []string) bool {
 func appendMissingSources(existing, incoming []ZhihuGuideSource) []ZhihuGuideSource {
 	seen := map[string]bool{}
 	for _, source := range existing {
-		seen[source.Query+"|"+source.Intent] = true
+		seen[source.Query+"|"+source.Intent+"|"+source.Scope] = true
 	}
 	for _, source := range incoming {
-		key := source.Query + "|" + source.Intent
+		key := source.Query + "|" + source.Intent + "|" + source.Scope
 		if !seen[key] {
 			existing = append(existing, source)
 			seen[key] = true
@@ -1035,6 +1090,87 @@ func firstGuideIntent(item ZhihuGuideCandidate) string {
 		return item.Sources[0].Intent
 	}
 	return "other"
+}
+
+func zhihuLLMTitle(item ZhihuGuideCandidate) string {
+	if item.SearchScope != "global_search" {
+		return item.Title
+	}
+	return "[global_search] " + item.Title
+}
+
+func buildGuideContentBrief(item ZhihuGuideCandidate) string {
+	parts := []string{}
+	if strings.TrimSpace(item.Title) != "" {
+		parts = append(parts, "Title: "+strings.TrimSpace(item.Title))
+	}
+	if strings.TrimSpace(item.Summary) != "" {
+		parts = append(parts, "Content: "+strings.TrimSpace(item.Summary))
+	}
+	return truncateRunes(compactSpace(strings.Join(parts, " | ")), 900)
+}
+
+func buildGuideKeyPoints(item ZhihuGuideCandidate) []string {
+	return firstTextFragments(item.Summary, 4, 160)
+}
+
+func buildZhihuSourceSignals(item ZhihuGuideCandidate) []string {
+	signals := []string{}
+	if item.SearchScope != "" {
+		signals = append(signals, "source="+item.SearchScope)
+	}
+	if item.VoteUpCount > 0 {
+		signals = append(signals, fmt.Sprintf("votes=%d", item.VoteUpCount))
+	}
+	if item.CommentCount > 0 {
+		signals = append(signals, fmt.Sprintf("comments=%d", item.CommentCount))
+	}
+	if item.IsArticle {
+		signals = append(signals, "type=article")
+	} else {
+		signals = append(signals, "type=answer_or_web")
+	}
+	if len(item.Sources) > 1 {
+		signals = append(signals, fmt.Sprintf("matched_queries=%d", len(item.Sources)))
+	}
+	return signals
+}
+
+func firstTextFragments(text string, limit int, maxRunes int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" || limit <= 0 {
+		return nil
+	}
+	splitter := func(r rune) bool {
+		return r == '。' || r == '！' || r == '？' || r == '；' || r == ';' || r == '\n'
+	}
+	rawParts := strings.FieldsFunc(text, splitter)
+	out := make([]string, 0, limit)
+	for _, part := range rawParts {
+		part = compactSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, truncateRunes(part, maxRunes))
+		if len(out) >= limit {
+			return out
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, truncateRunes(compactSpace(text), maxRunes))
+	}
+	return out
+}
+
+func truncateRunes(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
 func escapeGuideMarkdownCell(value string) string {

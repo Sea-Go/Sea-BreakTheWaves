@@ -259,13 +259,28 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 	coarseCandidates, err := ranker.RecallCoarseArticleCandidates(ctxCoarse, vec, req.CoarseRecallK)
 	coarseMs := time.Since(coarseStart).Milliseconds()
 	if err != nil {
-		spCoarse.End(zlog.StatusError, err, zap.Int64("latency_ms", coarseMs))
-		expl.Add("retrieval.coarse_recall.error", map[string]any{"error": err.Error(), "latency_ms": coarseMs})
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
+		if !infra.IsMilvusUnavailableError(err) {
+			spCoarse.End(zlog.StatusError, err, zap.Int64("latency_ms", coarseMs))
+			expl.Add("retrieval.coarse_recall.error", map[string]any{"error": err.Error(), "latency_ms": coarseMs})
+			respOut.Explanation = expl.Text()
+			if req.Explain {
+				respOut.ExplainTrace = expl.Trace()
+			}
+			return respOut, err
 		}
-		return respOut, err
+
+		spCoarse.End(zlog.StatusOK, nil,
+			zap.Int64("latency_ms", coarseMs),
+			zap.Bool("degraded", true),
+			zap.String("reason", "vector_store_unavailable"),
+		)
+		expl.Add("retrieval.coarse_recall", map[string]any{
+			"candidate_count": 0,
+			"degraded":        true,
+			"reason":          "vector_store_unavailable",
+			"latency_ms":      coarseMs,
+		})
+		return a.returnKeywordFallback(ctx, req, respOut, expl, semanticQuery, "vector_store_unavailable")
 	}
 	spCoarse.End(zlog.StatusOK, nil,
 		zap.Int64("latency_ms", coarseMs),
@@ -284,12 +299,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		config.Cfg.Search.MaxArticleCandidates,
 	)
 	if len(articleIDs) == 0 {
-		respOut.Status = "ok"
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, nil
+		return a.returnKeywordFallback(ctx, req, respOut, expl, semanticQuery, "vector_recall_empty")
 	}
 
 	ctxFine, spFine := zlog.StartSpan(ctx, "retrieval.fine_recall")
@@ -297,13 +307,28 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 	fineCandidates, err := ranker.RecallFineCandidatesByArticleIDs(ctxFine, vec, articleIDs, req.RecallK)
 	fineMs := time.Since(fineStart).Milliseconds()
 	if err != nil {
-		spFine.End(zlog.StatusError, err, zap.Int64("latency_ms", fineMs))
-		expl.Add("retrieval.fine_recall.error", map[string]any{"error": err.Error(), "latency_ms": fineMs})
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
+		if !infra.IsMilvusUnavailableError(err) {
+			spFine.End(zlog.StatusError, err, zap.Int64("latency_ms", fineMs))
+			expl.Add("retrieval.fine_recall.error", map[string]any{"error": err.Error(), "latency_ms": fineMs})
+			respOut.Explanation = expl.Text()
+			if req.Explain {
+				respOut.ExplainTrace = expl.Trace()
+			}
+			return respOut, err
 		}
-		return respOut, err
+
+		spFine.End(zlog.StatusOK, nil,
+			zap.Int64("latency_ms", fineMs),
+			zap.Bool("degraded", true),
+			zap.String("reason", "vector_store_unavailable"),
+		)
+		expl.Add("retrieval.fine_recall", map[string]any{
+			"candidate_count": 0,
+			"degraded":        true,
+			"reason":          "vector_store_unavailable",
+			"latency_ms":      fineMs,
+		})
+		return a.returnKeywordFallback(ctx, req, respOut, expl, semanticQuery, "vector_store_unavailable")
 	}
 	spFine.End(zlog.StatusOK, nil,
 		zap.Int64("latency_ms", fineMs),
@@ -316,12 +341,7 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 		"latency_ms":      fineMs,
 	})
 	if len(fineCandidates) == 0 {
-		respOut.Status = "ok"
-		respOut.Explanation = expl.Text()
-		if req.Explain {
-			respOut.ExplainTrace = expl.Trace()
-		}
-		return respOut, nil
+		return a.returnKeywordFallback(ctx, req, respOut, expl, semanticQuery, "fine_recall_empty")
 	}
 
 	vectorScoreByChunk := make(map[string]float32, len(fineCandidates))
@@ -415,6 +435,63 @@ func (a *ContentSearchAgent) Search(ctx context.Context, req ContentSearchReques
 
 	respOut.Status = "ok"
 	respOut.Items = items
+	respOut.Explanation = expl.Text()
+	if req.Explain {
+		respOut.ExplainTrace = expl.Trace()
+	}
+	return respOut, nil
+}
+
+func (a *ContentSearchAgent) returnKeywordFallback(
+	ctx context.Context,
+	req ContentSearchRequest,
+	respOut ContentSearchResponse,
+	expl *explainBuilder,
+	query string,
+	reason string,
+) (ContentSearchResponse, error) {
+	query = strings.TrimSpace(respOut.Intent.SearchText)
+	if query == "" {
+		query = strings.TrimSpace(req.Query)
+	}
+	start := time.Now()
+	matches, err := a.articleRepo.SearchArticlesByKeyword(ctx, query, req.TopK)
+	latencyMs := time.Since(start).Milliseconds()
+	if err != nil {
+		expl.Add("fallback.keyword_search.error", map[string]any{
+			"error":      err.Error(),
+			"latency_ms": latencyMs,
+			"reason":     reason,
+		})
+		respOut.Explanation = expl.Text()
+		if req.Explain {
+			respOut.ExplainTrace = expl.Trace()
+		}
+		return respOut, err
+	}
+
+	respOut.Status = "ok"
+	respOut.Items = make([]ContentSearchItem, 0, len(matches))
+	for _, match := range matches {
+		respOut.Items = append(respOut.Items, ContentSearchItem{
+			ArticleID:    match.ArticleID,
+			Title:        match.Title,
+			Cover:        match.Cover,
+			TypeTags:     match.TypeTags,
+			Tags:         match.Tags,
+			H2:           match.H2,
+			Snippet:      compactSnippet(match.Snippet, 220),
+			ChunkID:      match.ChunkID,
+			ArticleScore: match.Score,
+		})
+	}
+
+	expl.Add("fallback.keyword_search", map[string]any{
+		"returned_article_count": len(respOut.Items),
+		"article_ids":            takeItemArticleIDs(respOut.Items, 8),
+		"latency_ms":             latencyMs,
+		"reason":                 reason,
+	})
 	respOut.Explanation = expl.Text()
 	if req.Explain {
 		respOut.ExplainTrace = expl.Trace()

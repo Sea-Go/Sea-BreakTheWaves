@@ -23,7 +23,7 @@ func Milvus() *milvusclient.Client {
 }
 
 func MilvusInit() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	cli, err := milvusclient.New(ctx, &milvusclient.ClientConfig{
@@ -36,10 +36,17 @@ func MilvusInit() error {
 		return err
 	}
 
-	if err := cli.CreateDatabase(ctx, milvusclient.NewCreateDatabaseOption(config.Cfg.Milvus.DBName)); err != nil {
-		zlog.L().Warn("创建 Milvus 数据库失败，可能已存在", zap.Error(err), zap.String("db", config.Cfg.Milvus.DBName))
+	dbName := strings.TrimSpace(config.Cfg.Milvus.DBName)
+	if dbName == "" {
+		dbName = "default"
 	}
-	if err := cli.UseDatabase(ctx, milvusclient.NewUseDatabaseOption(config.Cfg.Milvus.DBName)); err != nil {
+	if err := ensureDatabase(cli, dbName); err != nil {
+		return err
+	}
+
+	useCtx, useCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer useCancel()
+	if err := cli.UseDatabase(useCtx, milvusclient.NewUseDatabaseOption(dbName)); err != nil {
 		zlog.L().Error("切换 Milvus 数据库失败", zap.Error(err), zap.String("db", config.Cfg.Milvus.DBName))
 		return err
 	}
@@ -57,24 +64,8 @@ func MilvusInit() error {
 	dim := config.Cfg.Milvus.Collections.Dim
 	metric := parseMetric(config.Cfg.Milvus.Collections.Metric)
 
-	if err := ensureCollection(ctx, coarseName, vectorschema.RecllCandidateTableName(coarseName, dim), metric); err != nil {
-		return err
-	}
-	if err := ensureCollection(ctx, fineName, vectorschema.RecallPreciseTableName(fineName, dim), metric); err != nil {
-		return err
-	}
-	if err := ensureCollection(ctx, imageName, vectorschema.RecallPreciseTableName(imageName, dim), metric); err != nil {
-		return err
-	}
-	if err := ensureCollection(ctx, memoryChunksName, vectorschema.UserMemoryChunksTableName(memoryChunksName, dim), metric); err != nil {
-		return err
-	}
-	if err := ensureCollection(ctx, userHistoryName, vectorschema.UserRecHistoryTableName(userHistoryName, dim), metric); err != nil {
-		return err
-	}
-
 	zlog.L().Info(
-		"Milvus 初始化完成",
+		"Milvus 客户端初始化完成，集合初始化后台执行",
 		zap.String("db", config.Cfg.Milvus.DBName),
 		zap.String("coarse", coarseName),
 		zap.String("fine", fineName),
@@ -83,6 +74,65 @@ func MilvusInit() error {
 		zap.String("user_history", userHistoryName),
 		zap.Int("dim", dim),
 	)
+
+	go func() {
+		initCtx, initCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer initCancel()
+
+		if err := ensureCollection(initCtx, coarseName, vectorschema.RecllCandidateTableName(coarseName, dim), metric); err != nil {
+			zlog.L().Warn("Milvus 集合初始化失败", zap.Error(err), zap.String("collection", coarseName))
+			return
+		}
+		if err := ensureCollection(initCtx, fineName, vectorschema.RecallPreciseTableName(fineName, dim), metric); err != nil {
+			zlog.L().Warn("Milvus 集合初始化失败", zap.Error(err), zap.String("collection", fineName))
+			return
+		}
+		if err := ensureCollection(initCtx, imageName, vectorschema.RecallPreciseTableName(imageName, dim), metric); err != nil {
+			zlog.L().Warn("Milvus 集合初始化失败", zap.Error(err), zap.String("collection", imageName))
+			return
+		}
+		if err := ensureCollection(initCtx, memoryChunksName, vectorschema.UserMemoryChunksTableName(memoryChunksName, dim), metric); err != nil {
+			zlog.L().Warn("Milvus 集合初始化失败", zap.Error(err), zap.String("collection", memoryChunksName))
+			return
+		}
+		if err := ensureCollection(initCtx, userHistoryName, vectorschema.UserRecHistoryTableName(userHistoryName, dim), metric); err != nil {
+			zlog.L().Warn("Milvus 集合初始化失败", zap.Error(err), zap.String("collection", userHistoryName))
+			return
+		}
+
+		zlog.L().Info(
+			"Milvus 集合初始化完成",
+			zap.String("db", config.Cfg.Milvus.DBName),
+			zap.String("coarse", coarseName),
+			zap.String("fine", fineName),
+			zap.String("image", imageName),
+			zap.String("memory_chunks", memoryChunksName),
+			zap.String("user_history", userHistoryName),
+			zap.Int("dim", dim),
+		)
+	}()
+	return nil
+}
+
+func ensureDatabase(cli *milvusclient.Client, dbName string) error {
+	listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	databases, err := cli.ListDatabase(listCtx, milvusclient.NewListDatabaseOption())
+	listCancel()
+	if err != nil {
+		zlog.L().Warn("列出 Milvus 数据库失败，尝试直接创建", zap.Error(err), zap.String("db", dbName))
+	} else {
+		for _, name := range databases {
+			if name == dbName {
+				return nil
+			}
+		}
+	}
+
+	createCtx, createCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer createCancel()
+	if err := cli.CreateDatabase(createCtx, milvusclient.NewCreateDatabaseOption(dbName)); err != nil {
+		zlog.L().Warn("创建 Milvus 数据库失败，可能已存在", zap.Error(err), zap.String("db", dbName))
+	}
 	return nil
 }
 

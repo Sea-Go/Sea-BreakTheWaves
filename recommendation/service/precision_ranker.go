@@ -110,6 +110,18 @@ func (r *PrecisionRanker) MatchQuery(ctx context.Context, semanticQuery string, 
 		ExcludedArticleIDs: opt.ExcludedArticleIDs,
 	})
 	if err != nil {
+		if infra.IsMilvusUnavailableError(err) {
+			return QueryMatchResult{
+				CoarseCandidates:    []CoarseArticleCandidate{},
+				ArticleIDs:          []string{},
+				FineCandidates:      []VectorCandidate{},
+				PassedHits:          []RerankHit{},
+				VectorScoreByChunk:  map[string]float32{},
+				CoarseRankByArticle: map[string]int{},
+				FineRankByChunk:     map[string]int{},
+				SupportByArticle:    map[string]int{},
+			}, nil
+		}
 		return QueryMatchResult{}, err
 	}
 	coarseCandidates = BoostCoarseCandidatesByKeywords(coarseCandidates, opt.QueryText, opt.QueryKeywords)
@@ -131,6 +143,9 @@ func (r *PrecisionRanker) MatchQuery(ctx context.Context, semanticQuery string, 
 		ExcludedArticleIDs: opt.ExcludedArticleIDs,
 	})
 	if err != nil {
+		if infra.IsMilvusUnavailableError(err) {
+			return result, nil
+		}
 		return result, err
 	}
 	result.FineCandidates = fineCandidates
@@ -213,6 +228,9 @@ func (r *PrecisionRanker) RecallCoarseArticleCandidatesWithOptions(
 
 	rs, err := cli.Search(ctx, opt)
 	if err != nil {
+		if infra.IsMilvusUnavailableError(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if len(rs) == 0 {
@@ -287,6 +305,9 @@ func (r *PrecisionRanker) RecallFineCandidatesByArticleIDsWithOptions(
 
 	rs, err := cli.Search(ctx, opt)
 	if err != nil {
+		if infra.IsMilvusUnavailableError(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if len(rs) == 0 {

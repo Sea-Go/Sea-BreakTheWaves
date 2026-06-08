@@ -130,6 +130,8 @@ func zhihuGuideEvidence(resp zhihutools.ZhihuGuideMaterialResult) string {
 		"run_id=" + resp.RunID,
 		fmt.Sprintf("query_count=%d", resp.QueryCount),
 		fmt.Sprintf("raw_count=%d", resp.RawCount),
+		fmt.Sprintf("zhihu_search_raw_count=%d", resp.ZhihuSearchRawCount),
+		fmt.Sprintf("global_search_raw_count=%d", resp.GlobalSearchRawCount),
 		fmt.Sprintf("deduped_count=%d", resp.DedupedCount),
 		fmt.Sprintf("review_pool_count=%d", resp.ReviewPoolCount),
 		fmt.Sprintf("selected_count=%d", resp.SelectedCount),
@@ -140,6 +142,8 @@ func zhihuGuideEvidence(resp zhihutools.ZhihuGuideMaterialResult) string {
 			"first_title="+first.Title,
 			"first_url="+first.URL,
 			"first_intent="+first.Intent,
+			"first_content_brief="+truncateEvidence(first.ContentBrief, 260),
+			"first_key_points="+truncateEvidence(strings.Join(first.KeyPoints, " / "), 260),
 			fmt.Sprintf("first_score=%.1f", first.Score),
 		)
 	}
@@ -226,6 +230,14 @@ func joinEvidence(parts ...string) string {
 		}
 	}
 	return strings.Join(clean, "; ")
+}
+
+func truncateEvidence(value string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if maxRunes <= 0 || len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func escapeCell(value string) string {

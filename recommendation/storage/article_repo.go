@@ -131,6 +131,18 @@ type ArticleMeta struct {
 	Score     float32
 }
 
+type ArticleKeywordMatch struct {
+	ArticleID string
+	Title     string
+	Cover     string
+	TypeTags  string
+	Tags      string
+	Score     float32
+	ChunkID   string
+	H2        string
+	Snippet   string
+}
+
 func (r *ArticleRepo) GetArticlesByIDs(ctx context.Context, ids []string) ([]ArticleMeta, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -159,4 +171,94 @@ func (r *ArticleRepo) GetArticlesByIDs(ctx context.Context, ids []string) ([]Art
 		res = append(res, a)
 	}
 	return res, rows.Err()
+}
+
+func (r *ArticleRepo) SearchArticlesByKeyword(ctx context.Context, query string, limit int) ([]ArticleKeywordMatch, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []ArticleKeywordMatch{}, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		WITH q AS (
+			SELECT '%' || LOWER($1) || '%' AS pattern, LOWER($1) AS raw
+		)
+		SELECT
+			a.article_id,
+			a.title,
+			COALESCE(a.cover, ''),
+			COALESCE(a.type_tags, ''),
+			COALESCE(a.tags, ''),
+			a.score,
+			COALESCE(best.chunk_id, ''),
+			COALESCE(best.h2, ''),
+			COALESCE(best.content, '')
+		FROM articles a
+		CROSS JOIN q
+		LEFT JOIN LATERAL (
+			SELECT c.chunk_id, c.h2, c.content
+			FROM article_chunks c
+			WHERE c.article_id = a.article_id
+			  AND (
+				LOWER(COALESCE(c.h2, '')) LIKE q.pattern OR
+				LOWER(COALESCE(c.content, '')) LIKE q.pattern
+			  )
+			ORDER BY
+				CASE
+					WHEN LOWER(COALESCE(c.h2, '')) = q.raw THEN 0
+					WHEN LOWER(COALESCE(c.h2, '')) LIKE q.raw || '%' THEN 1
+					ELSE 2
+				END,
+				c.created_at DESC,
+				c.chunk_id DESC
+			LIMIT 1
+		) best ON TRUE
+		WHERE
+			LOWER(COALESCE(a.title, '')) LIKE q.pattern OR
+			LOWER(COALESCE(a.type_tags, '')) LIKE q.pattern OR
+			LOWER(COALESCE(a.tags, '')) LIKE q.pattern OR
+			best.chunk_id IS NOT NULL
+		ORDER BY
+			CASE
+				WHEN LOWER(COALESCE(a.title, '')) = q.raw THEN 0
+				WHEN LOWER(COALESCE(a.title, '')) LIKE q.raw || '%' THEN 1
+				WHEN LOWER(COALESCE(a.type_tags, '')) LIKE q.pattern THEN 2
+				WHEN LOWER(COALESCE(a.tags, '')) LIKE q.pattern THEN 3
+				ELSE 4
+			END,
+			a.score DESC,
+			a.created_at DESC,
+			a.article_id DESC
+		LIMIT $2
+	`, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	matches := make([]ArticleKeywordMatch, 0, limit)
+	for rows.Next() {
+		var match ArticleKeywordMatch
+		if err := rows.Scan(
+			&match.ArticleID,
+			&match.Title,
+			&match.Cover,
+			&match.TypeTags,
+			&match.Tags,
+			&match.Score,
+			&match.ChunkID,
+			&match.H2,
+			&match.Snippet,
+		); err != nil {
+			return nil, err
+		}
+		matches = append(matches, match)
+	}
+	return matches, rows.Err()
 }

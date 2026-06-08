@@ -13,9 +13,11 @@ var Cfg Config
 type Config struct {
 	Ali      AliConfig      `yaml:"ali"`
 	Zhihu    ZhihuConfig    `yaml:"zhihu"`
+	Bilibili BilibiliConfig `yaml:"bilibili"`
 	Postgres PostgresConfig `yaml:"postgres"`
 	Agent    AgentConfig    `yaml:"agent"`
 	Amap     AmapConfig     `yaml:"amap"`
+	Neo4j    Neo4jConfig    `yaml:"neo4j"`
 }
 
 func Load(path string) error {
@@ -37,18 +39,33 @@ func Init() error {
 }
 
 type AliConfig struct {
-	BaseURL       string `yaml:"baseurl"`
-	AnalysisModel string `yaml:"analysis_model"`
-	TestModel     string `yaml:"test_model"`
-	AmapModel     string `yaml:"amap_model"`
-	ApiKey        string `yaml:"apikey"`
+	BaseURL      string   `yaml:"baseurl"`
+	ApiKey       string   `yaml:"apikey"`
+	HighModels   []string `yaml:"high_models"`
+	MediumModels []string `yaml:"medium_models"`
+	LowModels    []string `yaml:"low_models"`
+}
+
+// ModelsForLevel 返回指定等级的模型列表。
+func (c AliConfig) ModelsForLevel(level int) []string {
+	switch level {
+	case 0: // ModelLevelHigh
+		return c.HighModels
+	case 1: // ModelLevelMedium
+		return c.MediumModels
+	case 2: // ModelLevelLow
+		return c.LowModels
+	default:
+		return nil
+	}
 }
 
 type ZhihuConfig struct {
-	AccessSecret   string                   `yaml:"access_secret"`
-	OpenAPIBaseURL string                   `yaml:"openapi_base_url"`
-	ZhihuSearchURL string                   `yaml:"zhihu_search_url"`
-	GuideMaterial  ZhihuGuideMaterialConfig `yaml:"guide_material"`
+	AccessSecret    string                   `yaml:"access_secret"`
+	OpenAPIBaseURL  string                   `yaml:"openapi_base_url"`
+	ZhihuSearchURL  string                   `yaml:"zhihu_search_url"`
+	GlobalSearchURL string                   `yaml:"global_search_url"`
+	GuideMaterial   ZhihuGuideMaterialConfig `yaml:"guide_material"`
 }
 
 type ZhihuGuideMaterialConfig struct {
@@ -67,6 +84,63 @@ type ZhihuGuideMaterialConfig struct {
 	NegativeKeywords     []string `yaml:"negative_keywords"`
 	BlockedAuthors       []string `yaml:"blocked_authors"`
 	TrustedAuthors       []string `yaml:"trusted_authors"`
+}
+
+type BilibiliConfig struct {
+	Cookie        string                      `yaml:"cookie"`
+	SearchTimeout int                         `yaml:"search_timeout"`
+	GuideMaterial BilibiliGuideMaterialConfig `yaml:"guide_material"`
+}
+
+type BilibiliGuideMaterialConfig struct {
+	QueryCount         int      `yaml:"query_count"`
+	PerQueryCount      int      `yaml:"per_query_count"`
+	ReviewPoolSize     int      `yaml:"review_pool_size"`
+	SelectedVideoCount int      `yaml:"selected_video_count"`
+	AcceptScore        float64  `yaml:"accept_score"`
+	ReviewScore        float64  `yaml:"review_score"`
+	MinSummaryChars    int      `yaml:"min_summary_chars"`
+	MinViewCount       int64    `yaml:"min_view_count"`
+	MaxAgeDays         int      `yaml:"max_age_days"`
+	MustKeywords       []string `yaml:"must_keywords"`
+	ShouldKeywords     []string `yaml:"should_keywords"`
+	NegativeKeywords   []string `yaml:"negative_keywords"`
+	BlockedAuthors     []string `yaml:"blocked_authors"`
+	TrustedAuthors     []string `yaml:"trusted_authors"`
+}
+
+func (c BilibiliGuideMaterialConfig) WithDefaults() BilibiliGuideMaterialConfig {
+	if c.QueryCount <= 0 {
+		c.QueryCount = 10
+	}
+	if c.PerQueryCount <= 0 {
+		c.PerQueryCount = 10
+	}
+	if c.PerQueryCount > 20 {
+		c.PerQueryCount = 20
+	}
+	if c.ReviewPoolSize <= 0 {
+		c.ReviewPoolSize = 30
+	}
+	if c.SelectedVideoCount <= 0 {
+		c.SelectedVideoCount = 12
+	}
+	if c.AcceptScore <= 0 {
+		c.AcceptScore = 70
+	}
+	if c.ReviewScore <= 0 {
+		c.ReviewScore = 45
+	}
+	if c.MinSummaryChars <= 0 {
+		c.MinSummaryChars = 10
+	}
+	if c.MinViewCount < 0 {
+		c.MinViewCount = 0
+	}
+	if c.MaxAgeDays <= 0 {
+		c.MaxAgeDays = 1095
+	}
+	return c
 }
 
 func (c ZhihuGuideMaterialConfig) WithDefaults() ZhihuGuideMaterialConfig {
@@ -133,6 +207,43 @@ type AmapConfig struct {
 type AmapRetryConfig struct {
 	MaxRetries     int     `yaml:"max_retries"`
 	BackoffSeconds float64 `yaml:"backoff_seconds"`
+}
+
+type Neo4jConfig struct {
+	URI             string `yaml:"uri"`
+	Username        string `yaml:"username"`
+	Password        string `yaml:"password"`
+	Database        string `yaml:"database"`
+	MaxPoolSize     int  `yaml:"max_pool_size"`
+	ConnectTimeout  int  `yaml:"connect_timeout"`
+	ReadTimeout     int  `yaml:"read_timeout"`
+	Enabled         bool `yaml:"enabled"`
+	MinDaysForSplit int  `yaml:"min_days_for_split"`
+}
+
+func (c Neo4jConfig) WithDefaults() Neo4jConfig {
+	if strings.TrimSpace(c.URI) == "" {
+		c.URI = "neo4j://localhost:7687"
+	}
+	if strings.TrimSpace(c.Username) == "" {
+		c.Username = "neo4j"
+	}
+	if strings.TrimSpace(c.Database) == "" {
+		c.Database = "neo4j"
+	}
+	if c.MaxPoolSize <= 0 {
+		c.MaxPoolSize = 10
+	}
+	if c.ConnectTimeout <= 0 {
+		c.ConnectTimeout = 10
+	}
+	if c.ReadTimeout <= 0 {
+		c.ReadTimeout = 30
+	}
+	if c.MinDaysForSplit <= 0 {
+		c.MinDaysForSplit = 2
+	}
+	return c
 }
 
 func (c AmapConfig) WithDefaults() AmapConfig {

@@ -35,6 +35,7 @@ zhihu:
   access_secret: ""
   openapi_base_url: "https://developer.zhihu.com"
   zhihu_search_url: ""
+  global_search_url: "https://developer.zhihu.com/api/v1/content/global_search"
   guide_material:
     query_count: 10
     per_query_count: 10

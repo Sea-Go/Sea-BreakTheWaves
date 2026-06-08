@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"agent_v2/config"
+
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -41,4 +43,8 @@ func (r *amapRuntime) POIKeywordSearch(ctx context.Context, in AmapPOIKeywordSea
 	putInt(q, "page", in.Page)
 	putString(q, "extensions", in.Extensions)
 	return r.get(ctx, "/place/text", q, true)
+}
+
+func POIKeywordSearch(ctx context.Context, cfg config.AmapConfig, in AmapPOIKeywordSearchInput) (AmapResponse, error) {
+	return newAmapRuntime(cfg).POIKeywordSearch(ctx, in)
 }

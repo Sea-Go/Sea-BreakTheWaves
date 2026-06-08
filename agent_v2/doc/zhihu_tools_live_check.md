@@ -6,7 +6,7 @@
 
 ## 本次运行
 
-- 运行时间：2026-05-05 19:21:46 CST
+- 运行时间：2026-05-08 15:45:59 CST
 - topic：`大阪旅游攻略`
 - openapi_base_url：`https://developer.zhihu.com`
 - zhihu_search_url：``
@@ -17,7 +17,7 @@
 
 | Tool | 状态 | 延迟(ms) | 证据 / 错误 |
 |---|---:|---:|---|
-| `zhihu_guide_material` | PASS | 7147 | run_id=20260505_192139_大阪旅游攻略; query_count=3; raw_count=9; deduped_count=6; review_pool_count=4; selected_count=3; first_title=日本东京+大阪旅行全攻略:省心省力更省钱 - 知乎; first_url=https://zhuanlan.zhihu.com/p/713474588?utm_medium=openapi_platform&utm_source=4818dc34; first_intent=overview; first_score=53.0 |
+| `zhihu_guide_material` | PASS | 5234 | run_id=20260508_154553_大阪旅游攻略; query_count=1; raw_count=4; zhihu_search_raw_count=2; global_search_raw_count=2; deduped_count=4; review_pool_count=2; selected_count=2; first_title=日本旅游只有3天东京和大阪怎么选? - 知乎; first_url=https://www.zhihu.com/question/7033566065/answer/2028588307982950527?utm_medium=openapi_platform&utm_source=4818dc34; first_intent=overview; first_content_brief=Title: 日本旅游只有3天东京和大阪怎么选? - 知乎 \| Content: 只有三天的话个人推荐大阪 当然这个大阪肯定不仅限于大阪市，而是近畿圈 然后我会放一些图片，都是我自己拍的，水平很糟糕，主要是证明这些我都去过，而不是看了几个攻略就在侃大山 day1 上午:落地关西机场 中午：坐haruka到梅田，适当逛一下梅田 下午：大阪城公园 晚上心斋桥 住宿推荐：不缺预算就住心斋桥or梅田附近，想要廉价酒店就去天王寺or新今宫，想要便宜一户建就去玉出 day2 上午:坐阪急/JR/京阪去京都（取决于你住的地方） ...; first_key_points=只有三天的话个人推荐大阪 / 当然这个大阪肯定不仅限于大阪市，而是近畿圈 / 然后我会放一些图片，都是我自己拍的，水平很糟糕，主要是证明这些我都去过，而不是看了几个攻略就在侃大山 / day1; first_score=51.8 |
 
 ## 覆盖范围
 

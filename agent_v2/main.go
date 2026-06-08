@@ -3,8 +3,11 @@ package main
 import (
 	"agent_v2/agent"
 	"agent_v2/config"
+	"agent_v2/graph"
 	"context"
 	"net/http"
+	"os"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -86,17 +89,41 @@ func main() {
 	if err := config.Init(); err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
 	}
-	handler, cleanup, err := agent.NewTravelPlanningAGUIHandler()
+
+	// 初始化 Neo4j 图数据库连接，连接失败则直接 panic
+	graph.Init()
+
+	// 将 zhihu 配置注入环境变量，供 skills 脚本（global-search、zhihu-search）使用。
+	// skills 框架通过子进程执行 Python 脚本，脚本依赖环境变量读取认证信息。
+	if secret := strings.TrimSpace(config.Cfg.Zhihu.AccessSecret); secret != "" {
+		os.Setenv("ZHIHU_ACCESS_SECRET", secret)
+	}
+	if baseURL := strings.TrimSpace(config.Cfg.Zhihu.OpenAPIBaseURL); baseURL != "" {
+		os.Setenv("ZHIHU_OPENAPI_BASE_URL", baseURL)
+	}
+	if searchURL := strings.TrimSpace(config.Cfg.Zhihu.ZhihuSearchURL); searchURL != "" {
+		os.Setenv("ZHIHU_ZHIHU_SEARCH_URL", searchURL)
+	}
+	if searchURL := strings.TrimSpace(config.Cfg.Zhihu.GlobalSearchURL); searchURL != "" {
+		os.Setenv("ZHIHU_GLOBAL_SEARCH_URL", searchURL)
+	}
+
+	aguiHandler, cleanup, err := agent.NewTravelPlanningAGUIHandler()
 	if err != nil {
 		log.Fatalf("create amap agui handler failed: %v", err)
 	}
 	defer cleanup()
 
-	addr := "127.0.0.1:8080"
+	mux := http.NewServeMux()
+	mux.Handle("/agui", aguiHandler)
+	mux.Handle("/agui/", aguiHandler)
+	mux.Handle("/travel/", agent.NewTravelPlanningStreamHandler())
 
-	log.Info("Amap AG-UI server listening on http://%s/agui", addr)
+	addr := "127.0.0.1:8088"
 
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	log.Info("Travel planning server listening on http://%s/agui and http://%s/travel/stream", addr, addr)
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server stopped with error: %v", err)
 	}
 }

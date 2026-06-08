@@ -1,113 +1,182 @@
 ---
 name: travel-requirement-intake
-description: 旅游规划需求准入与单轮追问。Use when the user asks for a travel plan, itinerary, route, POI recommendation, city walk, nearby travel, or executable tourism advice; classify required versus optional information and ask one concise follow-up round before planning.
+description: 旅游规划需求准入分析。Use when the user asks for a travel plan, itinerary, route, POI recommendation, city walk, nearby travel, or executable tourism advice; extract structured requirement fields, identify missing information, and output SkillResult JSON.
 ---
 
-# 旅游规划需求准入与单轮追问
+# 旅游规划需求准入分析
 
 ## 目标
 
-本 Skill 用于旅行规划的第一步：先判断用户已经给了哪些关键信息、还缺哪些信息，再用一轮追问把缺口一次性问清楚。
+本 Skill 用于旅行规划的第一步：从用户消息中抽取结构化需求字段，判断哪些字段已知、哪些缺失，输出 SkillResult JSON。
 
-除非用户明确说“不要追问、直接按默认规划”，否则首次旅行规划请求不要直接开始调用攻略或地图工具生成完整方案；先完成一次需求澄清。用户回复后，不要继续一项一项追问，未回答的可选项按默认假设处理。
+本 Skill 只做字段抽取和需求分析，不做以下操作：
+- 创建 TripPlan
+- 调用地图工具（amap_*）
+- 调用攻略工具（zhihu_*、bilibili_*）
+- 调用天气工具（get_weather_context、check_weather_feasibility）
+- 调用图写入工具（create_trip_plan、split_parent_node）
+- 生成旅行方案
+
+## 字段名（必须使用这些 key）
+
+| 字段名 | 说明 | 示例 |
+|--------|------|------|
+| `destination_scope` | 目的地范围 | "全国"、"云南"、"大理" |
+| `total_days` | 总天数 | 365, 7, 30 |
+| `start_city` | 出发城市 | "北京"、"上海" |
+| `start_date` | 出发日期 | "2026-06-01" |
+| `budget_total` | 总预算 | "10万"、"不限" |
+| `transport_mode` | 交通方式 | "自驾"、"高铁"、"飞机"、"混合" |
+| `travel_style` | 旅行风格数组 | ["自然风光","历史文化","美食"] |
+| `pace` | 节奏 | "轻松"、"均衡"、"紧凑" |
+| `high_altitude_acceptance` | 高海拔接受度 | "可接受高海拔"、"不接受高海拔" |
+| `daily_driving_preference` | 日均驾驶强度偏好 | "4小时内"、"4-6小时"、"可接受较长日均驾驶" |
 
 ## 信息分级
 
-### 必须信息
+### P0 必填字段（缺失不能进入正式规划）
 
-缺少以下信息时，不要生成最终规划：
+1. `destination_scope`：目的地范围
+2. `total_days`：总天数
+3. `start_city`：出发城市
 
-1. `destination`：目的地城市、区域、景区、街区或“附近”的定位范围。
-   - 用户只说“附近”“周边”但没有当前位置、城市或起点时，目的地信息不足。
-   - 地名有多城市歧义时，需要用户确认城市，例如“鼓楼”“人民公园”。
-2. `travel_time_budget`：游玩日期、天数或可用时长。
-   - 可以是精确日期，也可以是“周末两天”“明天下午”“今晚 3 小时”。
-   - 如果用户要求公交、地铁、营业状态或排队规避，尽量询问具体日期和出发时间。
-3. `route_anchor`：路线起点、住宿地、当前位置、抵达车站/机场，或每天默认出发区域。
-   - 如果要给出“距离、公交线路、最多等待多久、路程多久”，起点必须明确。
-   - 多日行程至少需要住宿区域或每天出发区域。
-4. `planning_goal`：用户想要的输出类型。
-   - 例如一日路线、多日行程、景点推荐、亲子路线、城市散步、美食路线、周边游。
-   - 如果用户只说“帮我看看旅游”，需要问清楚想规划什么。
+### P1 长周期必须字段（≥30 天旅行必须至少问一轮）
 
-### 条件必须信息
+1. `start_date`：出发日期
+2. `budget_total`：总预算
+3. `transport_mode`：交通方式
+4. `travel_style`：旅行风格
+5. `pace`：节奏
 
-用户需求涉及以下场景时，这些信息变成必须项：
+### P2 可选字段（缺失时使用默认值）
 
-- 亲子、老人、孕妇、轮椅、宠物同行：必须确认体力、无障碍、推车或宠物限制。
-- 自驾、包车、跨城、郊区：必须确认交通方式、是否往返、司机体力和可接受车程。
-- 餐厅、美食、住宿、门票预算：必须确认预算区间或消费偏好。
-- 必去/不想去地点已经被用户提到：必须记录，不能在路线中忽略或反向安排。
-- 明确要求“最多等待多久”“几点到几点”：必须确认日期、出发时间和起点；工具未返回候车时间时要如实标注无法确认。
+- `accommodation_style`：住宿偏好（默认"经济舒适型"）
+- `food_preference`：饮食偏好（默认["当地特色"]）
+- `must_visit`：必去地点（默认[]）
+- `avoid_places`：不想去的地点（默认[]）
+- `special_constraints`：特殊限制（默认[]）
+- `high_altitude_acceptance`：高海拔接受度（高原/川西/藏东南路线建议至少确认一次）
+- `daily_driving_preference`：日均驾驶强度偏好（自驾长线建议至少确认一次）
 
-### 可选信息
+## 长周期旅行规则
 
-以下信息有助于提升质量，但缺失时可以使用默认假设：
+当 `total_days` ≥ 30 时，即使 `destination_scope` 和 `total_days` 已明确，也必须询问 P1 字段（start_city, start_date, budget, transport_mode, travel_style, pace）。
 
-- `transport_preference`：默认“步行 + 公共交通，必要时短途打车”。
-- `pace`：默认“平衡偏慢”，每天 2-4 个主停留点。
-- `interests`：默认“经典景点 + 本地生活感 + 顺路低折返”。
-- `budget`：默认“中等预算，不主动推荐明显高消费项目”。
-- `food_preference`：默认“就近、本地特色、不过度排队”。
-- `crowd_preference`：默认“避开过度拥挤和高折返路线”。
-- `map_visualization`：默认不生成地图，除非用户需要。
+## 用户表达"按默认"的处理
 
-## 单轮追问协议
+如果用户明确说"按默认"、"别问了"、"你决定"、"都行"、"随便"，则：
+- P0 字段仍然必须从用户消息中提取（不能用默认值）
+- P1 字段可以使用默认值，不再追问
+- 输出 `status: "ready"` 而非 `status: "need_user_input"`
 
-### 什么时候追问
+## SkillResult 输出协议
 
-- 首次旅行规划请求：先追问一轮。
-- 已经追问过且用户已回复：继续规划，不要重复追问。
-- 用户明确说“按默认”“你决定”“别问了直接规划”：使用默认值继续规划。
-- 用户新回复与之前信息冲突，且会影响路线事实：只问冲突项。
+只输出单个 JSON object，不要 markdown，不要解释。
 
-### 怎么追问
+### 字段说明
 
-追问必须一次性覆盖所有必须缺口，并最多附带 2 个最有价值的可选偏好。不要把可选项问成很长的问卷。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `skill_name` | string | 固定 `"travel-requirement-intake"` |
+| `stage` | string | 固定 `"requirement_intake"` |
+| `status` | string | `"need_user_input"`（需要用户补充）或 `"ready"`（信息充足） |
+| `requirement_ready` | boolean | true=可以进入正式规划 |
+| `missing_fields` | []string | 缺失字段名数组（使用上方字段名表中的 key） |
+| `follow_up_questions` | []string | 追问问题数组 |
+| `result.requirement` | object | 已抽取的结构化需求字段（只包含已识别的字段） |
+| `next_stage` | string | `"awaiting_user_info"` 或 `"macro_planning"` |
+| `stop_workflow` | boolean | true（需要用户回复时）或 false（可以进入规划时） |
+| `output` | string | 展示给用户的文本 |
 
-推荐问法：
+### 示例 1：需要用户补充信息
 
-```text
-我先确认几项，这样后面才能给到具体路线和交通时间：
-1. 你想去哪个城市/区域？
-2. 从哪里出发或住在哪里？
-3. 准备玩几天/哪个时间段？
-可选：更偏步行公交、打车，还是自驾？有没有必去或不想去的地方？
-```
+输入："我要一个全国365天的旅游plan"
 
-如果已具备必须信息，但还没有偏好，也仍然做一轮轻量确认：
-
-```text
-基础信息够了，我再确认两个偏好后就开始规划：你更想要慢节奏闲逛，还是尽量多打卡？交通默认按“步行 + 公共交通，必要时打车”可以吗？
-```
-
-## JSON 输出约定
-
-当需要等待用户补充信息时，最终仍然只输出单个 JSON object，并遵循入口要求：
-
-- `insufficient_information` 设为 `true`。
-- `answer` 中只做需求澄清，不输出路线草案。
-- `follow_up_questions` 放入本轮要问的问题。
-- `thinking_result` 简要说明已识别字段和缺失字段，不暴露隐藏推理链路。
-- `planning_process` 写“正在进行需求澄清，暂未进入攻略采集和路线验证”。
-
-示例：
-
+输出：
 ```json
 {
-  "query": "帮我规划一下周末旅游",
-  "normalized_query": "用户希望规划周末旅游，但目的地、起点和具体天数未确认",
-  "thinking_result": "已识别为旅行规划请求；缺少目的地、起点和时间预算，暂不适合生成可执行路线。",
-  "planning_process": "当前处于需求澄清阶段，暂未调用攻略素材或地图路线验证。",
-  "answer": "我先确认几项，这样后面才能给到具体路线和交通时间：1. 你想去哪个城市/区域？2. 从哪里出发或住在哪里？3. 准备玩几天/哪个时间段？可选：更偏步行公交、打车，还是自驾？有没有必去或不想去的地方？",
-  "content_insights": [],
-  "route_validation": [],
+  "skill_name": "travel-requirement-intake",
+  "stage": "requirement_intake",
+  "status": "need_user_input",
+  "requirement_ready": false,
+  "missing_fields": ["start_city", "start_date", "budget_total", "transport_mode", "travel_style", "pace"],
   "follow_up_questions": [
-    "你想去哪个城市/区域？",
-    "从哪里出发或住在哪里？",
-    "准备玩几天/哪个时间段？",
-    "交通更偏步行公交、打车，还是自驾？有没有必去或不想去的地方？"
+    "你计划从哪个城市出发？",
+    "这365天旅行大概从什么时候开始？",
+    "总预算或每月预算大概是多少？",
+    "主要交通方式是自驾、高铁火车、飞机，还是混合？",
+    "你更偏自然风光、历史文化、美食城市、摄影打卡，还是慢旅行？",
+    "每天节奏希望轻松、均衡，还是尽量多打卡？"
   ],
-  "insufficient_information": true
+  "result": {
+    "requirement": {
+      "destination_scope": "全国",
+      "total_days": 365
+    }
+  },
+  "next_stage": "awaiting_user_info",
+  "stop_workflow": true,
+  "output": "在开始规划前，我需要先确认几项关键信息：\n\n1. 你计划从哪个城市出发？\n2. 这365天旅行大概从什么时候开始？\n3. 总预算或每月预算大概是多少？\n4. 主要交通方式是自驾、高铁火车、飞机，还是混合？\n5. 你更偏自然风光、历史文化、美食城市、摄影打卡，还是慢旅行？\n6. 每天节奏希望轻松、均衡，还是尽量多打卡？"
+}
+```
+
+### 示例 2：信息充足，可以进入规划
+
+输入："从北京出发，7天云南自驾游，喜欢自然风光，预算2万"
+
+输出：
+```json
+{
+  "skill_name": "travel-requirement-intake",
+  "stage": "requirement_intake",
+  "status": "ready",
+  "requirement_ready": true,
+  "missing_fields": [],
+  "follow_up_questions": [],
+  "result": {
+    "requirement": {
+      "destination_scope": "云南",
+      "total_days": 7,
+      "start_city": "北京",
+      "budget_total": "2万",
+      "transport_mode": "自驾",
+      "travel_style": ["自然风光"],
+      "pace": "均衡"
+    }
+  },
+  "next_stage": "macro_planning",
+  "stop_workflow": false,
+  "output": "需求已确认，开始为您规划云南7天自驾自然风光之旅。"
+}
+```
+
+### 示例 3：用户表达"按默认"
+
+输入："我要一个全国365天的旅游plan，别问了按默认来"
+
+输出：
+```json
+{
+  "skill_name": "travel-requirement-intake",
+  "stage": "requirement_intake",
+  "status": "ready",
+  "requirement_ready": true,
+  "missing_fields": [],
+  "follow_up_questions": [],
+  "result": {
+    "requirement": {
+      "destination_scope": "全国",
+      "total_days": 365,
+      "start_city": "",
+      "start_date": "",
+      "budget_total": "中等",
+      "transport_mode": "高铁/火车为主",
+      "travel_style": ["自然风光", "历史文化"],
+      "pace": "均衡"
+    }
+  },
+  "next_stage": "macro_planning",
+  "stop_workflow": false,
+  "output": "已按默认设置开始规划：中等预算、高铁为主、自然风光+历史文化、均衡节奏。"
 }
 ```

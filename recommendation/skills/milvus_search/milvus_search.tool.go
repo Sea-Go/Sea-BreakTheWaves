@@ -180,7 +180,16 @@ func (t *ToolMilvusSearch) Invoke(ctx context.Context, argsRaw json.RawMessage) 
 	cli := infra.Milvus()
 	if cli == nil {
 		err = errors.New("Milvus 客户端未初始化")
-		return nil, err
+		empty = true
+		out = MilvusSearchResult{
+			ReturnedDocCount: 0,
+			Empty:            true,
+			Hits:             []MilvusHit{},
+			Collection:       collection,
+			LatencyMs:        time.Since(start).Milliseconds(),
+		}
+		err = nil
+		return out, nil
 	}
 
 	opt := milvusclient.NewSearchOption(
@@ -212,8 +221,21 @@ func (t *ToolMilvusSearch) Invoke(ctx context.Context, argsRaw json.RawMessage) 
 		span.RecordError(se)
 		span.SetStatus(codes.Error, se.Error())
 		span.End()
-		err = se
-		return nil, err
+		if !infra.IsMilvusUnavailableError(se) {
+			err = se
+			return nil, err
+		}
+
+		empty = true
+		lat = time.Since(start).Milliseconds()
+		out = MilvusSearchResult{
+			ReturnedDocCount: 0,
+			Empty:            true,
+			Hits:             []MilvusHit{},
+			Collection:       collection,
+			LatencyMs:        lat,
+		}
+		return out, nil
 	}
 	span.SetStatus(codes.Ok, "")
 	span.End()
