@@ -371,3 +371,92 @@ func containsAny(text string, needles []string) bool {
 	}
 	return false
 }
+
+func isDefaultAnswerText(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	return containsAny(text, []string{
+		"按默认", "直接规划", "别问了", "不用问", "你决定", "你看着安排",
+		"都可以", "都行", "无所谓", "随意", "随便", "不限", "默认来", "按你推荐",
+	})
+}
+
+func splitFollowUpTokens(text string) []string {
+	fields := regexp.MustCompile(`[，,、；;\n]+`).Split(text, -1)
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		field = strings.Trim(field, "。.!！?？ \t\r\n")
+		if field != "" {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+func extractUserTurnTexts(transcript string) []string {
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
+		return nil
+	}
+	lines := strings.Split(transcript, "\n")
+	var turns []string
+	var current strings.Builder
+	inUser := false
+
+	flush := func() {
+		if current.Len() > 0 {
+			text := strings.TrimSpace(current.String())
+			if text != "" {
+				turns = append(turns, text)
+			}
+			current.Reset()
+		}
+	}
+
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		switch {
+		case isRoleLine(line, "用户"):
+			flush()
+			inUser = true
+			current.WriteString(textAfterRoleColon(line))
+		case isRoleLine(line, "Agent"), isRoleLine(line, "AI"), isRoleLine(line, "助手"):
+			flush()
+			inUser = false
+		default:
+			if inUser && line != "" {
+				if current.Len() > 0 {
+					current.WriteString("\n")
+				}
+				current.WriteString(line)
+			}
+		}
+	}
+	flush()
+
+	if len(turns) == 0 {
+		return []string{transcript}
+	}
+	return turns
+}
+
+func isRoleLine(line, role string) bool {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, role) {
+		return false
+	}
+	return strings.Contains(line, "：") || strings.Contains(line, ":")
+}
+
+func textAfterRoleColon(line string) string {
+	if idx := strings.Index(line, "："); idx >= 0 {
+		return strings.TrimSpace(line[idx+len("："):])
+	}
+	if idx := strings.Index(line, ":"); idx >= 0 {
+		return strings.TrimSpace(line[idx+1:])
+	}
+	return ""
+}
