@@ -111,11 +111,13 @@ func (o *TravelSkillOrchestrator) Handle(
 
 	rt := o.LoadOrInitRuntime(userID, sessionID)
 	latestUserMessage := latestUserTurnText(userMessage)
+	resetForNewPlanning := false
 	if rt.CurrentStage != StageRequirementIntake && rt.CurrentStage != "" && isLikelyNewPlanningRequest(latestUserMessage) {
 		log.Infof("[orchestrator] detected new planning intent, resetting runtime: userID=%s sessionID=%s oldStage=%s",
 			userID, sessionID, rt.CurrentStage)
 		o.resetRuntimeForNewPlanningIntent(userID, sessionID)
 		rt = o.LoadOrInitRuntime(userID, sessionID)
+		resetForNewPlanning = true
 	}
 	o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 		r.LastUserMessage = latestUserMessage
@@ -126,7 +128,11 @@ func (o *TravelSkillOrchestrator) Handle(
 
 	switch rt.CurrentStage {
 	case StageRequirementIntake, "":
-		return o.runRequirementIntake(ctx, userID, sessionID, latestUserMessage, intakeAgent)
+		intakeMessage := latestUserMessage
+		if !resetForNewPlanning && len(extractUserTurnTexts(userMessage)) > 1 {
+			intakeMessage = userMessage
+		}
+		return o.runRequirementIntake(ctx, userID, sessionID, intakeMessage, intakeAgent)
 
 	case StageAwaitingUserInfo:
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
@@ -203,11 +209,11 @@ func (o *TravelSkillOrchestrator) runRequirementIntake(
 	if snap, ok := result.Result["requirement"].(map[string]any); ok {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			mergeSnapshotFromMap(&r.Requirement, snap)
-			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
+			enrichRequirementForIntakeAt(&r.Requirement, userMessage, time.Now())
 		})
 	} else {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
-			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
+			enrichRequirementForIntakeAt(&r.Requirement, userMessage, time.Now())
 		})
 	}
 
@@ -266,9 +272,13 @@ func (o *TravelSkillOrchestrator) runRequirementMerge(
 
 	// Step 1: 序列化已有 snapshot
 	snapJSON, _ := json.Marshal(rt.Requirement)
+	missingBefore := rt.Requirement.MissingFields
+	if len(missingBefore) == 0 {
+		missingBefore = requirementMissingFields(rt.Requirement)
+	}
 
 	// Step 2: 构建 merge prompt
-	prompt := buildMergePrompt(userMessage, string(snapJSON))
+	prompt := buildMergePrompt(userMessage, string(snapJSON), missingBefore)
 
 	// Step 3: 运行 intakeAgent
 	rawOutput, err := o.runAgentAndCollect(ctx, intakeAgent, sessionID, prompt)
@@ -299,11 +309,13 @@ func (o *TravelSkillOrchestrator) runRequirementMerge(
 	if snap, ok := result.Result["requirement"].(map[string]any); ok {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
 			mergeSnapshotFromMap(&r.Requirement, snap)
-			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
+			mergeFollowUpAnswerByMissingFieldsAt(&r.Requirement, userMessage, missingBefore, time.Now())
+			enrichRequirementWithDeterministicFieldsAt(&r.Requirement, userMessage, time.Now())
 		})
 	} else {
 		o.updateRuntime(userID, sessionID, func(r *TravelSkillRuntime) {
-			enrichRequirementWithDeterministicFields(&r.Requirement, userMessage)
+			mergeFollowUpAnswerByMissingFieldsAt(&r.Requirement, userMessage, missingBefore, time.Now())
+			enrichRequirementWithDeterministicFieldsAt(&r.Requirement, userMessage, time.Now())
 		})
 	}
 
