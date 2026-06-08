@@ -407,7 +407,11 @@ func buildPlanningDecision(
 	if len(missingP0) > 0 {
 		decision.Ready = false
 		decision.ShouldAskUser = true
-		decision.Questions = buildPlanningQuestions(append(missingP0, missingP1...))
+		fieldsToAsk := append([]string{}, missingP0...)
+		if defaultIntent == DefaultIntentNone && askedRounds == 0 {
+			fieldsToAsk = append(fieldsToAsk, missingP1...)
+		}
+		decision.Questions = buildPlanningQuestions(fieldsToAsk)
 		return decision
 	}
 
@@ -438,15 +442,8 @@ func buildPlanningDecision(
 
 // detectDefaultIntent 识别用户是否表达了"不用追问，按默认来"的意图。
 func detectDefaultIntent(userMessage string) TravelDefaultIntent {
-	msg := strings.TrimSpace(userMessage)
-	keywords := []string{
-		"按默认", "直接规划", "别问了", "不用问", "你决定",
-		"你看着安排", "都可以", "无所谓", "默认来", "按你推荐",
-	}
-	for _, kw := range keywords {
-		if strings.Contains(msg, kw) {
-			return DefaultIntentExplicit
-		}
+	if isDefaultAnswerText(userMessage) {
+		return DefaultIntentExplicit
 	}
 	return DefaultIntentNone
 }
@@ -573,7 +570,9 @@ func buildIntakePrompt(userMessage string, rt TravelSkillRuntime) string {
 只输出一个 SkillResult JSON，不要 markdown，不要解释。`, string(runtimeJSON), userMessage)
 }
 
-func buildMergePrompt(userMessage string, snapshotJSON string) string {
+func buildMergePrompt(userMessage string, snapshotJSON string, missingFields []string) string {
+	missingJSON, _ := json.Marshal(missingFields)
+	questionsJSON, _ := json.Marshal(buildPlanningQuestions(missingFields))
 	return fmt.Sprintf(`你是旅行需求合并 Agent。
 
 任务：
@@ -585,20 +584,29 @@ func buildMergePrompt(userMessage string, snapshotJSON string) string {
 已有需求快照：
 %s
 
+当前仍缺字段（按上一轮追问顺序）：
+%s
+
+上一轮追问问题：
+%s
+
 用户新回复：
 %s
 
 注意：
 - "哈尔滨出发"→ start_city=哈尔滨
-- "6月开始"→ start_date=6月
+- "南昌，无所谓，无所谓" 且当前缺字段为 ["start_city","transport_mode","travel_style"] → start_city=南昌，其余按默认意图处理
+- "从现在这里/当前位置" 不能解析成城市；如果没有明确城市，不要填 start_city
+- "明天/后天/6月1日"→ start_date=YYYY-MM-DD
 - "10万预算"→ budget_total=10万
+- "10000元"→ budget_total=10000元
 - "高铁为主"→ transport_mode=高铁为主
 - "慢一点"→ pace=轻松/慢节奏
 - "能接受高海拔/怕高反"→ high_altitude_acceptance
 - "能接受长途/不想开太久"→ daily_driving_preference
-- "就这样吧/按默认/别问了"→ 在 result 中标记 default_intent
+- "就这样吧/按默认/别问了/随意/无所谓/都行/随便"→ 在 result 中标记 default_intent
 
-只输出 JSON，不要 markdown，不要解释。`, snapshotJSON, userMessage)
+只输出 JSON，不要 markdown，不要解释。`, snapshotJSON, string(missingJSON), string(questionsJSON), userMessage)
 }
 
 // ═══════════════════════════════════════════════════════════════
