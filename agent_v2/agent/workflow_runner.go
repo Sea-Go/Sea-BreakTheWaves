@@ -370,7 +370,7 @@ func (a *graphWorkflowAgent) runMacroPlanningOnly(
 
 	// Phase completeness validation
 	rtForValidation := a.orchestrator.LoadOrInitRuntime(userID, sessionID)
-	if err := a.checkAfterMacroPlanning(ctx, expectedTripPlanID, 0, rtForValidation.Requirement); err != nil {
+	if err := a.checkAfterMacroPlanning(ctx, expectedTripPlanID, rtForValidation.Requirement.TotalDays, rtForValidation.Requirement); err != nil {
 		var geoErr *TravelGeoScopeError
 		if errors.As(err, &geoErr) && traceEmitterFromInvocation(invocation) != nil {
 			emitGeoScopeViolationAnnotations(ctx, traceEmitterFromInvocation(invocation), "overview", expectedTripPlanID, geoErr.Violations)
@@ -425,7 +425,7 @@ func buildMacroPrompt(originalMsg string, rt TravelSkillRuntime, expectedTripPla
 只完成以下操作：
 1. 基于需求创建 TripPlan（create_trip_plan，必须使用 expected_trip_plan_id 作为 trip_plan_id 参数）
 2. 使用 get_weather_context 获取区域气候数据
-3. 规划 3-8 个 Phase（region, season, theme, dayCount, start/end anchor）
+3. 规划 1-8 个 Phase（region, season, theme, dayCount, start/end anchor）
 4. 使用 split_parent_node 拆分 TripPlan → Phase
 
 ## 锚点覆盖约束
@@ -435,8 +435,9 @@ func buildMacroPrompt(originalMsg string, rt TravelSkillRuntime, expectedTripPla
 
 ## 目的地范围硬约束
 - Phase 的 region/name/theme 只能围绕 destination_scope、must_visit 和 destination_anchors 展开。
+- 1-2 天短行程允许 1 个 Phase；3-5 天行程通常 2-3 个 Phase；更长行程再拆成 3-8 个 Phase。
 - 用户限定为某个区域（例如西南、川滇藏、云南、香格里拉等）时，禁止引入明显无关的远方城市或区域。
-- 出发地只允许作为路线起点或转移说明，不能把出发地以外的无关城市扩展成目的地 Phase。
+- 出发地只允许作为路线起点或转移说明，不能把出发地扩展成目的地 Phase；若出发地不在目的地范围内，不要把它填入 Phase.region，可在 Phase.name 中写“从 X 出发/交通衔接”。
 - 若不确定某城市是否属于用户目的地范围，宁可保留在公开权衡说明中，也不要创建该城市的 Phase。
 
 禁止：Month/Week/Day 拆分、攻略采集、POI 验证、审查、逐日输出。

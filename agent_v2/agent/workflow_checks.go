@@ -30,8 +30,9 @@ func (a *graphWorkflowAgent) checkAfterMacroPlanning(ctx context.Context, tripPl
 	}
 
 	phases := overview.Phases
-	if len(phases) < 3 {
-		return fmt.Errorf("Phase 数量不足: 需要 >= 3，实际 %d", len(phases))
+	minPhases := minMacroPhaseCount(expectedTotalDays, requirements...)
+	if len(phases) < minPhases {
+		return fmt.Errorf("Phase 数量不足: 需要 >= %d，实际 %d", minPhases, len(phases))
 	}
 	if len(phases) > 8 {
 		return fmt.Errorf("Phase 数量过多: 需要 <= 8，实际 %d", len(phases))
@@ -99,4 +100,21 @@ func (a *graphWorkflowAgent) checkAfterMacroPlanning(ctx context.Context, tripPl
 	log.Infof("[workflow-checks] macro planning validation passed: %d phases, totalDayCount=%d",
 		len(phases), totalDayCount)
 	return nil
+}
+
+func minMacroPhaseCount(expectedTotalDays int, requirements ...TravelRequirementSnapshot) int {
+	totalDays := expectedTotalDays
+	if totalDays <= 0 && len(requirements) > 0 {
+		totalDays = requirements[0].TotalDays
+	}
+	switch {
+	case totalDays <= 0:
+		return 3
+	case totalDays <= 2:
+		return 1
+	case totalDays <= 5:
+		return 2
+	default:
+		return 3
+	}
 }
