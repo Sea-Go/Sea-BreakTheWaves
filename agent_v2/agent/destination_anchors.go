@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -57,10 +58,17 @@ var destinationAnchorCatalog = []destinationAnchorCatalogEntry{
 }
 
 func enrichRequirementWithDeterministicFields(snap *TravelRequirementSnapshot, userMessage string) {
+	enrichRequirementWithDeterministicFieldsAt(snap, userMessage, time.Now())
+}
+
+func enrichRequirementWithDeterministicFieldsAt(snap *TravelRequirementSnapshot, userMessage string, now time.Time) {
 	if snap == nil {
 		return
 	}
 	latest := latestUserTurnText(userMessage)
+	if snap.DestinationScope == "" {
+		snap.DestinationScope = parseDestinationScope(latest)
+	}
 	if snap.StartCity == "" {
 		snap.StartCity = parseStartCity(latest)
 	}
@@ -70,21 +78,17 @@ func enrichRequirementWithDeterministicFields(snap *TravelRequirementSnapshot, u
 	if snap.BudgetTotal == "" {
 		snap.BudgetTotal = parseBudgetTotal(latest)
 	}
-	if snap.TransportMode == "" && strings.Contains(latest, "自驾") {
-		snap.TransportMode = "自驾"
+	if snap.StartDate == "" {
+		snap.StartDate = parseStartDateAt(latest, now)
+	}
+	if snap.TransportMode == "" {
+		snap.TransportMode = parseTransportMode(latest)
 	}
 	if snap.Pace == "" {
-		switch {
-		case strings.Contains(latest, "轻松") || strings.Contains(latest, "慢"):
-			snap.Pace = "轻松"
-		case strings.Contains(latest, "紧凑") || strings.Contains(latest, "多打卡"):
-			snap.Pace = "紧凑"
-		case strings.Contains(latest, "均衡"):
-			snap.Pace = "均衡"
-		}
+		snap.Pace = parsePace(latest)
 	}
-	if containsAny(latest, []string{"自然风光", "自然", "风景", "雪山", "峡谷", "湖泊", "森林", "草原", "徒步"}) {
-		snap.TravelStyle = appendUniqueStrings(snap.TravelStyle, "自然风光")
+	if styles := parseTravelStyles(latest); len(styles) > 0 {
+		snap.TravelStyle = appendUniqueStrings(snap.TravelStyle, styles...)
 	}
 	if snap.HighAltitudeAcceptance == "" {
 		snap.HighAltitudeAcceptance = parseHighAltitudeAcceptance(latest)
@@ -142,12 +146,68 @@ func isLikelyNewPlanningRequest(userMessage string) bool {
 }
 
 func parseStartCity(text string) string {
-	re := regexp.MustCompile(`从\s*([\p{Han}A-Za-z]{2,12})\s*出发`)
-	m := re.FindStringSubmatch(text)
-	if len(m) < 2 {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`从\s*([\p{Han}A-Za-z]{2,12})\s*出发`),
+		regexp.MustCompile(`从\s*([\p{Han}A-Za-z]{2,12})\s*(?:走|启程|开始)`),
+		regexp.MustCompile(`([\p{Han}A-Za-z]{2,12})\s*出发`),
+		regexp.MustCompile(`出发地\s*[是为:]?\s*([\p{Han}A-Za-z]{2,12})`),
+		regexp.MustCompile(`起点\s*[是为:]?\s*([\p{Han}A-Za-z]{2,12})`),
+	}
+	for _, re := range patterns {
+		m := re.FindStringSubmatch(text)
+		if len(m) >= 2 {
+			city := cleanCityCandidate(m[1])
+			if city != "" && !isCurrentLocationReference(city) {
+				return city
+			}
+		}
+	}
+	return ""
+}
+
+func parseStartCityFollowUp(text string) string {
+	if city := parseStartCity(text); city != "" {
+		return city
+	}
+	for _, token := range splitFollowUpTokens(text) {
+		if city := parseStandaloneCityToken(token); city != "" {
+			return city
+		}
+	}
+	return ""
+}
+
+func parseStandaloneCityToken(text string) string {
+	city := cleanCityCandidate(text)
+	if city == "" || isCurrentLocationReference(city) || isDefaultAnswerText(city) {
 		return ""
 	}
-	return strings.Trim(m[1], "，,。；;、 ")
+	if containsAny(city, []string{
+		"去", "玩", "旅行", "旅游", "行程", "目的地", "预算", "天", "月", "日",
+		"明天", "后天", "今天", "轻松", "均衡", "紧凑", "自驾", "高铁", "火车", "飞机", "混合",
+	}) {
+		return ""
+	}
+	re := regexp.MustCompile(`^[\p{Han}A-Za-z]{2,12}(?:市)?$`)
+	if !re.MatchString(city) {
+		return ""
+	}
+	return city
+}
+
+func cleanCityCandidate(text string) string {
+	city := strings.TrimSpace(text)
+	city = strings.Trim(city, "，,。；;、:：.!！?？ \t\r\n")
+	city = strings.TrimPrefix(city, "就从")
+	city = strings.TrimPrefix(city, "从")
+	city = strings.TrimPrefix(city, "在")
+	city = strings.TrimPrefix(city, "我在")
+	return strings.Trim(city, "，,。；;、:：.!！?？ \t\r\n")
+}
+
+func isCurrentLocationReference(text string) bool {
+	text = strings.TrimSpace(text)
+	return containsAny(text, []string{"现在这里", "当前位置", "当前城市", "这里", "本地", "所在地"})
 }
 
 func parseTotalDays(text string) int {
@@ -163,14 +223,208 @@ func parseTotalDays(text string) int {
 func parseBudgetTotal(text string) string {
 	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*([wW万])`)
 	m := re.FindStringSubmatch(text)
-	if len(m) < 3 {
+	if len(m) >= 3 {
+		unit := m[2]
+		if unit == "w" || unit == "W" {
+			unit = "万"
+		}
+		return m[1] + unit
+	}
+	yuanRe := regexp.MustCompile(`(\d{3,9}(?:\.\d+)?)\s*(?:元|块|人民币)`)
+	if m := yuanRe.FindStringSubmatch(text); len(m) >= 2 {
+		return m[1] + "元"
+	}
+	if containsAny(text, []string{"预算不限", "不限预算", "不设预算"}) {
+		return "不限"
+	}
+	return ""
+}
+
+func parseBudgetToken(text string) string {
+	if budget := parseBudgetTotal(text); budget != "" {
+		return budget
+	}
+	token := strings.TrimSpace(text)
+	if regexp.MustCompile(`^\d{3,9}(?:\.\d+)?$`).MatchString(token) {
+		return token + "元"
+	}
+	return ""
+}
+
+func parseStartDateAt(text string, now time.Time) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return ""
 	}
-	unit := m[2]
-	if unit == "w" || unit == "W" {
-		unit = "万"
+	if now.IsZero() {
+		now = time.Now()
 	}
-	return m[1] + unit
+	base := now
+	if base.Location() == nil {
+		base = base.In(time.Local)
+	}
+
+	if containsAny(text, []string{"大后天"}) {
+		return base.AddDate(0, 0, 3).Format("2006-01-02")
+	}
+	if containsAny(text, []string{"后天"}) {
+		return base.AddDate(0, 0, 2).Format("2006-01-02")
+	}
+	if containsAny(text, []string{"明天", "明日"}) {
+		return base.AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	if containsAny(text, []string{"今天", "今日"}) {
+		return base.Format("2006-01-02")
+	}
+	if re := regexp.MustCompile(`(\d{1,3})\s*天后`); re.MatchString(text) {
+		m := re.FindStringSubmatch(text)
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return base.AddDate(0, 0, n).Format("2006-01-02")
+		}
+	}
+
+	if re := regexp.MustCompile(`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?`); re.MatchString(text) {
+		m := re.FindStringSubmatch(text)
+		return normalizeDateParts(m[1], m[2], m[3], base, true)
+	}
+	if re := regexp.MustCompile(`(\d{1,2})月(\d{1,2})日?`); re.MatchString(text) {
+		m := re.FindStringSubmatch(text)
+		return normalizeDateParts("", m[1], m[2], base, false)
+	}
+	if re := regexp.MustCompile(`(\d{1,2})月(?:开始|出发|走)?`); re.MatchString(text) {
+		m := re.FindStringSubmatch(text)
+		return normalizeDateParts("", m[1], "1", base, false)
+	}
+	if weekday, ok := parseNextWeekday(text); ok {
+		return weekdayFromBase(base, weekday).Format("2006-01-02")
+	}
+	return ""
+}
+
+func normalizeDateParts(yearText, monthText, dayText string, base time.Time, explicitYear bool) string {
+	month, errM := strconv.Atoi(monthText)
+	day, errD := strconv.Atoi(dayText)
+	if errM != nil || errD != nil || month < 1 || month > 12 || day < 1 || day > 31 {
+		return ""
+	}
+	year := base.Year()
+	if explicitYear {
+		parsedYear, errY := strconv.Atoi(yearText)
+		if errY != nil {
+			return ""
+		}
+		year = parsedYear
+	}
+	date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, base.Location())
+	if date.Month() != time.Month(month) || date.Day() != day {
+		return ""
+	}
+	if !explicitYear {
+		baseDay := time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, base.Location())
+		if date.Before(baseDay) {
+			date = date.AddDate(1, 0, 0)
+		}
+	}
+	return date.Format("2006-01-02")
+}
+
+func parseNextWeekday(text string) (time.Weekday, bool) {
+	m := regexp.MustCompile(`下周([一二三四五六日天])`).FindStringSubmatch(text)
+	if len(m) < 2 {
+		return time.Sunday, false
+	}
+	switch m[1] {
+	case "一":
+		return time.Monday, true
+	case "二":
+		return time.Tuesday, true
+	case "三":
+		return time.Wednesday, true
+	case "四":
+		return time.Thursday, true
+	case "五":
+		return time.Friday, true
+	case "六":
+		return time.Saturday, true
+	default:
+		return time.Sunday, true
+	}
+}
+
+func weekdayFromBase(base time.Time, target time.Weekday) time.Time {
+	daysUntil := (int(target) - int(base.Weekday()) + 7) % 7
+	return base.AddDate(0, 0, daysUntil+7)
+}
+
+func parseTransportMode(text string) string {
+	switch {
+	case containsAny(text, []string{"自驾", "开车"}):
+		return "自驾"
+	case containsAny(text, []string{"高铁", "动车", "火车", "铁路"}):
+		return "高铁/火车"
+	case containsAny(text, []string{"飞机", "航班", "飞过去"}):
+		return "飞机"
+	case containsAny(text, []string{"混合", "都用", "组合交通"}):
+		return "混合"
+	default:
+		return ""
+	}
+}
+
+func parseTravelStyles(text string) []string {
+	var styles []string
+	if containsAny(text, []string{"自然风光", "自然", "风景", "雪山", "峡谷", "湖泊", "森林", "草原", "徒步"}) {
+		styles = append(styles, "自然风光")
+	}
+	if containsAny(text, []string{"历史", "文化", "博物馆", "古镇", "古城", "建筑"}) {
+		styles = append(styles, "历史文化")
+	}
+	if containsAny(text, []string{"美食", "吃", "小吃", "餐厅"}) {
+		styles = append(styles, "美食")
+	}
+	if containsAny(text, []string{"摄影", "拍照", "出片"}) {
+		styles = append(styles, "摄影")
+	}
+	if containsAny(text, []string{"慢旅行", "慢游", "慢节奏"}) {
+		styles = append(styles, "慢旅行")
+	}
+	if containsAny(text, []string{"亲子", "带娃", "孩子"}) {
+		styles = append(styles, "亲子")
+	}
+	if containsAny(text, []string{"打卡", "城市", "citywalk", "CityWalk"}) {
+		styles = append(styles, "城市打卡")
+	}
+	return appendUniqueStrings(nil, styles...)
+}
+
+func parsePace(text string) string {
+	switch {
+	case containsAny(text, []string{"轻松", "慢一点", "慢点", "松弛"}):
+		return "轻松"
+	case containsAny(text, []string{"紧凑", "多打卡", "赶一点"}):
+		return "紧凑"
+	case containsAny(text, []string{"均衡", "适中"}):
+		return "均衡"
+	default:
+		return ""
+	}
+}
+
+func parseDestinationScope(text string) string {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?:想去|要去|准备去|打算去|去|到)\s*([\p{Han}A-Za-z]{2,20}?)(?:玩|旅行|旅游|游|逛|$|[，,。；;、])`),
+		regexp.MustCompile(`目的地\s*[是为:]?\s*([\p{Han}A-Za-z]{2,20})`),
+	}
+	for _, re := range patterns {
+		m := re.FindStringSubmatch(text)
+		if len(m) >= 2 {
+			destination := strings.Trim(m[1], "，,。；;、:：.!！?？ \t\r\n")
+			if destination != "" && !containsAny(destination, []string{"哪里", "哪儿", "这里", "那边"}) {
+				return destination
+			}
+		}
+	}
+	return ""
 }
 
 func parseHighAltitudeAcceptance(text string) string {
