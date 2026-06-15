@@ -1,0 +1,1055 @@
+package graph
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+)
+
+// --- Write operations ---
+
+// CreateTripPlan creates the root TripPlan node.
+func (c *Client) CreateTripPlan(ctx context.Context, tp TripPlanNode) (string, error) {
+	if tp.ID == "" {
+		tp.ID = uuid.NewString()
+	}
+	if tp.Status == "" {
+		tp.Status = StatusOutlined
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherMergeTripPlan, map[string]any{
+			"id": tp.ID, "name": tp.Name, "startDate": tp.StartDate, "endDate": tp.EndDate,
+			"totalDays": tp.TotalDays, "budgetTotal": tp.BudgetTotal, "travelStyle": tp.TravelStyle,
+			"transportMode": tp.TransportMode, "interests": tp.Interests, "mustVisit": tp.MustVisit,
+			"avoid": tp.Avoid, "rawRequirements": tp.RawRequirements, "status": tp.Status,
+			"maxConsecutiveHighIntensityDays": tp.MaxConsecutiveHighIntensityDays,
+			"userId":                          tp.UserID, "sessionId": tp.SessionID, "requestId": tp.RequestID,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return "", fmt.Errorf("graph: create trip plan: %w", err)
+	}
+	return tp.ID, nil
+}
+
+// FindTripPlanByID checks if a TripPlan with the given ID exists in Neo4j.
+// Returns the TripPlanNode if found, nil if not found.
+func (c *Client) FindTripPlanByID(ctx context.Context, id string) (*TripPlanNode, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherFindTripPlanByID, map[string]any{"id": id})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			return rec.Record().AsMap(), nil
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: find trip plan by id: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	m := result.(map[string]any)
+	return &TripPlanNode{
+		ID:        fmt.Sprint(m["id"]),
+		UserID:    fmt.Sprint(m["userId"]),
+		SessionID: fmt.Sprint(m["sessionId"]),
+		RequestID: fmt.Sprint(m["requestId"]),
+	}, nil
+}
+
+func (c *Client) UpsertExplorationRun(ctx context.Context, run ExplorationRunNode) error {
+	if run.ID == "" {
+		run.ID = uuid.NewString()
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	if run.CreatedAt == "" {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == "" {
+		run.UpdatedAt = now
+	}
+	if run.Status == "" {
+		run.Status = "running"
+	}
+	if run.Stage == "" {
+		run.Stage = "requirement_intake"
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherUpsertExplorationRun, map[string]any{
+			"id":           run.ID,
+			"threadId":     run.ThreadID,
+			"userId":       run.UserID,
+			"sessionId":    run.SessionID,
+			"tripPlanId":   run.TripPlanID,
+			"title":        run.Title,
+			"stage":        run.Stage,
+			"status":       run.Status,
+			"lastMessage":  run.LastMessage,
+			"finalSummary": run.FinalSummary,
+			"createdAt":    run.CreatedAt,
+			"updatedAt":    run.UpdatedAt,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: upsert exploration run: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) AppendExplorationStep(ctx context.Context, step ExplorationStepNode) error {
+	if step.ID == "" {
+		step.ID = uuid.NewString()
+	}
+	if step.CreatedAt == "" {
+		step.CreatedAt = time.Now().Format(time.RFC3339Nano)
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherAppendExplorationStep, map[string]any{
+			"id":             step.ID,
+			"runId":          step.RunID,
+			"threadId":       step.ThreadID,
+			"seq":            step.Seq,
+			"level":          step.Level,
+			"actionType":     step.ActionType,
+			"eventType":      step.EventType,
+			"publicAction":   step.PublicAction,
+			"thoughtSummary": step.ThoughtSummary,
+			"recordedFacts":  step.RecordedFacts,
+			"messageRole":    step.MessageRole,
+			"message":        step.Message,
+			"payloadJSON":    step.PayloadJSON,
+			"status":         step.Status,
+			"createdAt":      step.CreatedAt,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: append exploration step: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) ListExplorationRunsByUser(ctx context.Context, userID string, limit int, cursor string) ([]ExplorationRunNode, string, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	readLimit := limit + 1
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherListExplorationRunsByUser, map[string]any{
+			"userId": userID,
+			"limit":  readLimit,
+			"cursor": cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		runs := make([]ExplorationRunNode, 0, readLimit)
+		for rec.Next(ctx) {
+			value, ok := rec.Record().Get("run")
+			if !ok {
+				continue
+			}
+			if node, ok := value.(neo4j.Node); ok {
+				runs = append(runs, nodeToExplorationRunNode(node))
+			}
+		}
+		return runs, rec.Err()
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("graph: list exploration runs: %w", err)
+	}
+	runs, _ := result.([]ExplorationRunNode)
+	nextCursor := ""
+	if len(runs) > limit {
+		nextCursor = runs[limit-1].UpdatedAt
+		runs = runs[:limit]
+	}
+	return runs, nextCursor, nil
+}
+
+func (c *Client) GetExplorationRunDetail(ctx context.Context, userID, runID string) (*ExplorationRunDetail, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetExplorationRunDetail, map[string]any{
+			"userId": userID,
+			"runId":  runID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !rec.Next(ctx) {
+			return nil, rec.Err()
+		}
+		return rec.Record().AsMap(), rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get exploration run detail: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	m := result.(map[string]any)
+	detail := &ExplorationRunDetail{}
+	if node, ok := m["run"].(neo4j.Node); ok {
+		detail.Run = nodeToExplorationRunNode(node)
+	}
+	if rawSteps, ok := m["steps"].([]any); ok {
+		for _, raw := range rawSteps {
+			if node, ok := raw.(neo4j.Node); ok {
+				detail.Steps = append(detail.Steps, nodeToExplorationStepNode(node))
+			}
+		}
+	}
+	return detail, nil
+}
+
+// SplitChildInput describes a single child node to create during a split.
+type SplitChildInput struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Seq       int            `json:"seq"`
+	StartDate string         `json:"startDate,omitempty"`
+	EndDate   string         `json:"endDate,omitempty"`
+	Region    string         `json:"region,omitempty"`
+	DayCount  int            `json:"dayCount,omitempty"`
+	Props     map[string]any `json:"props,omitempty"`
+}
+
+// SplitParentNode splits a parent node into N child nodes.
+func (c *Client) SplitParentNode(ctx context.Context, parentID, childType string, children []SplitChildInput) ([]string, error) {
+	cypher := FormatSplitCypher(childType)
+	childMaps := make([]map[string]any, len(children))
+	for i, ch := range children {
+		if ch.ID == "" {
+			ch.ID = uuid.NewString()
+		}
+		childMaps[i] = map[string]any{
+			"id": ch.ID, "name": ch.Name, "seq": ch.Seq,
+			"startDate": ch.StartDate, "endDate": ch.EndDate,
+			"region": ch.Region, "dayCount": ch.DayCount, "props": ch.Props,
+		}
+	}
+	result, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypher, map[string]any{
+			"parentID": parentID,
+			"children": childMaps,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			ids, _ := rec.Record().Get("ids")
+			return ids, nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: split parent: %w", err)
+	}
+	idList, _ := result.([]any)
+	ids := make([]string, len(idList))
+	for i, v := range idList {
+		ids[i] = fmt.Sprint(v)
+	}
+	return ids, nil
+}
+
+// CreateSequenceEdges creates NEXT_* edges between children of the same parent,
+// ordered by seq. For example, Phase1-[:NEXT_PHASE]->Phase2-[:NEXT_PHASE]->Phase3.
+func (c *Client) CreateSequenceEdges(ctx context.Context, parentID, childType string) error {
+	cypher := FormatSequenceCypher(childType)
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypher, map[string]any{"parentID": parentID})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: create sequence edges for %s: %w", childType, err)
+	}
+	return nil
+}
+
+// POIInput describes a POI to upsert into a Day.
+type POIInput struct {
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	AmapPOIID        string  `json:"amapPOIID"`
+	Type             string  `json:"type"`
+	Lat              float64 `json:"lat"`
+	Lng              float64 `json:"lng"`
+	Address          string  `json:"address"`
+	District         string  `json:"district"`
+	City             string  `json:"city"`
+	Description      string  `json:"description"`
+	VisitOrder       int     `json:"visitOrder"`
+	StartTime        string  `json:"startTime"`
+	EndTime          string  `json:"endTime"`
+	Duration         int     `json:"duration"`
+	IsMainStop       bool    `json:"isMainStop"`
+	IsOptional       bool    `json:"isOptional"`
+	IsRainyDayBackup bool    `json:"isRainyDayBackup"`
+	Notes            string  `json:"notes"`
+	VerifiedBy       string  `json:"verifiedBy"`
+	EstimatedCost    float64 `json:"estimatedCost"`
+}
+
+// UpsertPOIToDay creates or updates a POI and links it to a Day.
+func (c *Client) UpsertPOIToDay(ctx context.Context, dayID string, poi POIInput) (string, error) {
+	if poi.ID == "" {
+		poi.ID = uuid.NewString()
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherUpsertPOI, map[string]any{
+			"poiID": poi.ID, "dayID": dayID,
+			"name": poi.Name, "type": poi.Type, "lat": poi.Lat, "lng": poi.Lng,
+			"address": poi.Address, "district": poi.District, "city": poi.City,
+			"description": poi.Description,
+			"amapPOIID":   poi.AmapPOIID, "visitOrder": poi.VisitOrder,
+			"startTime": poi.StartTime, "endTime": poi.EndTime, "duration": poi.Duration,
+			"isMainStop": poi.IsMainStop, "isOptional": poi.IsOptional,
+			"isRainyDayBackup": poi.IsRainyDayBackup, "notes": poi.Notes,
+			"verifiedBy": poi.VerifiedBy, "estimatedCost": poi.EstimatedCost,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return "", fmt.Errorf("graph: upsert poi: %w", err)
+	}
+	return poi.ID, nil
+}
+
+// RouteInput describes a route between two POIs.
+type RouteInput struct {
+	FromPOIID      string  `json:"fromPOIID"`
+	ToPOIID        string  `json:"toPOIID"`
+	TransportMode  string  `json:"transportMode"`
+	Accuracy       string  `json:"accuracy"`
+	Source         string  `json:"source"`
+	PhaseID        string  `json:"phaseId"`
+	PhaseSeq       int     `json:"phaseSeq"`
+	PhaseName      string  `json:"phaseName"`
+	DayID          string  `json:"dayId"`
+	DayIndex       int     `json:"dayIndex"`
+	SegmentIndex   int     `json:"segmentIndex"`
+	FromNodeID     string  `json:"fromNodeId"`
+	ToNodeID       string  `json:"toNodeId"`
+	ConnectionType string  `json:"connectionType"`
+	DistanceMeters float64 `json:"distanceMeters"`
+	DurationMin    float64 `json:"durationMin"`
+	Polyline       string  `json:"polyline"`
+	EstimatedCost  float64 `json:"estimatedCost"`
+	Notes          string  `json:"notes"`
+}
+
+// WriteRoute creates a route relationship between two POIs.
+func (c *Client) WriteRoute(ctx context.Context, route RouteInput) error {
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherWriteRoute, map[string]any{
+			"fromPOIID": route.FromPOIID, "toPOIID": route.ToPOIID,
+			"transportMode": route.TransportMode, "distanceMeters": route.DistanceMeters,
+			"durationMin": route.DurationMin, "estimatedCost": route.EstimatedCost,
+			"polyline": route.Polyline, "notes": route.Notes,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: write route: %w", err)
+	}
+	return nil
+}
+
+// SoftDeleteNode keeps a node in the graph while marking it dimmed for UI rendering.
+func (c *Client) SoftDeleteNode(ctx context.Context, nodeID, reason string) error {
+	return c.UpdateNode(ctx, nodeID, map[string]any{
+		"visibilityStatus":  StatusDimmed,
+		"softDeletedAt":     time.Now().Format(time.RFC3339),
+		"softDeletedReason": reason,
+		"status":            StatusRejected,
+	})
+}
+
+// GuideInsightInput describes a guide insight to write.
+type GuideInsightInput struct {
+	ID             string   `json:"id"`
+	Source         string   `json:"source"`
+	SourceTitle    string   `json:"sourceTitle"`
+	SourceURL      string   `json:"sourceURL"`
+	AuthorName     string   `json:"authorName"`
+	ContentSummary string   `json:"contentSummary"`
+	Keywords       []string `json:"keywords"`
+	Sentiment      string   `json:"sentiment"`
+	Status         string   `json:"status"`
+	Score          float64  `json:"score"`
+	Reasons        []string `json:"reasons"`
+	MatchedPOIs    []string `json:"matchedPOIs"`
+	MatchedRegion  string   `json:"matchedRegion"`
+}
+
+// WriteGuideInsight writes a guide insight and links it to TripPlan and optionally to POIs/regions.
+func (c *Client) WriteGuideInsight(ctx context.Context, tripPlanID string, insight GuideInsightInput) (string, error) {
+	if insight.ID == "" {
+		insight.ID = uuid.NewString()
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherWriteGuideInsight, map[string]any{
+			"id": insight.ID, "tripPlanID": tripPlanID,
+			"source": insight.Source, "sourceTitle": insight.SourceTitle,
+			"sourceURL": insight.SourceURL, "authorName": insight.AuthorName,
+			"contentSummary": insight.ContentSummary, "keywords": insight.Keywords,
+			"sentiment": insight.Sentiment, "status": insight.Status,
+			"score": insight.Score, "reasons": insight.Reasons,
+			"matchedPOIs":   insight.MatchedPOIs,
+			"matchedRegion": insight.MatchedRegion,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return "", fmt.Errorf("graph: write guide insight: %w", err)
+	}
+	return insight.ID, nil
+}
+
+// LinkInsightToPOI links a guide insight to a specific POI.
+func (c *Client) LinkInsightToPOI(ctx context.Context, insightID, poiID string) error {
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherLinkInsightToPOI, map[string]any{
+			"insightID": insightID,
+			"poiID":     poiID,
+		})
+		return nil, err
+	})
+	return err
+}
+
+// LinkInsightToRegion links a guide insight to a Phase region.
+func (c *Client) LinkInsightToRegion(ctx context.Context, insightID, phaseID string) error {
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherLinkInsightToRegion, map[string]any{
+			"insightID": insightID,
+			"phaseID":   phaseID,
+		})
+		return nil, err
+	})
+	return err
+}
+
+// ReviewInput describes a review result to write.
+type ReviewInput struct {
+	ID                   string                `json:"id"`
+	Level                string                `json:"level"`
+	Dimension            string                `json:"dimension"`
+	Score                int                   `json:"score"`
+	Passed               bool                  `json:"passed"`
+	CriticalIssues       []string              `json:"criticalIssues"`
+	Issues               []string              `json:"issues"`
+	Suggestions          []string              `json:"suggestions"`
+	Summary              string                `json:"summary"`
+	ConstraintViolations []ConstraintViolation `json:"constraintViolations"`
+}
+
+// WriteReviewResult writes a review result and links it to the target node.
+func (c *Client) WriteReviewResult(ctx context.Context, targetNodeID string, review ReviewInput) (string, error) {
+	if review.ID == "" {
+		review.ID = uuid.NewString()
+	}
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherWriteReviewResult, map[string]any{
+			"id": review.ID, "targetNodeID": targetNodeID,
+			"level": review.Level, "dimension": review.Dimension,
+			"score": review.Score, "passed": review.Passed,
+			"criticalIssues": review.CriticalIssues, "issues": review.Issues,
+			"suggestions": review.Suggestions, "summary": review.Summary,
+			"constraintViolations": violationsToMaps(review.ConstraintViolations),
+		})
+		return nil, err
+	})
+	if err != nil {
+		return "", fmt.Errorf("graph: write review: %w", err)
+	}
+	return review.ID, nil
+}
+
+// UpdateNode updates one or more properties on any node.
+func (c *Client) UpdateNode(ctx context.Context, nodeID string, props map[string]any) error {
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherUpdateNode, map[string]any{
+			"nodeID":     nodeID,
+			"properties": props,
+		})
+		return nil, err
+	})
+	if err != nil {
+		return fmt.Errorf("graph: update node: %w", err)
+	}
+	return nil
+}
+
+// WriteClimateData writes climate data for a region+month combination.
+func (c *Client) WriteClimateData(ctx context.Context, cd ClimateDataNode) error {
+	_, err := c.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, cypherWriteClimateData, map[string]any{
+			"region": cd.Region, "month": cd.Month,
+			"avgHighTemp": cd.AvgHighTemp, "avgLowTemp": cd.AvgLowTemp,
+			"precipitation": cd.Precipitation, "humidity": cd.Humidity,
+			"rainyDays": cd.RainyDays, "sunriseTime": cd.SunriseTime,
+			"sunsetTime": cd.SunsetTime, "extremeWeatherRisk": cd.ExtremeWeatherRisk,
+		})
+		return nil, err
+	})
+	return err
+}
+
+// --- Read operations ---
+
+// DaySubgraph contains the full context for a single Day.
+type DaySubgraph struct {
+	Day      DayNode            `json:"day"`
+	POIs     []POINode          `json:"pois"`
+	Routes   []map[string]any   `json:"routes"`
+	Insights []GuideInsightNode `json:"insights"`
+	Reviews  []ReviewResultNode `json:"reviews"`
+	Climate  []ClimateDataNode  `json:"climate"`
+}
+
+// GetDaySubgraph returns the full subgraph for a single Day node.
+func (c *Client) GetDaySubgraph(ctx context.Context, dayID string) (*DaySubgraph, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetDaySubgraph, map[string]any{"nodeID": dayID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			return rec.Record().AsMap(), nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get day subgraph: %w", err)
+	}
+	return mapToDaySubgraph(result.(map[string]any)), nil
+}
+
+func mapToDaySubgraph(m map[string]any) *DaySubgraph {
+	sg := &DaySubgraph{}
+	if day, ok := m["day"].(neo4j.Node); ok {
+		sg.Day = nodeToDayNode(day)
+	}
+	if pois, ok := m["pois"].([]any); ok {
+		for _, p := range pois {
+			if n, ok := p.(neo4j.Node); ok {
+				sg.POIs = append(sg.POIs, nodeToPOINode(n))
+			}
+		}
+	}
+	if routes, ok := m["routes"].([]any); ok {
+		for _, r := range routes {
+			if rm, ok := r.(map[string]any); ok {
+				sg.Routes = append(sg.Routes, rm)
+			}
+		}
+	}
+	if insights, ok := m["insights"].([]any); ok {
+		for _, i := range insights {
+			if n, ok := i.(neo4j.Node); ok {
+				sg.Insights = append(sg.Insights, nodeToGuideInsightNode(n))
+			}
+		}
+	}
+	if reviews, ok := m["reviews"].([]any); ok {
+		for _, r := range reviews {
+			if n, ok := r.(neo4j.Node); ok {
+				sg.Reviews = append(sg.Reviews, nodeToReviewResultNode(n))
+			}
+		}
+	}
+	if climate, ok := m["climate"].([]any); ok {
+		for _, c := range climate {
+			if n, ok := c.(neo4j.Node); ok {
+				sg.Climate = append(sg.Climate, nodeToClimateDataNode(n))
+			}
+		}
+	}
+	return sg
+}
+
+// ChildrenSummary returns direct children of a node.
+func (c *Client) ChildrenSummary(ctx context.Context, parentID string) ([]map[string]any, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetChildren, map[string]any{"parentID": parentID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("children")
+			return val, nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get children: %w", err)
+	}
+	children, _ := result.([]any)
+	out := make([]map[string]any, len(children))
+	for i, c := range children {
+		out[i], _ = c.(map[string]any)
+	}
+	return out, nil
+}
+
+// TripOverview contains the full hierarchy tree summary.
+type TripOverview struct {
+	TripPlan TripPlanNode     `json:"tripPlan"`
+	Phases   []map[string]any `json:"phases"`
+	Months   []map[string]any `json:"months"`
+	Weeks    []map[string]any `json:"weeks"`
+	Days     []map[string]any `json:"days"`
+}
+
+// GetTripOverview returns the full hierarchy tree summary.
+func (c *Client) GetTripOverview(ctx context.Context, tripPlanID string) (*TripOverview, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetTripOverview, map[string]any{"tripPlanID": tripPlanID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			return rec.Record().AsMap(), nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get trip overview: %w", err)
+	}
+	overview := &TripOverview{}
+	m := result.(map[string]any)
+	if tp, ok := m["tp"].(neo4j.Node); ok {
+		overview.TripPlan = nodeToTripPlanNode(tp)
+	}
+	overview.Phases = toMapSlice(m["phases"])
+	overview.Months = toMapSlice(m["months"])
+	overview.Weeks = toMapSlice(m["weeks"])
+	overview.Days = toMapSlice(m["days"])
+	return overview, nil
+}
+
+// WeatherContext bundles climate, constraint, and seasonal event data.
+type WeatherContext struct {
+	ClimateData    []ClimateDataNode       `json:"climateData"`
+	Constraints    []WeatherConstraintNode `json:"constraints"`
+	SeasonalEvents []SeasonalEventNode     `json:"seasonalEvents"`
+}
+
+// GetWeatherContext returns climate + constraint + seasonal data for a region+month.
+func (c *Client) GetWeatherContext(ctx context.Context, region string, month int) (*WeatherContext, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetWeatherContext, map[string]any{
+			"region": region,
+			"month":  month,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			return rec.Record().AsMap(), nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get weather context: %w", err)
+	}
+	wc := &WeatherContext{}
+	m := result.(map[string]any)
+	if cdList, ok := m["climateData"].([]any); ok {
+		for _, cd := range cdList {
+			if n, ok := cd.(neo4j.Node); ok {
+				wc.ClimateData = append(wc.ClimateData, nodeToClimateDataNode(n))
+			}
+		}
+	}
+	if wcList, ok := m["constraints"].([]any); ok {
+		for _, w := range wcList {
+			if n, ok := w.(neo4j.Node); ok {
+				wc.Constraints = append(wc.Constraints, nodeToWeatherConstraintNode(n))
+			}
+		}
+	}
+	if seList, ok := m["seasonalEvents"].([]any); ok {
+		for _, se := range seList {
+			if n, ok := se.(neo4j.Node); ok {
+				wc.SeasonalEvents = append(wc.SeasonalEvents, nodeToSeasonalEventNode(n))
+			}
+		}
+	}
+	return wc, nil
+}
+
+// GetUnplannedNodes returns children of parent that are not yet done/reviewed.
+func (c *Client) GetUnplannedNodes(ctx context.Context, parentID string) ([]map[string]any, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetUnplannedNodes, map[string]any{"parentID": parentID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("unplanned")
+			return val, nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get unplanned: %w", err)
+	}
+	return toMapSlice(result), nil
+}
+
+// GetLayerReviewStatus returns review status for all children of a parent.
+func (c *Client) GetLayerReviewStatus(ctx context.Context, parentID string) ([]map[string]any, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetLayerReviewStatus, map[string]any{"parentID": parentID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("reviewStatus")
+			return val, nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get layer review: %w", err)
+	}
+	return toMapSlice(result), nil
+}
+
+// GetConstraintViolations returns all failed reviews under a node.
+func (c *Client) GetConstraintViolations(ctx context.Context, nodeID string) ([]map[string]any, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetConstraintViolations, map[string]any{"nodeID": nodeID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("violations")
+			return val, nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("graph: get violations: %w", err)
+	}
+	return toMapSlice(result), nil
+}
+
+// GetNodeBudgetSummary returns total cost under a node.
+func (c *Client) GetNodeBudgetSummary(ctx context.Context, nodeID string) (float64, error) {
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypherGetNodeBudgetSummary, map[string]any{"nodeID": nodeID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("totalCost")
+			return val, nil
+		}
+		return nil, rec.Err()
+	})
+	if err != nil {
+		return 0, fmt.Errorf("graph: get budget: %w", err)
+	}
+	if v, ok := result.(float64); ok {
+		return v, nil
+	}
+	return 0, nil
+}
+
+// CountChildrenByType counts child nodes of a specific type under a parent.
+func (c *Client) CountChildrenByType(ctx context.Context, parentID string, childType string) (int, error) {
+	cypher := fmt.Sprintf(`
+		MATCH (parent {id: $parentID})-[:HAS_%s]->(child:%s)
+		RETURN count(child) AS count
+	`, childType, childType)
+	result, err := c.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rec, err := tx.Run(ctx, cypher, map[string]any{"parentID": parentID})
+		if err != nil {
+			return nil, err
+		}
+		if rec.Next(ctx) {
+			val, _ := rec.Record().Get("count")
+			return val, nil
+		}
+		return 0, rec.Err()
+	})
+	if err != nil {
+		return 0, fmt.Errorf("graph: count children by type %s: %w", childType, err)
+	}
+	if v, ok := result.(int64); ok {
+		return int(v), nil
+	}
+	if v, ok := result.(float64); ok {
+		return int(v), nil
+	}
+	return 0, nil
+}
+
+// --- Helpers ---
+
+func violationsToMaps(violations []ConstraintViolation) []map[string]any {
+	if len(violations) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, len(violations))
+	for i, v := range violations {
+		out[i] = map[string]any{
+			"dimension": v.Dimension,
+			"rule":      v.Rule,
+			"actual":    v.Actual,
+			"threshold": v.Threshold,
+			"severity":  v.Severity,
+		}
+	}
+	return out
+}
+
+func toMapSlice(v any) []map[string]any {
+	list, _ := v.([]any)
+	out := make([]map[string]any, len(list))
+	for i, item := range list {
+		out[i], _ = item.(map[string]any)
+	}
+	return out
+}
+
+func getStringProp(props map[string]any, key string) string {
+	if v, ok := props[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getFloatProp(props map[string]any, key string) float64 {
+	switch v := props[key].(type) {
+	case float64:
+		return v
+	case int64:
+		return float64(v)
+	default:
+		return 0
+	}
+}
+
+func getIntProp(props map[string]any, key string) int {
+	switch v := props[key].(type) {
+	case int64:
+		return int(v)
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func getInt64Prop(props map[string]any, key string) int64 {
+	switch v := props[key].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		return 0
+	}
+}
+
+func getBoolProp(props map[string]any, key string) bool {
+	if v, ok := props[key].(bool); ok {
+		return v
+	}
+	return false
+}
+
+func getStringSlice(props map[string]any, key string) []string {
+	if v, ok := props[key].([]any); ok {
+		out := make([]string, len(v))
+		for i, item := range v {
+			out[i] = fmt.Sprint(item)
+		}
+		return out
+	}
+	return nil
+}
+
+func nodeToExplorationRunNode(n neo4j.Node) ExplorationRunNode {
+	p := n.Props
+	return ExplorationRunNode{
+		ID:           getStringProp(p, "id"),
+		ThreadID:     getStringProp(p, "threadId"),
+		UserID:       getStringProp(p, "userId"),
+		SessionID:    getStringProp(p, "sessionId"),
+		TripPlanID:   getStringProp(p, "tripPlanId"),
+		Title:        getStringProp(p, "title"),
+		Stage:        getStringProp(p, "stage"),
+		Status:       getStringProp(p, "status"),
+		LastMessage:  getStringProp(p, "lastMessage"),
+		FinalSummary: getStringProp(p, "finalSummary"),
+		CreatedAt:    getStringProp(p, "createdAt"),
+		UpdatedAt:    getStringProp(p, "updatedAt"),
+	}
+}
+
+func nodeToExplorationStepNode(n neo4j.Node) ExplorationStepNode {
+	p := n.Props
+	return ExplorationStepNode{
+		ID:             getStringProp(p, "id"),
+		RunID:          getStringProp(p, "runId"),
+		ThreadID:       getStringProp(p, "threadId"),
+		Seq:            getInt64Prop(p, "seq"),
+		Level:          getStringProp(p, "level"),
+		ActionType:     getStringProp(p, "actionType"),
+		EventType:      getStringProp(p, "eventType"),
+		PublicAction:   getStringProp(p, "publicAction"),
+		ThoughtSummary: getStringProp(p, "thoughtSummary"),
+		RecordedFacts:  getStringSlice(p, "recordedFacts"),
+		MessageRole:    getStringProp(p, "messageRole"),
+		Message:        getStringProp(p, "message"),
+		PayloadJSON:    getStringProp(p, "payloadJSON"),
+		Status:         getStringProp(p, "status"),
+		CreatedAt:      getStringProp(p, "createdAt"),
+	}
+}
+
+func nodeToTripPlanNode(n neo4j.Node) TripPlanNode {
+	p := n.Props
+	return TripPlanNode{
+		ID: getStringProp(p, "id"), Name: getStringProp(p, "name"),
+		StartDate: getStringProp(p, "startDate"), EndDate: getStringProp(p, "endDate"),
+		TotalDays: getIntProp(p, "totalDays"), BudgetTotal: getFloatProp(p, "budgetTotal"),
+		TravelStyle: getStringProp(p, "travelStyle"), TransportMode: getStringProp(p, "transportMode"),
+		Interests: getStringSlice(p, "interests"), MustVisit: getStringSlice(p, "mustVisit"),
+		Avoid: getStringSlice(p, "avoid"), RawRequirements: getStringProp(p, "rawRequirements"),
+		Status:                          getStringProp(p, "status"),
+		MaxConsecutiveHighIntensityDays: getIntProp(p, "maxConsecutiveHighIntensityDays"),
+		UserID:                          getStringProp(p, "userId"),
+		SessionID:                       getStringProp(p, "sessionId"),
+		RequestID:                       getStringProp(p, "requestId"),
+	}
+}
+
+func nodeToDayNode(n neo4j.Node) DayNode {
+	p := n.Props
+	return DayNode{
+		ID: getStringProp(p, "id"), Date: getStringProp(p, "date"),
+		DayIndex: getIntProp(p, "dayIndex"), Theme: getStringProp(p, "theme"),
+		StartPoint: getStringProp(p, "startPoint"), PrimaryArea: getStringProp(p, "primaryArea"),
+		RouteOverview: getStringProp(p, "routeOverview"), Intensity: getStringProp(p, "intensity"),
+		ThinkingNotes: getStringProp(p, "thinkingNotes"), Status: getStringProp(p, "status"),
+	}
+}
+
+func nodeToPOINode(n neo4j.Node) POINode {
+	p := n.Props
+	return POINode{
+		ID: getStringProp(p, "id"), Name: getStringProp(p, "name"),
+		AmapPOIID: getStringProp(p, "amapPOIID"), Type: getStringProp(p, "type"),
+		Lat: getFloatProp(p, "lat"), Lng: getFloatProp(p, "lng"),
+		Address: getStringProp(p, "address"), District: getStringProp(p, "district"),
+		City: getStringProp(p, "city"), Description: getStringProp(p, "description"),
+		VisitOrder: getIntProp(p, "visitOrder"),
+		StartTime:  getStringProp(p, "startTime"), EndTime: getStringProp(p, "endTime"),
+		Duration: getIntProp(p, "duration"), IsMainStop: getBoolProp(p, "isMainStop"),
+		IsOptional: getBoolProp(p, "isOptional"), IsRainyDayBackup: getBoolProp(p, "isRainyDayBackup"),
+		Notes: getStringProp(p, "notes"), VerifiedBy: getStringProp(p, "verifiedBy"),
+		EstimatedCost: getFloatProp(p, "estimatedCost"),
+	}
+}
+
+func nodeToGuideInsightNode(n neo4j.Node) GuideInsightNode {
+	p := n.Props
+	return GuideInsightNode{
+		ID: getStringProp(p, "id"), Source: getStringProp(p, "source"),
+		SourceTitle: getStringProp(p, "sourceTitle"), SourceURL: getStringProp(p, "sourceURL"),
+		AuthorName: getStringProp(p, "authorName"), ContentSummary: getStringProp(p, "contentSummary"),
+		Keywords: getStringSlice(p, "keywords"), Sentiment: getStringProp(p, "sentiment"),
+		Status: getStringProp(p, "status"), Score: getFloatProp(p, "score"),
+		Reasons:     getStringSlice(p, "reasons"),
+		MatchedPOIs: getStringSlice(p, "matchedPOIs"), MatchedRegion: getStringProp(p, "matchedRegion"),
+	}
+}
+
+func nodeToReviewResultNode(n neo4j.Node) ReviewResultNode {
+	p := n.Props
+	return ReviewResultNode{
+		ID: getStringProp(p, "id"), Level: getStringProp(p, "level"),
+		Dimension: getStringProp(p, "dimension"), Score: getIntProp(p, "score"),
+		Passed: getBoolProp(p, "passed"), CriticalIssues: getStringSlice(p, "criticalIssues"),
+		Issues: getStringSlice(p, "issues"), Suggestions: getStringSlice(p, "suggestions"),
+		Summary:              getStringProp(p, "summary"),
+		ConstraintViolations: toConstraintViolations(p["constraintViolations"]),
+	}
+}
+
+func toConstraintViolations(v any) []ConstraintViolation {
+	list, _ := v.([]any)
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]ConstraintViolation, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, ConstraintViolation{
+			Dimension: fmt.Sprint(m["dimension"]),
+			Rule:      fmt.Sprint(m["rule"]),
+			Actual:    fmt.Sprint(m["actual"]),
+			Threshold: fmt.Sprint(m["threshold"]),
+			Severity:  fmt.Sprint(m["severity"]),
+		})
+	}
+	return out
+}
+
+func nodeToClimateDataNode(n neo4j.Node) ClimateDataNode {
+	p := n.Props
+	return ClimateDataNode{
+		ID: getStringProp(p, "id"), Region: getStringProp(p, "region"),
+		Month: getIntProp(p, "month"), AvgHighTemp: getFloatProp(p, "avgHighTemp"),
+		AvgLowTemp: getFloatProp(p, "avgLowTemp"), Precipitation: getFloatProp(p, "precipitation"),
+		Humidity: getFloatProp(p, "humidity"), RainyDays: getIntProp(p, "rainyDays"),
+		SunriseTime: getStringProp(p, "sunriseTime"), SunsetTime: getStringProp(p, "sunsetTime"),
+		ExtremeWeatherRisk: getStringProp(p, "extremeWeatherRisk"),
+	}
+}
+
+func nodeToWeatherConstraintNode(n neo4j.Node) WeatherConstraintNode {
+	p := n.Props
+	return WeatherConstraintNode{
+		ID: getStringProp(p, "id"), Region: getStringProp(p, "region"),
+		Month: getIntProp(p, "month"), ConstraintType: getStringProp(p, "constraintType"),
+		Severity:           getStringProp(p, "severity"),
+		AffectedActivities: getStringSlice(p, "affectedActivities"),
+		Threshold:          getStringProp(p, "threshold"), Description: getStringProp(p, "description"),
+	}
+}
+
+func nodeToSeasonalEventNode(n neo4j.Node) SeasonalEventNode {
+	p := n.Props
+	return SeasonalEventNode{
+		ID: getStringProp(p, "id"), Name: getStringProp(p, "name"),
+		Region: getStringProp(p, "region"), StartMonth: getIntProp(p, "startMonth"),
+		EndMonth: getIntProp(p, "endMonth"), Type: getStringProp(p, "type"),
+		Description: getStringProp(p, "description"),
+	}
+}

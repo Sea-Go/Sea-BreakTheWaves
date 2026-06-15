@@ -1,0 +1,3 @@
+interface:
+  display_name: "慢旅游路线规划器"
+  short_description: "用高德工具规划顺路、差异化、低人流压力的慢旅游路线。"

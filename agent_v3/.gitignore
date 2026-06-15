@@ -1,0 +1,18 @@
+# Local secrets/configuration.
+/config.yaml
+
+# Local build outputs and runtime logs.
+/*.exe
+/*.log
+
+# Generated docs and live-check outputs.
+/docs/365-agent-final-output.txt
+/docs/365-agent-raw-output-v5.txt
+/docs/365-agent-raw-output.txt
+/docs/365-day-road-trip-plan.md
+/docs/365-day-test-report.md
+/docs/365-sync-output.txt
+/docs/365天全国自驾旅行规划.md
+/docs/amap_tools_live_check.md
+/docs/bilibili_tools_live_check.md
+/docs/zhihu_tools_live_check.md

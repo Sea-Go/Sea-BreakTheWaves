@@ -1,0 +1,54 @@
+ali:
+  baseurl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  analysis_model: "deepseek-v4-pro"
+  test_model: "kimi-k2.6"
+  amap_model: "kimi-k2.6"
+  apikey: "YOUR_LLM_API_KEY"
+
+postgres:
+  dsn: "postgres://postgres:postgres@127.0.0.1:15432/trpc_agent?sslmode=disable&TimeZone=Asia/Shanghai"
+  database: "trpc_agent_go"
+
+agent:
+  app_name: "BreakTheWaves"
+  name: "chat-agent"
+  session_table_prefix: "chat_agent"
+  session_ttl: "24h"
+  async_persister_num: 4
+  max_history_runs: 20
+  preload_session_recall: 0
+  preload_session_recall_min_score: 0.60
+  read_header_timeout: "5s"
+
+amap:
+  baseurl: "https://restapi.amap.com/v3"
+  api_key: ""
+  free_only: true
+  output: "JSON"
+  timeout_seconds: 10
+  qps: 1
+  retry:
+    max_retries: 2
+    backoff_seconds: 0.5
+
+zhihu:
+  access_secret: ""
+  openapi_base_url: "https://developer.zhihu.com"
+  zhihu_search_url: ""
+  global_search_url: "https://developer.zhihu.com/api/v1/content/global_search"
+  guide_material:
+    query_count: 10
+    per_query_count: 10
+    review_pool_size: 30
+    selected_article_count: 12
+    article_only: false
+    accept_score: 70
+    review_score: 45
+    min_summary_chars: 20
+    min_vote_up_count: 3
+    max_age_days: 1095
+    must_keywords: []
+    should_keywords: []
+    negative_keywords: []
+    blocked_authors: []
+    trusted_authors: []
