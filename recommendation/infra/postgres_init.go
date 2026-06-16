@@ -120,6 +120,56 @@ func ensurePGSchema(ctx context.Context, db *sql.DB) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			PRIMARY KEY (user_id, memory_type, period_bucket, chunk_index)
 		);`,
+		`CREATE TABLE IF NOT EXISTS reco_request_logs (
+			rec_request_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			surface TEXT NOT NULL DEFAULT 'home_feed',
+			query TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			returned_count INT NOT NULL DEFAULT 0,
+			candidate_count INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_reco_request_logs_surface_created
+			ON reco_request_logs(surface, created_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS reco_event_logs (
+			id BIGSERIAL PRIMARY KEY,
+			rec_request_id TEXT NOT NULL DEFAULT '',
+			user_id TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			surface TEXT NOT NULL DEFAULT 'home_feed',
+			article_id TEXT NOT NULL DEFAULT '',
+			rank INT NOT NULL DEFAULT 0,
+			event_type TEXT NOT NULL,
+			event_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_reco_event_logs_surface_ts
+			ON reco_event_logs(surface, event_ts DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_reco_event_logs_request_article
+			ON reco_event_logs(rec_request_id, article_id);`,
+		`CREATE TABLE IF NOT EXISTS reco_eval_cases (
+			case_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL DEFAULT '',
+			query TEXT NOT NULL DEFAULT '',
+			surface TEXT NOT NULL DEFAULT 'dashboard_recommend',
+			period_bucket TEXT NOT NULL DEFAULT 'd1',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);`,
+		`CREATE TABLE IF NOT EXISTS reco_eval_labels (
+			case_id TEXT NOT NULL REFERENCES reco_eval_cases(case_id) ON DELETE CASCADE,
+			article_id TEXT NOT NULL,
+			relevance REAL NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY(case_id, article_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS reco_eval_runs (
+			run_id TEXT PRIMARY KEY,
+			case_count INT NOT NULL DEFAULT 0,
+			metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);`,
 	}
 
 	for _, s := range stmts {

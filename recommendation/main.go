@@ -19,6 +19,7 @@ import (
 	"sea/storage"
 	"sea/zlog"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -59,6 +60,7 @@ func main() {
 	memoryRepo := storage.NewMemoryRepo(db)
 	historyRepo := storage.NewUserHistoryRepo(db)
 	memoryChunkRepo := storage.NewMemoryChunkRepo(db)
+	recoEvaluationRepo := storage.NewRecoEvaluationRepo(db)
 
 	sourceDB := infra.SourcePostgres()
 	sourceArticleRepo := storage.NewSourceArticleRepo(sourceDB)
@@ -86,11 +88,13 @@ func main() {
 	}
 
 	aiClient := infra.NewAIClient()
-	recoAgent := agent.NewRecoAgent(aiClient, reg, poolRepo, memoryRepo, memoryChunkRepo, sourceLikeRepo, refillDispatcher)
+	recoAgent := agent.NewRecoAgent(aiClient, reg, articleRepo, poolRepo, memoryRepo, memoryChunkRepo, sourceLikeRepo, refillDispatcher)
 	contentSearchAgent := agent.NewContentSearchAgent(aiClient, reg, articleRepo)
 	titleSearchService := searchsvc.NewArticleTitleSearchService(sourceArticleRepo)
 	authorSearchService := searchsvc.NewAuthorNameSearchService(sourceUserRepo)
 	onboardingQuestionnaireService := searchsvc.NewOnboardingQuestionnaireService(memoryRepo, memoryChunkRepo)
+	recoEvaluationService := searchsvc.NewRecoEvaluationService(recoEvaluationRepo)
+	prometheus.MustRegister(searchsvc.NewRecoEvaluationCollector(recoEvaluationService))
 
 	r := router.NewRouter(
 		reg,
@@ -99,6 +103,7 @@ func main() {
 		titleSearchService,
 		authorSearchService,
 		onboardingQuestionnaireService,
+		recoEvaluationService,
 	)
 	srv := &http.Server{
 		Addr:    config.Cfg.Services.HTTPAddr + ":" + config.Cfg.Services.HTTPPort,

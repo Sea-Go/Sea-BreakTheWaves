@@ -122,6 +122,60 @@ func (r *ArticleRepo) GetArticleScores(ctx context.Context, ids []string) (map[s
 	return m, rows.Err()
 }
 
+func (r *ArticleRepo) ListFallbackArticleIDs(ctx context.Context, limit int, excludedIDs []string) ([]string, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	seen := make(map[string]struct{}, len(excludedIDs))
+	args := make([]any, 0, len(excludedIDs)+1)
+	placeholders := make([]string, 0, len(excludedIDs))
+	for _, id := range excludedIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		args = append(args, id)
+		placeholders = append(placeholders, "$"+itoa(len(args)))
+	}
+
+	query := "SELECT article_id FROM articles"
+	if len(placeholders) > 0 {
+		query += " WHERE article_id NOT IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	args = append(args, limit)
+	query += " ORDER BY score DESC, created_at DESC, article_id DESC LIMIT $" + itoa(len(args))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		id = strings.TrimSpace(id)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
+}
+
 type ArticleMeta struct {
 	ArticleID string
 	Title     string

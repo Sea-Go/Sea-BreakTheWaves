@@ -35,6 +35,7 @@ type RecoAgent struct {
 	ai       *openai.Client
 	registry *skillsys.Registry
 
+	articleRepo      *storage.ArticleRepo
 	poolRepo         *storage.PoolRepo
 	memoryRepo       *storage.MemoryRepo
 	sourceLikeRepo   *storage.SourceLikeRepo
@@ -46,6 +47,7 @@ type RecoAgent struct {
 func NewRecoAgent(
 	ai *openai.Client,
 	reg *skillsys.Registry,
+	articleRepo *storage.ArticleRepo,
 	poolRepo *storage.PoolRepo,
 	memoryRepo *storage.MemoryRepo,
 	memoryChunkRepo *storage.MemoryChunkRepo,
@@ -54,6 +56,7 @@ func NewRecoAgent(
 ) *RecoAgent {
 	return &RecoAgent{
 		ai: ai, registry: reg,
+		articleRepo:      articleRepo,
 		poolRepo:         poolRepo,
 		memoryRepo:       memoryRepo,
 		memoryChunkRepo:  memoryChunkRepo,
@@ -368,14 +371,23 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 	}
 	if len(candidates) == 0 {
 		fallback = true
+		fallbackIDs, fallbackErr := a.loadFallbackArticleIDs(ctx, req.UserID, n)
+		if fallbackErr != nil {
+			zlog.L().Warn("load fallback recommendation articles failed",
+				zap.String("user_id", req.UserID),
+				zap.String("surface", req.Surface),
+				zap.Error(fallbackErr),
+			)
+		}
 		expl.Add("rank.rerank", map[string]any{
 			"candidate_in":  0,
-			"candidate_out": 0,
+			"candidate_out": len(fallbackIDs),
 			"top_reason":    "",
+			"fallback":      "article_repo",
 		})
 		respOut.Status = "fallback"
-		respOut.IDs = []string{}
-		respOut.ArticleIDs = []string{}
+		respOut.IDs = fallbackIDs
+		respOut.ArticleIDs = fallbackIDs
 		respOut.Explanation = ""
 		if req.Explain {
 			respOut.ExplainTrace = expl.Trace()
@@ -878,6 +890,17 @@ func (a *RecoAgent) loadDislikedArticleIDs(ctx context.Context, userID string) (
 		return nil, nil
 	}
 	return a.sourceLikeRepo.ListDislikedArticleIDs(ctx, userID, 1000)
+}
+
+func (a *RecoAgent) loadFallbackArticleIDs(ctx context.Context, userID string, limit int) ([]string, error) {
+	if a == nil || a.articleRepo == nil {
+		return nil, nil
+	}
+	dislikedIDs, err := a.loadDislikedArticleIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.articleRepo.ListFallbackArticleIDs(ctx, limit, dislikedIDs)
 }
 
 func filterExcludedArticleIDs(articleIDs []string, excludedArticleIDs []string) []string {

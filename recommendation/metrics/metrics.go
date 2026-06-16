@@ -129,6 +129,28 @@ var (
 		Name:      "items_inserted",
 		Help:      "Total number of pool items inserted by pool type.",
 	}, []string{"pool_type"})
+
+	RecoRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco",
+		Name:      "requests_total",
+		Help:      "Recommendation business requests grouped by surface and status.",
+	}, []string{"surface", "status"})
+
+	RecoEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco",
+		Name:      "events_total",
+		Help:      "Recommendation behavior events grouped by surface and event type.",
+	}, []string{"surface", "event_type"})
+
+	RecoReturnedItems = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "genrec",
+		Subsystem: "reco",
+		Name:      "returned_items",
+		Help:      "Distribution of returned recommendation list sizes.",
+		Buckets:   []float64{0, 1, 3, 5, 10, 20, 30, 50},
+	}, []string{"surface", "status"})
 )
 
 func InitMetrics(_ chan os.Signal, _ *config.Config) {
@@ -150,5 +172,8 @@ func InitMetrics(_ chan os.Signal, _ *config.Config) {
 		PoolRefillInflight,
 		PoolRefillStageDurationSeconds,
 		PoolRefillItemsInserted,
+		RecoRequestsTotal,
+		RecoEventsTotal,
+		RecoReturnedItems,
 	)
 }

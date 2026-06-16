@@ -8,6 +8,7 @@ import (
 	"sea/middleware"
 	searchsvc "sea/service"
 	"sea/skillsys"
+	rectypes "sea/type"
 	"sea/zlog"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,7 @@ func NewRouter(
 	titleSearch *searchsvc.ArticleTitleSearchService,
 	authorSearch *searchsvc.AuthorNameSearchService,
 	onboardingQuestionnaire *searchsvc.OnboardingQuestionnaireService,
+	recoEvaluation *searchsvc.RecoEvaluationService,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
@@ -63,7 +65,52 @@ func NewRouter(
 			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
 			return
 		}
+		if recoEvaluation != nil {
+			if err := recoEvaluation.RecordRecommendation(c.Request.Context(), req, resp); err != nil {
+				zlog.L().Warn("record recommendation evaluation failed", zap.Error(err))
+			}
+		}
 		OK(c, resp)
+	})
+
+	r.POST("/api/v1/reco/events", func(c *gin.Context) {
+		var req struct {
+			Events []rectypes.RecoEventLog `json:"events"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
+			return
+		}
+		if recoEvaluation == nil {
+			OK(c, gin.H{"accepted": 0})
+			return
+		}
+
+		events := make([]rectypes.RecoEventLog, 0, len(req.Events))
+		events = append(events, req.Events...)
+		resp, err := recoEvaluation.RecordEvents(c.Request.Context(), rectypes.RecoEventRequest{Events: events})
+		if err != nil {
+			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), "")
+			return
+		}
+		OK(c, resp)
+	})
+
+	r.GET("/api/v1/admin/reco/evaluation/summary", func(c *gin.Context) {
+		if recoEvaluation == nil {
+			OK(c, gin.H{"metric_values": []any{}})
+			return
+		}
+		summary, err := recoEvaluation.Summary(
+			c.Request.Context(),
+			c.DefaultQuery("surface", "dashboard_recommend"),
+			c.DefaultQuery("window", "24h"),
+		)
+		if err != nil {
+			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), "")
+			return
+		}
+		OK(c, summary)
 	})
 
 	r.POST("/api/v1/search", func(c *gin.Context) {

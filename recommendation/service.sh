@@ -3,8 +3,8 @@ set -e
 
 APP_NAME="breakthewaves"
 IMAGE_NAME="breakthewaves:latest"
-WORKDIR="/root/Sea-BreakTheWaves"
-PORT="20721:20721"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+WORKDIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 start() {
   cd "$WORKDIR" || exit 1
@@ -20,7 +20,7 @@ start() {
   echo "==> docker run"
   docker run -d \
     --name "$APP_NAME" \
-    -p "$PORT" \
+    --network host \
     --restart always \
     "$IMAGE_NAME"
 
