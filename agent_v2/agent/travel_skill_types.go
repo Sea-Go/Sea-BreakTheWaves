@@ -64,7 +64,7 @@ type TravelRequirementSnapshot struct {
 
 	BudgetTotal            string   `json:"budget_total"`             // 总预算
 	BudgetMonthly          string   `json:"budget_monthly"`           // 月预算
-	TransportMode          string   `json:"transport_mode"`           // 交通方式：自驾/高铁/飞机/混合
+	TransportMode          string   `json:"transport_mode"`           // 交通方式，由需求理解 Agent 按上下文输出
 	TravelStyle            []string `json:"travel_style"`             // 旅行风格：自然风光/历史文化/美食/慢旅行等
 	Pace                   string   `json:"pace"`                     // 节奏：轻松/均衡/紧凑
 	HighAltitudeAcceptance string   `json:"high_altitude_acceptance"` // 高海拔接受度
@@ -119,6 +119,8 @@ type TravelSkillRuntime struct {
 	LastUserMessage string `json:"last_user_message"`
 	LastSkillOutput string `json:"last_skill_output"`
 
+	LastFollowUpQuestions []string `json:"last_follow_up_questions"`
+
 	CreatedAt int64 `json:"created_at"`
 	UpdatedAt int64 `json:"updated_at"`
 }
@@ -157,16 +159,13 @@ type SkillResult struct {
 // ═══════════════════════════════════════════
 
 // TravelPlanningDecision 是代码层对需求完整度的统一决策结果。
-// 不依赖 LLM 输出，纯粹基于 snapshot + userMessage 计算。
+// 不依赖自然语言解析，纯粹基于 snapshot 的结构化字段完整度计算。
 type TravelPlanningDecision struct {
-	Ready              bool                `json:"ready"`
-	MissingP0          []string            `json:"missing_p0"`
-	MissingP1          []string            `json:"missing_p1"`
-	MissingP2          []string            `json:"missing_p2"`
-	ShouldAskUser      bool                `json:"should_ask_user"`
-	ShouldApplyDefault bool                `json:"should_apply_default"`
-	DefaultIntent      TravelDefaultIntent `json:"default_intent"`
-	Questions          []string            `json:"questions"`
+	Ready         bool     `json:"ready"`
+	MissingP0     []string `json:"missing_p0"`
+	MissingP1     []string `json:"missing_p1"`
+	MissingP2     []string `json:"missing_p2"`
+	ShouldAskUser bool     `json:"should_ask_user"`
 }
 
 // ═══════════════════════════════════════════

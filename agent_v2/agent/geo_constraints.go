@@ -162,7 +162,7 @@ func buildTravelGeoConstraintFromOverview(overview *graph.TripOverview) TravelGe
 		TravelStyle:   append([]string{overview.TripPlan.TravelStyle}, overview.TripPlan.Interests...),
 		MustVisit:     append([]string(nil), overview.TripPlan.MustVisit...),
 	}
-	enrichRequirementWithDeterministicFields(&req, req.DestinationScope)
+	enrichRequirementPlanningAnchors(&req)
 	return buildTravelGeoConstraint(req, overview.TripPlan.RawRequirements)
 }
 

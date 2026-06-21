@@ -209,19 +209,40 @@ func writeJSON(w http.ResponseWriter, payload any) {
 }
 
 func userMessageFromHistory(messages []travelStreamMessage) string {
-	userParts := make([]string, 0, len(messages))
+	type historyPart struct {
+		role    string
+		content string
+	}
+	parts := make([]historyPart, 0, len(messages))
 	for _, message := range messages {
-		if strings.EqualFold(message.Role, "user") && strings.TrimSpace(message.Content) != "" {
-			userParts = append(userParts, strings.TrimSpace(message.Content))
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
 		}
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role == "" {
+			role = "message"
+		}
+		parts = append(parts, historyPart{role: role, content: content})
 	}
-	if len(userParts) == 1 {
-		return userParts[0]
+	if len(parts) == 1 && parts[0].role == "user" {
+		return parts[0].content
 	}
-	if len(userParts) > 1 {
-		lines := make([]string, 0, len(userParts))
-		for i, content := range userParts {
-			lines = append(lines, fmt.Sprintf("用户第%d轮：%s", i+1, content))
+	if len(parts) > 0 {
+		lines := make([]string, 0, len(parts))
+		userCount := 0
+		assistantCount := 0
+		for _, part := range parts {
+			switch part.role {
+			case "user":
+				userCount++
+				lines = append(lines, fmt.Sprintf("用户第%d轮：%s", userCount, part.content))
+			case "assistant", "agent", "ai":
+				assistantCount++
+				lines = append(lines, fmt.Sprintf("Agent第%d轮：%s", assistantCount, part.content))
+			default:
+				lines = append(lines, part.content)
+			}
 		}
 		return strings.Join(lines, "\n")
 	}

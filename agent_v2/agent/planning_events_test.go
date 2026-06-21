@@ -255,7 +255,7 @@ func TestEmitRouteSegmentMapEventsEmitsRouteAndDecision(t *testing.T) {
 			{
 				FromPOIID:      "poi-1",
 				ToPOIID:        "poi-2",
-				TransportMode:  "driving",
+				TransportMode:  "transit",
 				DistanceMeters: 1200,
 				DurationMin:    8,
 				Notes:          "距离短，适合当天串联。",
@@ -385,33 +385,66 @@ func TestPOIInputsFromAmapSearchRequireExactLocation(t *testing.T) {
 	}
 }
 
-func TestRouteInputFromDrivingResponseParsesPolyline(t *testing.T) {
-	route := routeInputFromDrivingResponse(tools.AmapResponse{
-		OK: true,
-		Raw: map[string]any{
-			"route": map[string]any{
-				"paths": []any{
-					map[string]any{
-						"distance": "2500",
-						"duration": "600",
-						"steps": []any{
-							map[string]any{"polyline": "102.704412,25.050972;102.710000,25.052000"},
-							map[string]any{"polyline": "102.710000,25.052000;102.720000,25.060000"},
-						},
-					},
-				},
-			},
+func TestRouteInputsFromRawAmapRoutesUsesAgentMode(t *testing.T) {
+	routes := routeInputsFromRawAmapRoutes(
+		[]rawAmapRoute{{
+			FromPOI:        0,
+			ToPOI:          1,
+			TransportMode:  "walking",
+			DistanceMeters: 850,
+			DurationMin:    12,
+			Polyline:       [][2]float64{{102.704412, 25.050972}, {102.72, 25.06}},
+			Notes:          "agent selected route",
+		}},
+		[]graph.POIInput{
+			{ID: "poi-1", Name: "翠湖公园", Lng: 102.704412, Lat: 25.050972},
+			{ID: "poi-2", Name: "云南大学", Lng: 102.72, Lat: 25.06},
 		},
-	}, graph.POIInput{ID: "poi-1", Name: "翠湖公园", Lng: 102.704412, Lat: 25.050972}, graph.POIInput{ID: "poi-2", Name: "云南大学", Lng: 102.72, Lat: 25.06})
+		dayExpansionContext{DayID: "day-1", DayIndex: 1},
+	)
 
-	if route == nil {
-		t.Fatal("route is nil")
+	if len(routes) != 1 {
+		t.Fatalf("route count = %d, want 1: %#v", len(routes), routes)
 	}
-	if route.DistanceMeters != 2500 || route.DurationMin != 10 {
+	route := routes[0]
+	if route.TransportMode != "walking" {
+		t.Fatalf("transport mode = %q, want walking", route.TransportMode)
+	}
+	if route.DistanceMeters != 850 || route.DurationMin != 12 {
 		t.Fatalf("unexpected distance/duration: %#v", route)
 	}
-	points := publicPolylineFromRoute(*route, graph.POIInput{}, graph.POIInput{})
-	if len(points) != 3 {
-		t.Fatalf("polyline points = %d, want 3: %#v", len(points), points)
+	points := publicPolylineFromRoute(route, graph.POIInput{}, graph.POIInput{})
+	if len(points) != 2 {
+		t.Fatalf("polyline points = %d, want 2: %#v", len(points), points)
+	}
+}
+
+func TestRouteInputsFromRawAmapRoutesRequiresAgentMode(t *testing.T) {
+	routes := routeInputsFromRawAmapRoutes(
+		[]rawAmapRoute{{
+			FromPOI:        0,
+			ToPOI:          1,
+			DistanceMeters: 850,
+			DurationMin:    12,
+		}},
+		[]graph.POIInput{
+			{ID: "poi-1", Name: "翠湖公园", Lng: 102.704412, Lat: 25.050972},
+			{ID: "poi-2", Name: "云南大学", Lng: 102.72, Lat: 25.06},
+		},
+		dayExpansionContext{DayID: "day-1", DayIndex: 1},
+	)
+
+	if len(routes) != 0 {
+		t.Fatalf("route count = %d, want 0: %#v", len(routes), routes)
+	}
+}
+
+func TestAmapPOIVerifyInstructionDoesNotForceDriving(t *testing.T) {
+	forcedDrivingPhrase := "调用 " + "amap_route_driving"
+	if strings.Contains(amapPOIVerifyInstruction, forcedDrivingPhrase) {
+		t.Fatal("amap POI verify instruction must not force driving route calls")
+	}
+	if !strings.Contains(amapPOIVerifyInstruction, "在 amap_route_walking / amap_route_transit / amap_route_driving / amap_route_bicycling 中选择") {
+		t.Fatal("amap POI verify instruction should ask the agent to choose an appropriate route tool")
 	}
 }

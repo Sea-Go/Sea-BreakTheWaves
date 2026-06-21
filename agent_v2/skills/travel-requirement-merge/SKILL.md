@@ -7,194 +7,128 @@ description: 合并用户追问回复到旅行需求快照。Use when the user r
 
 ## 目标
 
-本 Skill 用于用户回复追问后的第二步：将用户的自然语言回复解析为结构化字段，合并到现有的 TravelRequirementSnapshot 中。
+读取已有 TravelRequirementSnapshot、上一轮缺失字段、上一轮追问和用户新回复，输出一个增量 SkillResult JSON。只做需求合并、缺失判断、追问或默认补齐，不生成旅行方案，不调用地图、攻略、天气或图写入工具。
 
-本 Skill 只做字段解析和合并，不做以下操作：
-- 创建 TripPlan
-- 调用地图工具（amap_*）
-- 调用攻略工具（zhihu_*、bilibili_*）
-- 调用天气工具（get_weather_context、check_weather_feasibility）
-- 调用图写入工具（create_trip_plan、split_parent_node）
-- 生成旅行方案
+## 合法字段
 
-## 输入
+`result.requirement` 只能包含 TravelRequirementSnapshot 字段：
 
-上下文中会包含：
-1. 现有的 TravelRequirementSnapshot JSON（已抽取的字段）
-2. 用户的新消息（回复追问的内容）
+- `destination_scope`
+- `total_days`
+- `start_date`
+- `end_date`
+- `start_city`
+- `end_city`
+- `budget_total`
+- `budget_monthly`
+- `transport_mode`
+- `travel_style`
+- `pace`
+- `high_altitude_acceptance`
+- `daily_driving_preference`
+- `accommodation_style`
+- `food_preference`
+- `must_visit`
+- `avoid_places`
+- `special_constraints`
+- `destination_anchors`
+
+预算缺失在 `missing_fields` 中可写 `"budget"`，但补齐时必须写入 `budget_total` 或 `budget_monthly`。
 
 ## 合并规则
 
-### 只更新用户明确提到的字段
+- 只输出本轮用户明确新增、修改或默认补齐的字段。
+- 已有非空字段如果用户没有明确修改，不要重复输出，也不要追问。
+- 不要用空字符串、空数组或 null 覆盖已有非空字段。
+- 对短时城市游、街区探索、漫步、city walk 等语义，由 agent 根据已有快照和用户新回复自主判断合适的 `transport_mode`、`travel_style` 和 `special_constraints`；不要套用长线或自驾旅行默认。
+- 结合上一轮追问理解短答；例如用户按顺序回答多个问题时，要把答案映射到对应缺失字段。
+- 如果短答表达“无所谓、都行、随便、按你推荐”，不要把这些词当作城市、预算或风格；应在 `result.default_intent` 标记默认意图，并只补齐允许默认的字段。
 
-- 用户说"从北京出发" → 更新 `start_city: "北京"`
-- 用户说"6月1日" → 更新 `start_date: "2026-06-01"`
-- 用户说"10万" → 更新 `budget_total: "10万"`
-- 用户说"高铁为主" → 更新 `transport_mode: "高铁"`
-- 用户说"喜欢自然风光和美食" → 更新 `travel_style: ["自然风光", "美食"]`
-- 用户说"慢一点" → 更新 `pace: "轻松"`
+## 默认意图
 
-### 永远不用空值覆盖非空值
+`result.default_intent` 必须输出：
 
-如果 `start_city` 已经是 "北京"，用户回复中没有提到出发城市，则保持 "北京" 不变。
+- `"none"`：没有默认意图
+- `"explicit_default"`：明确要求按默认、别问了、你决定、直接规划
+- `"implicit_default"`：模糊表示都行、随便、无所谓
 
-### 自然语言解析示例
+默认意图只允许补齐 P1/P2。P0 缺失时必须继续追问 P0，不能默认。
 
-| 用户输入 | 解析结果 |
-|---------|---------|
-| "6月" | `start_date: "2026-06-01"`（年份取当前年或下一年） |
-| "10万" | `budget_total: "10万"` |
-| "高铁为主" | `transport_mode: "高铁"` |
-| "自然风光和历史文化" | `travel_style: ["自然风光", "历史文化"]` |
-| "慢一点" | `pace: "轻松"` |
-| "轻松" | `pace: "轻松"` |
-| "紧凑" | `pace: "紧凑"` |
+## 缺失分级
 
-### 用户表达"按默认"的处理
+P0 必填，缺失不能进入规划，也不能默认：
 
-如果用户明确说"按默认"、"别问了"、"你决定"、"都行"、"随便"，则：
-- 输出 `default_intent: "explicit_default"` 或 `"implicit_default"`
-- P0 字段如果仍然缺失，继续追问
-- P1 字段可以使用默认值
+- `destination_scope`
+- `total_days`
+- `start_city`
 
-## 字段名（必须使用这些 key）
+P1 可追问或默认补齐：
 
-| 字段名 | 说明 | 示例 |
-|--------|------|------|
-| `destination_scope` | 目的地范围 | "全国"、"云南"、"大理" |
-| `total_days` | 总天数 | 365, 7, 30 |
-| `start_city` | 出发城市 | "北京"、"上海" |
-| `start_date` | 出发日期 | "2026-06-01" |
-| `budget_total` | 总预算 | "10万"、"不限" |
-| `transport_mode` | 交通方式 | "自驾"、"高铁"、"飞机"、"混合" |
-| `travel_style` | 旅行风格数组 | ["自然风光","历史文化","美食"] |
-| `pace` | 节奏 | "轻松"、"均衡"、"紧凑" |
+- `start_date`
+- `budget`，由 `budget_total` 或 `budget_monthly` 满足
+- `transport_mode`
+- `travel_style`
+- `pace`
+- `high_altitude_acceptance`，当目的地或锚点涉及高原、高海拔、雪山、川西、藏东南等风险时需要确认
+- `daily_driving_preference`，当交通方式是自驾且天数较长或跨多目的地时需要确认
+
+P2 可选或默认：
+
+- `accommodation_style`
+- `food_preference`
+
+## 追问规则
+
+- `follow_up_questions` 只询问当前仍缺失字段。
+- 不要追问已有非空字段，尤其不要重复追问第一轮已经给出的 `start_city`。
+- 如果 P0 缺失，优先追问 P0。
+- 如果 P0 已完整、用户表达默认意图，可以通过默认补齐任务补齐 P1/P2 并进入规划。
+
+## 默认补齐策略
+
+默认补齐任务只能补 P1/P2。默认值必须由 agent 根据快照里的目的地、天数、交通方式和风格生成，不能套用固定的长线或自驾旅行模板。默认值必须写入合法字段；不要把默认值写入 `missing_fields` 之外的无关字段。
 
 ## SkillResult 输出协议
 
 只输出单个 JSON object，不要 markdown，不要解释。
 
-### 字段说明
+必需字段：
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `skill_name` | string | 固定 `"travel-requirement-merge"` |
-| `stage` | string | 固定 `"requirement_merge"` |
-| `status` | string | `"ready"`（信息充足）或 `"need_user_input"`（仍需补充） |
-| `requirement_ready` | boolean | true=可以进入正式规划 |
-| `missing_fields` | []string | 仍然缺失的字段名数组 |
-| `filled_fields` | []string | 本轮已填充的字段名数组 |
-| `result.requirement` | object | 只包含本轮变更的字段（部分更新） |
-| `result.default_intent` | string | `"none"` / `"explicit_default"` / `"implicit_default"` |
-| `next_stage` | string | `"macro_planning"`（信息充足）或 `"awaiting_user_info"`（仍需补充） |
-| `stop_workflow` | boolean | false（信息充足）或 true（仍需补充） |
-| `output` | string | 展示给用户的文本 |
+- `skill_name`: `"travel-requirement-merge"`，追问生成任务可用 `"travel-requirement-question-generation"`，默认补齐任务可用 `"travel-requirement-default-completion"`
+- `stage`: `"requirement_merge"` 或当前任务对应阶段
+- `status`: `"need_user_input"` / `"ready"`
+- `requirement_ready`: boolean
+- `missing_fields`: 仍缺失字段数组
+- `filled_fields`: 本轮填充字段数组
+- `follow_up_questions`: 追问问题数组
+- `result.requirement`: 本轮增量字段
+- `result.default_intent`: `"none"` / `"explicit_default"` / `"implicit_default"`
+- `next_stage`: `"awaiting_user_info"` / `"macro_planning"`
+- `stop_workflow`: 需要用户回复时 true，可以进入规划时 false
+- `output`: 展示给用户的自然语言文本
 
-### 示例 1：用户补充完整信息
+## 示例
 
-现有快照：
-```json
-{
-  "destination_scope": "全国",
-  "total_days": 365
-}
-```
+已有快照中 `start_city = "北京"`，用户新回复：“预算2万，节奏轻松”
 
-用户回复："从哈尔滨出发，6月1日开始，预算10万，高铁为主，喜欢自然风光和历史文化，节奏慢一点"
+输出重点：
 
-输出：
-```json
-{
-  "skill_name": "travel-requirement-merge",
-  "stage": "requirement_merge",
-  "status": "ready",
-  "requirement_ready": true,
-  "missing_fields": [],
-  "filled_fields": ["start_city", "start_date", "budget_total", "transport_mode", "travel_style", "pace"],
-  "result": {
-    "requirement": {
-      "start_city": "哈尔滨",
-      "start_date": "2026-06-01",
-      "budget_total": "10万",
-      "transport_mode": "高铁",
-      "travel_style": ["自然风光", "历史文化"],
-      "pace": "轻松"
-    },
-    "default_intent": "none"
-  },
-  "next_stage": "macro_planning",
-  "stop_workflow": false,
-  "output": "需求已确认，开始为您规划从哈尔滨出发的全国365天自然风光+历史文化之旅。"
-}
-```
+- 只输出 `budget_total` 和 `pace`
+- 不追问 `start_city`
+- 不在 `result.requirement` 中重复输出 `start_city`
 
-### 示例 2：用户只补充部分信息
+已有快照 P0 完整，用户回复：“其他按默认来”
 
-现有快照：
-```json
-{
-  "destination_scope": "全国",
-  "total_days": 365
-}
-```
+输出重点：
 
-用户回复："从哈尔滨出发，6月开始"
+- `result.default_intent = "explicit_default"`
+- 默认补齐 P1/P2
+- 如果补齐后没有缺失，`status = "ready"` 且 `next_stage = "macro_planning"`
 
-输出：
-```json
-{
-  "skill_name": "travel-requirement-merge",
-  "stage": "requirement_merge",
-  "status": "need_user_input",
-  "requirement_ready": false,
-  "missing_fields": ["budget_total", "transport_mode", "travel_style", "pace"],
-  "filled_fields": ["start_city", "start_date"],
-  "result": {
-    "requirement": {
-      "start_city": "哈尔滨",
-      "start_date": "2026-06-01"
-    },
-    "default_intent": "none"
-  },
-  "next_stage": "awaiting_user_info",
-  "stop_workflow": true,
-  "output": "已记录出发城市和时间。还需要确认几项：\n\n1. 总预算大概是多少？\n2. 主要交通方式是自驾、高铁火车、飞机，还是混合？\n3. 你更偏自然风光、历史文化、美食城市、摄影打卡，还是慢旅行？\n4. 每天节奏希望轻松、均衡，还是尽量多打卡？"
-}
-```
+已有快照缺 `start_city`，用户回复：“其他都行”
 
-### 示例 3：用户表达"按默认"
+输出重点：
 
-现有快照：
-```json
-{
-  "destination_scope": "全国",
-  "total_days": 365,
-  "start_city": "哈尔滨"
-}
-```
-
-用户回复："按默认来，别问了"
-
-输出：
-```json
-{
-  "skill_name": "travel-requirement-merge",
-  "stage": "requirement_merge",
-  "status": "ready",
-  "requirement_ready": true,
-  "missing_fields": [],
-  "filled_fields": ["budget_total", "transport_mode", "travel_style", "pace"],
-  "result": {
-    "requirement": {
-      "budget_total": "中等",
-      "transport_mode": "高铁/火车为主",
-      "travel_style": ["自然风光", "历史文化"],
-      "pace": "均衡"
-    },
-    "default_intent": "explicit_default"
-  },
-  "next_stage": "macro_planning",
-  "stop_workflow": false,
-  "output": "已按默认设置开始规划：中等预算、高铁为主、自然风光+历史文化、均衡节奏。"
-}
-```
+- `result.default_intent = "implicit_default"`
+- `missing_fields` 必须包含 `start_city`
+- 继续追问出发城市，不能默认

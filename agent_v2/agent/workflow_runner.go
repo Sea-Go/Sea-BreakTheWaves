@@ -586,6 +586,25 @@ func calculateDate(startDate string, offset int) string {
 
 // --- Phase 2: Day-by-Day POI Verification ---
 
+func requirementSnapshotFromTripOverview(overview *graph.TripOverview) TravelRequirementSnapshot {
+	if overview == nil {
+		return TravelRequirementSnapshot{}
+	}
+	return TravelRequirementSnapshot{
+		DestinationScope: strings.Join(append([]string{
+			overview.TripPlan.Name,
+			overview.TripPlan.RawRequirements,
+		}, overview.TripPlan.MustVisit...), " "),
+		TotalDays:     overview.TripPlan.TotalDays,
+		StartDate:     overview.TripPlan.StartDate,
+		EndDate:       overview.TripPlan.EndDate,
+		TransportMode: overview.TripPlan.TransportMode,
+		TravelStyle:   append([]string{overview.TripPlan.TravelStyle}, overview.TripPlan.Interests...),
+		MustVisit:     append([]string(nil), overview.TripPlan.MustVisit...),
+		AvoidPlaces:   append([]string(nil), overview.TripPlan.Avoid...),
+	}
+}
+
 func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, emitters ...*TraceEmitter) error {
 	var trace *TraceEmitter
 	if len(emitters) > 0 {
@@ -602,6 +621,7 @@ func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, e
 		return fmt.Errorf("no days found for tripPlanID: %s", tripPlanID)
 	}
 	geoConstraint := buildTravelGeoConstraintFromOverview(overview)
+	requirement := requirementSnapshotFromTripOverview(overview)
 
 	type dayRunInfo struct {
 		id  string
@@ -612,10 +632,12 @@ func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, e
 	for _, d := range overview.Days {
 		if id, ok := d["id"].(string); ok && id != "" {
 			ctx := dayContexts[id]
+			ctx.DayID = id
 			if ctx.DayIndex == 0 {
 				ctx.DayIndex = int(getFloat(d, "dayIndex"))
 			}
 			ctx.GeoConstraint = geoConstraint
+			ctx.Requirement = requirement
 			dayInfos = append(dayInfos, dayRunInfo{id: id, ctx: ctx})
 		}
 	}
@@ -636,9 +658,6 @@ func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, e
 
 	log.Infof("[workflow-runner] Phase 2: verifying POIs for %d days", len(dayInfos))
 
-	var previousDayID string
-	var previousDayCtx dayExpansionContext
-	var previousPOIs []graph.POIInput
 	for i, info := range dayInfos {
 		dayID := info.id
 		dayCtx := info.ctx
@@ -665,7 +684,7 @@ func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, e
 				},
 			})
 		}
-		writtenPOIs, err := a.verifyDayPOIs(ctx, dayID, trace, dayCtx)
+		_, err := a.verifyDayPOIs(ctx, dayID, trace, dayCtx)
 		if err != nil {
 			log.Errorf("[workflow-runner] Phase 2 day %s failed: %v", dayID, err)
 			if trace != nil {
@@ -689,40 +708,6 @@ func (a *graphWorkflowAgent) runPhase2(ctx context.Context, tripPlanID string, e
 			}
 			// Continue to next day
 		}
-		if len(previousPOIs) > 0 && len(writtenPOIs) > 0 {
-			previousSorted := sortedPOIsByVisitOrder(previousPOIs)
-			currentSorted := sortedPOIsByVisitOrder(writtenPOIs)
-			from := previousSorted[len(previousSorted)-1]
-			to := currentSorted[0]
-			parentNodeID := previousDayID + "-to-" + dayID
-			route := buildRouteBetweenPOIsDirect(ctx, from, to, trace, parentNodeID)
-			enrichRouteDisplayMetadata(&route, from, to, routeDisplayContext{
-				PhaseID:        previousDayCtx.PhaseID,
-				PhaseSeq:       previousDayCtx.PhaseSeq,
-				PhaseName:      previousDayCtx.PhaseName,
-				DayID:          previousDayID,
-				DayIndex:       previousDayCtx.DayIndex,
-				SegmentIndex:   1,
-				ConnectionType: "cross_day",
-			})
-			if err := a.graphClient.WriteRoute(ctx, route); err != nil {
-				log.Errorf("[workflow-runner] write cross-day route: %v", err)
-			}
-			emitRouteSegmentMapEvents(ctx, trace, "day", parentNodeID, []graph.POIInput{from, to}, []graph.RouteInput{route}, routeDisplayContext{
-				PhaseID:        previousDayCtx.PhaseID,
-				PhaseSeq:       previousDayCtx.PhaseSeq,
-				PhaseName:      previousDayCtx.PhaseName,
-				DayID:          previousDayID,
-				DayIndex:       previousDayCtx.DayIndex,
-				SegmentIndex:   1,
-				ConnectionType: "cross_day",
-			})
-		}
-		if len(writtenPOIs) > 0 {
-			previousDayID = dayID
-			previousDayCtx = dayCtx
-			previousPOIs = writtenPOIs
-		}
 	}
 
 	return nil
@@ -745,9 +730,13 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
 	if dayContext.DayIndex == 0 {
 		dayContext.DayIndex = day.DayIndex
 	}
+	requirementJSON, _ := json.Marshal(dayContext.Requirement)
 
 	// Build a structured prompt for amap-agent
 	prompt := fmt.Sprintf(`请验证并完善以下旅行日的 POI 安排：
+
+已确认的旅行需求快照:
+%s
 
 日期: %s
 天数序号: Day %d
@@ -761,8 +750,8 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
 1. 如果主题或锚点说明包含雪山、峡谷、湖泊、森林、草原、徒步、观景等自然风光词，必须优先搜索自然景点或观景点；不能用市区、酒店、餐厅替代当天主体验
 2. 对该区域进行 POI 关键词搜索（核心景点优先，餐饮、住宿仅作为补给），找出 2-3 个最合适的 POI
 3. 对每个 POI 调用 amap_geocode 获取精确坐标
-4. 对 POI 之间的路线调用 amap_route_driving 获取距离和耗时
-5. 返回结构化的 POI 数据和路线数据
+4. 结合旅行需求、POI 间距离和城市环境，自主选择最合适的路线工具获取距离和耗时；可用工具包括 amap_route_walking、amap_route_transit、amap_route_driving、amap_route_bicycling
+5. 返回结构化的 POI 数据和路线数据；如果路线无法验证，routes 返回空数组，不要编造交通方式
 
 输出格式（JSON）：
 {
@@ -785,7 +774,7 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
     {
       "fromPOI": 0,
       "toPOI": 1,
-      "transportMode": "driving",
+      "transportMode": "agent_selected_mode",
       "distanceMeters": 5000,
       "durationMin": 15,
       "estimatedCost": 20,
@@ -793,7 +782,7 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
       "notes": "路线选择理由"
     }
   ]
-}`, day.Date, day.DayIndex, day.Theme, day.PrimaryArea, day.StartPoint, day.RouteOverview, day.ThinkingNotes)
+}`, string(requirementJSON), day.Date, day.DayIndex, day.Theme, day.PrimaryArea, day.StartPoint, day.RouteOverview, day.ThinkingNotes)
 
 	// Run amap-agent
 	amapResult, err := runAmapAgentStandalone(ctx, prompt)
@@ -803,7 +792,7 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
 	}
 
 	// Parse POIs, then re-check coordinates with direct geocoding before exposing them.
-	pois, _ := parseAmapPOIResult(amapResult)
+	pois, rawRoutes := parseAmapPOIResult(amapResult)
 	if len(pois) > 0 {
 		pois = exactifyParsedPOIs(ctx, pois, day, dayContext, trace)
 		if isNaturalSceneryDay(day, dayContext) && !hasNaturalMainStop(pois) {
@@ -832,8 +821,6 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
 			pois[i].ID = fmt.Sprintf("poi-%s", uuid.NewString())
 		}
 	}
-	routes := buildDayRoutesDirect(ctx, pois, trace, dayID, dayContext)
-
 	writtenPOIs := make([]graph.POIInput, 0, len(pois))
 	for _, poi := range pois {
 		poiID, err := a.graphClient.UpsertPOIToDay(ctx, dayID, poi)
@@ -855,6 +842,10 @@ func (a *graphWorkflowAgent) verifyDayPOIs(ctx context.Context, dayID string, tr
 	}
 	emitExactPOIMapBatch(ctx, trace, "day", dayID, writtenPOIs, displayCtx)
 
+	routes := routeInputsFromRawAmapRoutes(rawRoutes, writtenPOIs, dayContext)
+	if len(routes) == 0 {
+		emitDayExpansionNotice(ctx, trace, dayID, "路线结果待补充", "路线 Agent 暂未返回可验证路线，因此本日只写入已验证地点，不默认生成交通方式。", "review")
+	}
 	for _, route := range routes {
 		if err := a.graphClient.WriteRoute(ctx, route); err != nil {
 			log.Errorf("[workflow-runner] write route: %v", err)
@@ -903,6 +894,57 @@ func parseAmapPOIResult(result string) ([]graph.POIInput, []rawAmapRoute) {
 	return pois, parsed.RawRoutes
 }
 
+func routeInputsFromRawAmapRoutes(rawRoutes []rawAmapRoute, pois []graph.POIInput, dayCtx dayExpansionContext) []graph.RouteInput {
+	if len(rawRoutes) == 0 || len(pois) == 0 {
+		return nil
+	}
+	routes := make([]graph.RouteInput, 0, len(rawRoutes))
+	for i, raw := range rawRoutes {
+		mode := strings.TrimSpace(raw.TransportMode)
+		if mode == "" {
+			continue
+		}
+		if raw.FromPOI < 0 || raw.FromPOI >= len(pois) || raw.ToPOI < 0 || raw.ToPOI >= len(pois) {
+			continue
+		}
+		from := pois[raw.FromPOI]
+		to := pois[raw.ToPOI]
+		if from.ID == "" || to.ID == "" {
+			continue
+		}
+		polyline := normalizeRawPolyline(raw.Polyline)
+		if polyline == "" && isValidLngLat(from.Lng, from.Lat) && isValidLngLat(to.Lng, to.Lat) {
+			polyline = polylineJSON([][2]float64{{from.Lng, from.Lat}, {to.Lng, to.Lat}})
+		}
+		route := graph.RouteInput{
+			FromPOIID:      from.ID,
+			ToPOIID:        to.ID,
+			TransportMode:  mode,
+			Accuracy:       "agent_verified",
+			Source:         "amap_agent",
+			FromNodeID:     from.ID,
+			ToNodeID:       to.ID,
+			DistanceMeters: raw.DistanceMeters,
+			DurationMin:    raw.DurationMin,
+			Polyline:       polyline,
+			EstimatedCost:  raw.EstimatedCost,
+			Notes:          strings.TrimSpace(raw.Notes),
+			ConnectionType: "day_segment",
+		}
+		enrichRouteDisplayMetadata(&route, from, to, routeDisplayContext{
+			PhaseID:        dayCtx.PhaseID,
+			PhaseSeq:       dayCtx.PhaseSeq,
+			PhaseName:      dayCtx.PhaseName,
+			DayID:          dayCtx.DayID,
+			DayIndex:       dayCtx.DayIndex,
+			SegmentIndex:   i + 1,
+			ConnectionType: "day_segment",
+		})
+		routes = append(routes, route)
+	}
+	return routes
+}
+
 func normalizeRawPolyline(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -943,12 +985,12 @@ const amapPOIVerifyInstruction = `
 |---------|---------|
 | 搜索某区域的景点/餐饮/住宿 POI | amap_poi_keyword_search |
 | 获取 POI 精确坐标和地址 | amap_geocode |
-| 计算 POI 之间的驾车距离和时间 | amap_route_driving |
+| 计算 POI 之间的路线距离和时间 | 根据用户需求、城市环境和 POI 间距离，在 amap_route_walking / amap_route_transit / amap_route_driving / amap_route_bicycling 中选择 |
 
 ### 第三步：执行工具调用
 1. 先用 amap_poi_keyword_search 按城市+关键词搜索 2-3 个 POI
 2. 对每个 POI 调用 amap_geocode 获取精确坐标
-3. 对相邻 POI 调用 amap_route_driving 获取路线数据
+3. 对相邻 POI 选择最符合用户需求的路线工具获取路线数据
 4. **关键**：每次只调用一个工具，等待结果后再决定下一步
 
 ### 第四步：按格式输出 JSON
@@ -974,7 +1016,7 @@ const amapPOIVerifyInstruction = `
     {
       "fromPOI": 0,
       "toPOI": 1,
-      "transportMode": "driving",
+      "transportMode": "agent_selected_mode",
       "distanceMeters": 5000,
       "durationMin": 15,
       "polyline": "[[116.1,39.9],[116.2,39.95]]",
@@ -1172,7 +1214,7 @@ func (a *graphWorkflowAgent) reviewAnchorCoverage(ctx context.Context, tripPlanI
 	}
 	_, _ = a.graphClient.WriteReviewResult(ctx, tripPlanID, review)
 	emitReviewAnnotation(ctx, trace, "overview", tripPlanID, "锚点覆盖", "锚点覆盖审核", "scope", review)
-	return fmt.Errorf("核心景点覆盖不足：%s。建议延长天数、舍弃部分目的地，或确认可接受更高强度自驾后重新规划", strings.Join(criticalMissing, "、"))
+	return fmt.Errorf("核心景点覆盖不足：%s。建议延长天数、舍弃部分目的地，或确认可接受更高强度转移日后重新规划", strings.Join(criticalMissing, "、"))
 }
 
 func (a *graphWorkflowAgent) evaluateAnchorCoverage(ctx context.Context, overview *graph.TripOverview, anchors []DestinationAnchorSnapshot) ([]anchorCoverageFinding, error) {
@@ -2024,7 +2066,7 @@ func deriveAnchorsFromTripOverview(overview *graph.TripOverview) []DestinationAn
 		TravelStyle:   append([]string{overview.TripPlan.TravelStyle}, overview.TripPlan.Interests...),
 		MustVisit:     append([]string(nil), overview.TripPlan.MustVisit...),
 	}
-	enrichRequirementWithDeterministicFields(&snap, snap.DestinationScope)
+	enrichRequirementPlanningAnchors(&snap)
 	return snap.DestinationAnchors
 }
 
@@ -2032,10 +2074,7 @@ func deriveAnchorsForGraphSplitting(overview *graph.TripOverview, requirements .
 	if len(requirements) > 0 {
 		req := requirements[0]
 		if len(req.DestinationAnchors) == 0 {
-			enrichRequirementWithDeterministicFields(&req, strings.Join([]string{
-				req.DestinationScope,
-				strings.Join(req.MustVisit, " "),
-			}, " "))
+			enrichRequirementPlanningAnchors(&req)
 		}
 		if len(req.DestinationAnchors) > 0 {
 			return req.DestinationAnchors
@@ -2335,7 +2374,7 @@ func (a *graphWorkflowAgent) runWeekOutputAgent(ctx context.Context, weekDays []
 4. **推荐景点**: 2-3 个具体景点名称、地址、推荐理由
 5. **餐饮推荐**: 1-2 个当地特色美食
 6. **住宿建议**: 推荐住宿区域和类型
-7. **交通方式**: 自驾路线和距离
+7. **交通方式**: 按已验证路线说明交通方式、距离和耗时
 8. **本日小结**: 行程节奏和亮点
 
 **详细度底线**: 每天至少 200 字。必须推荐具体的地名和景点，不要泛泛而谈。

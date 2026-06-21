@@ -8,27 +8,27 @@ import (
 	"agent_v2/tools"
 )
 
-func TestNaturalHighlandRequestEnrichmentAndQuestioning(t *testing.T) {
-	msg := "帮我规划一下7天6晚的旅行，从丽江出发，2w，准备去香格里拉稻城亚丁，林芝，预算2w，自驾，自然风光，均衡"
-	var snap TravelRequirementSnapshot
-	enrichRequirementWithDeterministicFields(&snap, msg)
+func TestNaturalHighlandStructuredSnapshotDerivesAnchorsAndMissingChecks(t *testing.T) {
+	snap := TravelRequirementSnapshot{
+		DestinationScope:   "香格里拉 稻城亚丁 林芝",
+		StartCity:          "丽江",
+		TotalDays:          7,
+		BudgetTotal:        "2w",
+		TransportMode:      "自驾",
+		TravelStyle:        []string{"自然风光"},
+		Pace:               "均衡",
+		AccommodationStyle: "经济舒适",
+		FoodPreference:     []string{"当地特色"},
+	}
+	snap.DestinationAnchors = deriveDestinationAnchors(snap, "")
 
-	if snap.StartCity != "丽江" {
-		t.Fatalf("start city = %q, want 丽江", snap.StartCity)
-	}
-	if snap.TotalDays != 7 {
-		t.Fatalf("total days = %d, want 7", snap.TotalDays)
-	}
-	if snap.TransportMode != "自驾" {
-		t.Fatalf("transport = %q, want 自驾", snap.TransportMode)
-	}
 	for _, want := range []string{"香格里拉", "稻城亚丁", "林芝", "南迦巴瓦峰", "梅里雪山"} {
 		if !anchorNamesContain(snap.DestinationAnchors, want) {
 			t.Fatalf("expected anchor %q in %#v", want, snap.DestinationAnchors)
 		}
 	}
 
-	decision := buildPlanningDecision(snap, 0, 2, msg)
+	decision := buildPlanningDecision(snap)
 	if decision.Ready {
 		t.Fatalf("request missing start date/altitude/driving details should ask first: %#v", decision)
 	}
@@ -36,41 +36,6 @@ func TestNaturalHighlandRequestEnrichmentAndQuestioning(t *testing.T) {
 		if !stringSliceContains(decision.MissingP1, want) {
 			t.Fatalf("missing P1 should contain %s, got %#v", want, decision.MissingP1)
 		}
-	}
-}
-
-func TestExplicitDefaultStillAllowsNaturalHighlandPlanning(t *testing.T) {
-	msg := "帮我规划一下7天6晚的旅行，从丽江出发，2w，准备去香格里拉稻城亚丁，林芝，自驾，自然风光，均衡，按默认直接规划"
-	var snap TravelRequirementSnapshot
-	enrichRequirementWithDeterministicFields(&snap, msg)
-
-	decision := buildPlanningDecision(snap, 0, 2, msg)
-	if !decision.Ready {
-		t.Fatalf("explicit default should allow planning after P0 is filled: %#v", decision)
-	}
-}
-
-func TestLatestTurnPreventsOldDefaultIntentFromSkippingNewQuestion(t *testing.T) {
-	msg := "用户第1轮：按默认直接规划\n用户第2轮：帮我规划一下7天6晚的旅行，从丽江出发，2w，准备去香格里拉稻城亚丁，林芝，自驾，自然风光，均衡"
-	var snap TravelRequirementSnapshot
-	enrichRequirementWithDeterministicFields(&snap, latestUserTurnText(msg))
-
-	if !isLikelyNewPlanningRequest(msg) {
-		t.Fatal("expected latest full itinerary request to be detected as new planning intent")
-	}
-	decision := buildPlanningDecision(snap, 0, 2, msg)
-	if decision.Ready {
-		t.Fatalf("old default intent from earlier turn must not skip new follow-up: %#v", decision)
-	}
-}
-
-func TestMergeAnswerParsesAltitudeAndLongDriveTogether(t *testing.T) {
-	msg := "按默认日期，能接受高海拔/长途"
-	if got := parseHighAltitudeAcceptance(msg); got == "" {
-		t.Fatal("expected high altitude acceptance")
-	}
-	if got := parseDailyDrivingPreference(msg); got == "" {
-		t.Fatal("expected long driving acceptance")
 	}
 }
 

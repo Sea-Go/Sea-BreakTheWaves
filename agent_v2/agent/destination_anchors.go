@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -56,54 +54,6 @@ var destinationAnchorCatalog = []destinationAnchorCatalogEntry{
 	},
 }
 
-func enrichRequirementWithDeterministicFields(snap *TravelRequirementSnapshot, userMessage string) {
-	if snap == nil {
-		return
-	}
-	latest := latestUserTurnText(userMessage)
-	if snap.StartCity == "" {
-		snap.StartCity = parseStartCity(latest)
-	}
-	if snap.TotalDays == 0 {
-		snap.TotalDays = parseTotalDays(latest)
-	}
-	if snap.BudgetTotal == "" {
-		snap.BudgetTotal = parseBudgetTotal(latest)
-	}
-	if snap.TransportMode == "" && strings.Contains(latest, "自驾") {
-		snap.TransportMode = "自驾"
-	}
-	if snap.Pace == "" {
-		switch {
-		case strings.Contains(latest, "轻松") || strings.Contains(latest, "慢"):
-			snap.Pace = "轻松"
-		case strings.Contains(latest, "紧凑") || strings.Contains(latest, "多打卡"):
-			snap.Pace = "紧凑"
-		case strings.Contains(latest, "均衡"):
-			snap.Pace = "均衡"
-		}
-	}
-	if containsAny(latest, []string{"自然风光", "自然", "风景", "雪山", "峡谷", "湖泊", "森林", "草原", "徒步"}) {
-		snap.TravelStyle = appendUniqueStrings(snap.TravelStyle, "自然风光")
-	}
-	if snap.HighAltitudeAcceptance == "" {
-		snap.HighAltitudeAcceptance = parseHighAltitudeAcceptance(latest)
-	}
-	if snap.DailyDrivingPreference == "" {
-		snap.DailyDrivingPreference = parseDailyDrivingPreference(latest)
-	}
-
-	names := extractDestinationNames(strings.Join([]string{
-		latest,
-		snap.DestinationScope,
-		strings.Join(snap.MustVisit, " "),
-	}, " "))
-	if snap.DestinationScope == "" && len(names) > 0 {
-		snap.DestinationScope = strings.Join(names, "、")
-	}
-	snap.DestinationAnchors = deriveDestinationAnchors(*snap, latest)
-}
-
 func latestUserTurnText(userMessage string) string {
 	userMessage = strings.TrimSpace(userMessage)
 	if userMessage == "" {
@@ -117,83 +67,22 @@ func latestUserTurnText(userMessage string) string {
 		}
 	}
 	if lastIdx >= 0 {
-		line := strings.TrimSpace(lines[lastIdx])
-		parts := strings.SplitN(line, "：", 2)
-		if len(parts) == 2 {
-			lines[lastIdx] = parts[1]
+		selected := make([]string, 0, len(lines)-lastIdx)
+		for i := lastIdx; i < len(lines); i++ {
+			line := strings.TrimSpace(lines[i])
+			if i > lastIdx && (isRoleLine(line, "用户") || isRoleLine(line, "Agent") || isRoleLine(line, "AI") || isRoleLine(line, "助手")) {
+				break
+			}
+			if i == lastIdx {
+				line = textAfterRoleColon(line)
+			}
+			if line != "" {
+				selected = append(selected, line)
+			}
 		}
-		return strings.TrimSpace(strings.Join(lines[lastIdx:], "\n"))
+		return strings.TrimSpace(strings.Join(selected, "\n"))
 	}
 	return userMessage
-}
-
-func isLikelyNewPlanningRequest(userMessage string) bool {
-	latest := latestUserTurnText(userMessage)
-	if len([]rune(latest)) < 18 {
-		return false
-	}
-	if parseTotalDays(latest) == 0 || parseStartCity(latest) == "" {
-		return false
-	}
-	if len(extractDestinationNames(latest)) == 0 && !containsAny(latest, []string{"去", "目的地", "旅行", "旅游"}) {
-		return false
-	}
-	return containsAny(latest, []string{"规划", "旅行", "旅游", "行程", "自驾", "出发"})
-}
-
-func parseStartCity(text string) string {
-	re := regexp.MustCompile(`从\s*([\p{Han}A-Za-z]{2,12})\s*出发`)
-	m := re.FindStringSubmatch(text)
-	if len(m) < 2 {
-		return ""
-	}
-	return strings.Trim(m[1], "，,。；;、 ")
-}
-
-func parseTotalDays(text string) int {
-	re := regexp.MustCompile(`(\d{1,4})\s*天`)
-	m := re.FindStringSubmatch(text)
-	if len(m) < 2 {
-		return 0
-	}
-	n, _ := strconv.Atoi(m[1])
-	return n
-}
-
-func parseBudgetTotal(text string) string {
-	re := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*([wW万])`)
-	m := re.FindStringSubmatch(text)
-	if len(m) < 3 {
-		return ""
-	}
-	unit := m[2]
-	if unit == "w" || unit == "W" {
-		unit = "万"
-	}
-	return m[1] + unit
-}
-
-func parseHighAltitudeAcceptance(text string) string {
-	switch {
-	case containsAny(text, []string{"不接受高海拔", "不能高海拔", "怕高反", "高反严重", "不去高海拔"}):
-		return "不接受高海拔"
-	case containsAny(text, []string{"接受高海拔", "能接受高海拔", "可以高海拔", "高反没问题", "能接受高反"}):
-		return "可接受高海拔"
-	default:
-		return ""
-	}
-}
-
-func parseDailyDrivingPreference(text string) string {
-	switch {
-	case containsAny(text, []string{"不接受长途", "不想长途", "少开车", "每天少开", "不想开太久"}):
-		return "控制日均驾驶"
-	case containsAny(text, []string{"接受长途", "能接受长途", "可以长途", "高强度自驾", "长途没问题"}) ||
-		(containsAny(text, []string{"能接受", "可接受", "接受", "可以"}) && strings.Contains(text, "长途")):
-		return "可接受较长日均驾驶"
-	default:
-		return ""
-	}
 }
 
 func extractDestinationNames(text string) []string {
@@ -370,4 +259,69 @@ func containsAny(text string, needles []string) bool {
 		}
 	}
 	return false
+}
+
+func extractUserTurnTexts(transcript string) []string {
+	transcript = strings.TrimSpace(transcript)
+	if transcript == "" {
+		return nil
+	}
+	lines := strings.Split(transcript, "\n")
+	var turns []string
+	var current strings.Builder
+	inUser := false
+
+	flush := func() {
+		if current.Len() > 0 {
+			text := strings.TrimSpace(current.String())
+			if text != "" {
+				turns = append(turns, text)
+			}
+			current.Reset()
+		}
+	}
+
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		switch {
+		case isRoleLine(line, "用户"):
+			flush()
+			inUser = true
+			current.WriteString(textAfterRoleColon(line))
+		case isRoleLine(line, "Agent"), isRoleLine(line, "AI"), isRoleLine(line, "助手"):
+			flush()
+			inUser = false
+		default:
+			if inUser && line != "" {
+				if current.Len() > 0 {
+					current.WriteString("\n")
+				}
+				current.WriteString(line)
+			}
+		}
+	}
+	flush()
+
+	if len(turns) == 0 {
+		return []string{transcript}
+	}
+	return turns
+}
+
+func isRoleLine(line, role string) bool {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, role) {
+		return false
+	}
+	return strings.Contains(line, "：") || strings.Contains(line, ":")
+}
+
+func textAfterRoleColon(line string) string {
+	if idx := strings.Index(line, "："); idx >= 0 {
+		return strings.TrimSpace(line[idx+len("："):])
+	}
+	if idx := strings.Index(line, ":"); idx >= 0 {
+		return strings.TrimSpace(line[idx+1:])
+	}
+	return ""
 }
