@@ -156,6 +156,50 @@ func (a *RecoAgent) Recommend(ctx context.Context, req RecommendRequest) (Recomm
 		zap.String("status", "OK"),
 	)
 
+	if req.Surface == "dashboard_recommend" && strings.TrimSpace(req.Query) == "" {
+		fallback = true
+		n := config.Cfg.Pools.Recommend.TakeSize
+		if n <= 0 {
+			n = 20
+		}
+
+		ctxFast, spFast := zlog.StartSpan(ctx, "recommend.fast_fallback")
+		fallbackIDs, err := a.loadFallbackArticleIDs(ctxFast, req.UserID, n)
+		if err != nil {
+			spFast.End(zlog.StatusError, err)
+			expl.Add("recommend.fast_fallback.error", map[string]any{"error": err.Error()})
+			respOut.Status = "error"
+			retErr = err
+			respOut.Explanation = expl.Text()
+			if req.Explain {
+				respOut.ExplainTrace = expl.Trace()
+			}
+			return respOut, err
+		}
+		spFast.End(zlog.StatusFallback, nil,
+			zap.String("reason", "dashboard_empty_query"),
+			zap.Int("candidate_out", len(fallbackIDs)),
+		)
+
+		metrics.GenRecAgentRetrievalRequestsTotalMetric.WithLabelValues("reco_agent", req.Surface).Inc()
+		metrics.GenRecAgentRetrievalReturnedDocsMetric.WithLabelValues("reco_agent", req.Surface).
+			Observe(float64(len(fallbackIDs)))
+		expl.Add("recommend.fast_fallback", map[string]any{
+			"candidate_out": len(fallbackIDs),
+			"reason":        "dashboard_empty_query",
+			"fallback":      "article_repo",
+		})
+
+		respOut.Status = "fallback"
+		respOut.IDs = fallbackIDs
+		respOut.ArticleIDs = fallbackIDs
+		respOut.Explanation = ""
+		if req.Explain {
+			respOut.ExplainTrace = expl.Trace()
+		}
+		return respOut, nil
+	}
+
 	// -----------------------------
 	// 1) intent.parse（span 必须包住 LLM 调用，否则 Jaeger 里会显示 0us）
 	// -----------------------------
