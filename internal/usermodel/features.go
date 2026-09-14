@@ -131,6 +131,12 @@ func canonicalFeatureSpec(input FeatureSpec) (FeatureSpec, string, error) {
 	return spec, hex.EncodeToString(sum[:]), nil
 }
 
+// PrepareFeatureSpec is the common contract boundary for a warehouse producer
+// and the near-line consumer. Both must hash the same canonical rule set.
+func PrepareFeatureSpec(input FeatureSpec) (FeatureSpec, string, error) {
+	return canonicalFeatureSpec(input)
+}
+
 func featureEventKey(key EventKey) string                { return key.Producer + "\x00" + key.EventID }
 func featureSourceKey(producer, partition string) string { return producer + "\x00" + partition }
 
