@@ -46,13 +46,13 @@ type TrustedScope struct {
 }
 
 type ScopeResolver interface {
-	ResolveSearch(context.Context, *http.Request, string) (TrustedScope, error)
+	ResolveSearch(context.Context, *http.Request, PublicRequest) (TrustedScope, error)
 }
 
-type ScopeFunc func(context.Context, *http.Request, string) (TrustedScope, error)
+type ScopeFunc func(context.Context, *http.Request, PublicRequest) (TrustedScope, error)
 
-func (f ScopeFunc) ResolveSearch(ctx context.Context, r *http.Request, module string) (TrustedScope, error) {
-	return f(ctx, r, module)
+func (f ScopeFunc) ResolveSearch(ctx context.Context, r *http.Request, request PublicRequest) (TrustedScope, error) {
+	return f(ctx, r, request)
 }
 
 type Handler struct {
@@ -87,7 +87,9 @@ func nilDependency(value any) bool {
 	}
 }
 
-type requestBody struct {
+// PublicRequest is the sole client-controlled input to the trusted scope
+// resolver. Its JSON field order is the H02 SHA256 request-hash wire contract.
+type PublicRequest struct {
 	ModuleID     string                    `json:"module_id"`
 	Query        string                    `json:"query"`
 	Depth        searchdomain.Depth        `json:"depth"`
@@ -145,7 +147,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, status, code)
 		return
 	}
-	var body requestBody
+	var body PublicRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil || decoder.Decode(new(any)) != io.EOF ||
@@ -157,7 +159,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, status, code)
 		return
 	}
-	scope, err := h.resolver.ResolveSearch(ctx, r.WithContext(ctx), body.ModuleID)
+	scope, err := h.resolver.ResolveSearch(ctx, r.WithContext(ctx), body)
 	if err != nil {
 		status, outcome, code = scopeError(err)
 		cause = err
