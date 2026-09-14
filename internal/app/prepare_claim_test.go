@@ -21,7 +21,7 @@ func testPrepareJob(t *testing.T, now time.Time) jobs.Job {
 	}
 	return jobs.Job{ID: "job-1", InputHash: strings.Repeat("b", 64), State: "running", AttemptID: "attempt-1", WorkerID: "worker-1",
 		LeaseEpoch: 2, LeaseExpiresAt: now.Add(time.Minute).Format(time.RFC3339Nano),
-		Request: jobs.Submit{OperationID: "prepare-1", JobType: "content.prepare.v1", ResourceProfile: "cpu", Input: raw}}
+		Request: jobs.Submit{Producer: "ridethewind", OperationID: "prepare-1", RunRef: "run-1", JobType: "content.prepare.v1", ResourceProfile: "cpu", Input: raw}}
 }
 
 func TestDecodePrepareClaimBindsFixedAttempt(t *testing.T) {

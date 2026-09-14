@@ -25,7 +25,7 @@ func DecodePrepareClaim(job jobs.Job, workerID, jobType, resourceProfile string,
 	if workerID == "" || jobType == "" || resourceProfile == "" || job.ID == "" || !artifacts.ValidHash(job.InputHash) ||
 		job.State != "running" || job.WorkerID != workerID ||
 		job.Request.JobType != jobType || job.Request.ResourceProfile != resourceProfile ||
-		job.AttemptID == "" || job.LeaseEpoch <= 0 || job.CancelVersion < 0 || job.Request.OperationID == "" {
+		job.AttemptID == "" || job.LeaseEpoch <= 0 || job.CancelVersion < 0 || job.Request.Producer == "" || job.Request.OperationID == "" {
 		return input, content.Fence{}, ErrInvalidPrepareJob
 	}
 	decoder := json.NewDecoder(bytes.NewReader(job.Request.Input))
