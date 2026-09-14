@@ -6,6 +6,8 @@
 
 ItemCF 手算 `u1={A,B}`、`u2={A,B,C}` 得 `sim(A,B)=0.75` 且 TopK、固定输入 hash 可重现；同主体对同 item 的第二次合格展示不增加相似度和支持人数。成熟观察负例不连边，旧修订不连边，未展示/PENDING/无 impression/同主体重复 impression/窗口或标签可用时间超水位被拒。**这些 DWS 行是合成单测输入，当前没有真实 CH/S3 DWS 提供者，也未激活邻居或热门池。**
 
+最后补充不同 DWS cutoff 产生不同 ItemCF 工件 ID 与取消时不进入 DWS 的反例；`RECOMMEND_KEEP_EVIDENCE=1 bash internal/recommend/test-postgres.sh` 再次退出 0，日志 `/tmp/sea-btw-ws08e-pg-final3-20260914.log`，隔离 PG 证据 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T/sea-recommend-acceptance.k6TNKN`。
+
 状态为 `LOCAL_VERIFIED/PARTIAL`。H08.a 真请求/阶段候选事件、H10.c 正式 item 特征产品、WS07-C 真实成熟行为与可靠热门分母、ItemCF 耐久准入、H08.b 用户 bundle 配对消费、H11.b 训练 user/item 空间、真实 RTW PG 内容发布联验、生产索引与 Collector 均未验收。
 
 真实 RTW 发布到 BTW 候选 PG 的可选联验入口已加到 `internal/app/recommend_rtw_real_test.go`。RTW 父测试应在人工发布后提供 0600 JSON（`rtw_base,worker_token,pg_dsn,module_id,revision_id,item_id`），对 BTW `go test -c -race -o <bin> ./internal/app` 编出的子进程设置 `SEA_RTW_ITEM_POOL_FIXTURE=<path>` 并运行 `-test.run=^TestRTWRealItemPoolHandoff$`。子进程在 RTW 隔离 PG 内创建自己独立 schema，执行显式迁移、RTW 当前快照/逐修订读取、PG Rebuild 和有界查询，核指定 item 同版与不可变行一次。**此门禁目前只编译/跳过，尚未实际收到 RTW 父 fixture。**
