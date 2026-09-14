@@ -30,6 +30,8 @@ func TestRootSessionReadBoundary(t *testing.T) {
 		cmd.Env = append(os.Environ(), "SEARCH_SESSION_CHILD=1")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("isolated framework Session acceptance: %v\n%s", err, output)
+		} else if testing.Verbose() {
+			t.Log(strings.TrimSpace(string(output)))
 		}
 		return
 	}
