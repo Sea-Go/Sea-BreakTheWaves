@@ -68,13 +68,21 @@ func validateRootSummaryRequest(q SummaryRequest) error {
 // delivery node, a conditional no-evidence branch, a real no-tool LLMAgent
 // sub-agent and a final contract-check node. Search itself remains a domain
 // operation; the Graph and Runner own Agent execution and native observability.
-func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, observed *telemetry.Bundle) (*RootSummarizer, error) {
+func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, observed *telemetry.Bundle,
+	limits ...SummaryModelLimits) (*RootSummarizer, error) {
 	if d == nil || isNil(m) || isNil(sessions) || observed == nil || !observed.Installed() {
 		return nil, ErrInvalid
 	}
+	config := model.GenerationConfig{Stream: false}
+	if len(limits) > 1 || len(limits) == 1 && (limits[0].MaxOutputTokens < 1 || limits[0].MaxOutputTokens > 8192) {
+		return nil, ErrInvalid
+	}
+	if len(limits) == 1 {
+		config.MaxTokens = model.IntPtr(limits[0].MaxOutputTokens)
+	}
 	summaryAgent := llmagent.New(rootSummaryAgent, llmagent.WithModel(m), llmagent.WithInstruction(summaryInstruction),
 		llmagent.WithTools([]tool.Tool{}), llmagent.WithEnableCodeExecutionResponseProcessor(false),
-		llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false}))
+		llmagent.WithGenerationConfig(config))
 	schema := graph.NewStateSchema().
 		AddField(rootSummaryRequestKey, graph.StateField{Type: reflect.TypeOf(SummaryRequest{}), Reducer: graph.DefaultReducer}).
 		AddField(rootSearchResultKey, graph.StateField{Type: reflect.TypeOf(SearchResult{}), Reducer: graph.DefaultReducer}).
@@ -188,6 +196,14 @@ func (s *RootSummarizer) Summarize(ctx context.Context, q SummaryRequest) (Summa
 	}
 	fixed := q
 	fixed.Search.Snapshot = cloneSnapshot(q.Search.Snapshot)
+	invocation, err := invocationForSummary(fixed)
+	if err != nil {
+		return out, err
+	}
+	ctx, err = WithModelInvocationRef(ctx, invocation)
+	if err != nil {
+		return out, err
+	}
 	var completed int
 	var candidate SummaryResult
 	_, err = s.runtime.Run(ctx, btwruntime.Request{Subject: q.Subject, SessionID: q.SessionID,

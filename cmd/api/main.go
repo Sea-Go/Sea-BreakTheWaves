@@ -28,7 +28,6 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	searchhttp "github.com/Sea-Go/Sea-BreakTheWaves/internal/transport/http/search"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
 
 const serviceName = "sea-btw-search-api"
@@ -184,8 +183,11 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	model := openai.New(cfg.ModelName, openai.WithBaseURL(cfg.ModelURL), openai.WithAPIKey(cfg.ModelKey))
-	boundary, err = searchdomain.NewRootSessionBoundary(delivery, model, history, bundle)
+	model := gatewayModel{name: cfg.ModelName, url: cfg.ModelURL, key: cfg.ModelKey}
+	// This executable currently exposes only fast/low. The 512-token cap is
+	// explicit for that product profile, not a default for future tiers.
+	boundary, err = searchdomain.NewRootSessionBoundary(delivery, model, history, bundle,
+		searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
 	if err != nil {
 		return fmt.Errorf("construct root search session: %w", err)
 	}

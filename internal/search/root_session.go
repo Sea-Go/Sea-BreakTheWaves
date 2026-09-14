@@ -44,12 +44,13 @@ type RootSessionBoundary struct {
 	history  AcceptedRootHistory
 }
 
-func NewRootSessionBoundary(d *Delivery, m model.Model, history AcceptedRootHistory, observed *telemetry.Bundle) (*RootSessionBoundary, error) {
+func NewRootSessionBoundary(d *Delivery, m model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
+	limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
 	if isNil(history) {
 		return nil, ErrInvalid
 	}
 	attempts := inmemory.NewSessionService()
-	root, err := NewRootSummarizer(d, m, attempts, observed)
+	root, err := NewRootSummarizer(d, m, attempts, observed, limits...)
 	if err != nil {
 		_ = attempts.Close()
 		return nil, err
