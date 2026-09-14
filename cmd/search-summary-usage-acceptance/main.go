@@ -105,8 +105,11 @@ func readJSON(path string, out any) ([]byte, error) {
 	return raw, nil
 }
 
-func run(ctx context.Context, runtimePath, answerPath string) (report, error) {
+func run(ctx context.Context, runtimePath, answerPath, qualityGate string) (report, error) {
 	var out report
+	if qualityGate != "not_assessed" && qualityGate != "not_passed_unsupported_interpretation" {
+		return out, errors.New("explicit bounded quality review state required")
+	}
 	var dc runtime
 	if _, err := readJSON(runtimePath, &dc); err != nil {
 		return out, err
@@ -188,7 +191,7 @@ func run(ctx context.Context, runtimePath, answerPath string) (report, error) {
 			EndToEndLatencyMS: rtw.EndToEndLatencyMS, ProviderUsage: envelope.Usage,
 			RTWDurableAnswerRows: 1, RTWDurableAnswerCitationRows: 1, RTWDurableSearchCitationRows: 1,
 			RTWProductHistoryPresent: true, RealUserCenter: true,
-			QualityGate: "not_passed_unsupported_interpretation", RelevanceState: "not_evaluable_no_qrels",
+			QualityGate: qualityGate, RelevanceState: "not_evaluable_no_qrels",
 			Activation: "none"}
 	}
 	if err := rows.Err(); err != nil {
@@ -201,10 +204,11 @@ func run(ctx context.Context, runtimePath, answerPath string) (report, error) {
 }
 
 func main() {
-	var runtimePath, answerPath, outputPath string
+	var runtimePath, answerPath, outputPath, qualityGate string
 	flag.StringVar(&runtimePath, "dc-runtime", "", "private local DataCenter gateway runtime")
 	flag.StringVar(&answerPath, "rtw-answer", "", "private RTW durable answer test receipt")
 	flag.StringVar(&outputPath, "output", "", "new immutable combined evidence path")
+	flag.StringVar(&qualityGate, "quality-gate", "", "explicit not_assessed or not_passed_unsupported_interpretation review")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if runtimePath == "" || answerPath == "" || outputPath == "" {
@@ -213,7 +217,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	result, err := run(ctx, runtimePath, answerPath)
+	result, err := run(ctx, runtimePath, answerPath, qualityGate)
 	if err != nil {
 		logger.Error("real summary model/answer binding failed", "error", err)
 		os.Exit(1)
