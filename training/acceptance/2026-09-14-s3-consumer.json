@@ -1,0 +1,106 @@
+{
+  "scope": "synthetic run14 ClickHouse/dbt export; original S3 stopped; immutable exported bytes restored into fresh task-owned SeaweedFS S3 for independent Arrow consumer verification",
+  "reader_version": "0.2.0",
+  "warehouse_commit": "7475817136fb0f8bccea2431e75cdb7a3a4c2b73",
+  "results": [
+    {
+      "fixture": "v1",
+      "schema_version": "sea.training-dataset.v2",
+      "batch_rows": {
+        "train": 2,
+        "validation": 1,
+        "test": 1
+      },
+      "dataset_id": "recommendation-interaction-fixture",
+      "revision": 1,
+      "manifest_sha256": "5bf59827d461987b10ccc99ceaaf7f6d3099abdd088750a96f0f277eccbc2c97",
+      "data_kind": "synthetic",
+      "validated_rows": 4,
+      "splits": {
+        "train": {
+          "rows": 2,
+          "positive": 1,
+          "negative": 1
+        },
+        "validation": {
+          "rows": 1,
+          "positive": 1,
+          "negative": 0
+        },
+        "test": {
+          "rows": 1,
+          "positive": 0,
+          "negative": 1
+        }
+      },
+      "row_contract": "sea.recommend-engagement.v1",
+      "status": "validated"
+    },
+    {
+      "fixture": "v2",
+      "schema_version": "sea.training-dataset.v2",
+      "batch_rows": {
+        "train": 2,
+        "validation": 1,
+        "test": 3
+      },
+      "dataset_id": "recommendation-interaction-fixture",
+      "revision": 2,
+      "manifest_sha256": "772cf1f4e80f4302726188d8fd1922db8822675fb7d4cc9e8b45c5c47824ce99",
+      "data_kind": "synthetic",
+      "validated_rows": 6,
+      "splits": {
+        "train": {
+          "rows": 2,
+          "positive": 1,
+          "negative": 1
+        },
+        "validation": {
+          "rows": 1,
+          "positive": 1,
+          "negative": 0
+        },
+        "test": {
+          "rows": 3,
+          "positive": 1,
+          "negative": 2
+        }
+      },
+      "row_contract": "sea.recommend-engagement.v1",
+      "status": "validated"
+    },
+    {
+      "fixture": "scopes",
+      "schema_version": "sea.training-dataset.v2",
+      "batch_rows": {
+        "train": 5,
+        "validation": 1,
+        "test": 1
+      },
+      "dataset_id": "recommendation-interaction-fixture",
+      "revision": 1,
+      "manifest_sha256": "d8acf57d8d789981757b03064bedf26fdfecfb133abf680ac807d3d24869b3ac",
+      "data_kind": "synthetic",
+      "validated_rows": 7,
+      "splits": {
+        "train": {
+          "rows": 5,
+          "positive": 3,
+          "negative": 2
+        },
+        "validation": {
+          "rows": 1,
+          "positive": 1,
+          "negative": 0
+        },
+        "test": {
+          "rows": 1,
+          "positive": 0,
+          "negative": 1
+        }
+      },
+      "row_contract": "sea.recommend-engagement.v1",
+      "status": "validated"
+    }
+  ]
+}

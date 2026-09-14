@@ -1,0 +1,112 @@
+[
+  {
+    "name": "sample_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "request_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "impression_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "authority_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "tenant_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "subject_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "item_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "content_revision",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "request_time",
+    "arrow_type": "timestamp[us, tz=UTC]",
+    "nullable": false
+  },
+  {
+    "name": "impression_time",
+    "arrow_type": "timestamp[us, tz=UTC]",
+    "nullable": false
+  },
+  {
+    "name": "feature_cutoff",
+    "arrow_type": "timestamp[us, tz=UTC]",
+    "nullable": false
+  },
+  {
+    "name": "feature_snapshot_ref",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "feature_contract_id",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "feature_available_at",
+    "arrow_type": "timestamp[us, tz=UTC]",
+    "nullable": false
+  },
+  {
+    "name": "user_interest",
+    "arrow_type": "float64",
+    "nullable": false
+  },
+  {
+    "name": "item_quality",
+    "arrow_type": "float64",
+    "nullable": false
+  },
+  {
+    "name": "label",
+    "arrow_type": "uint8",
+    "nullable": false
+  },
+  {
+    "name": "label_state",
+    "arrow_type": "string",
+    "nullable": false
+  },
+  {
+    "name": "label_revision",
+    "arrow_type": "uint32",
+    "nullable": false
+  },
+  {
+    "name": "label_observation_end",
+    "arrow_type": "timestamp[us, tz=UTC]",
+    "nullable": false
+  },
+  {
+    "name": "sampling_probability",
+    "arrow_type": "float64",
+    "nullable": false
+  },
+  {
+    "name": "split",
+    "arrow_type": "string",
+    "nullable": false
+  }
+]
