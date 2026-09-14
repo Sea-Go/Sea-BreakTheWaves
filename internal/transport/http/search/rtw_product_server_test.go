@@ -38,11 +38,12 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 		t.Fatalf("product fixture must be a regular private file: %v", err)
 	}
 	var fixture struct {
-		RTWBase     string `json:"rtw_base"`
-		WorkerToken string `json:"worker_token"`
-		ScopeKey    string `json:"scope_key"`
-		ReadyPath   string `json:"ready_path"`
-		ModuleID    string `json:"module_id"`
+		RTWBase     string           `json:"rtw_base"`
+		WorkerToken string           `json:"worker_token"`
+		ScopeKey    string           `json:"scope_key"`
+		ReadyPath   string           `json:"ready_path"`
+		ModuleID    string           `json:"module_id"`
+		RealIndex   realIndexFixture `json:"real_index"`
 		Candidate   struct {
 			RevisionID string `json:"revision_id"`
 			ChunkID    string `json:"chunk_id"`
@@ -89,7 +90,75 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 	var productModel model.Model
 	unexpected := errors.New("empty search must not read source, accept citations or call model")
 	cited := fixture.Candidate.ChunkID != ""
-	if cited {
+	if fixture.RealIndex.DCRuntime != "" {
+		if !cited || fixture.ModuleID == "" || fixture.Candidate.RevisionID == "" ||
+			fixture.Candidate.QuoteHash == "" {
+			t.Fatal("real three-lane path requires a fixed published source identity")
+		}
+		lanes, err := buildRTWRealThreeLane(context.Background(), fixture.RealIndex)
+		if err != nil {
+			t.Fatalf("build three actual DC BGE lanes before RTW publication: %v", err)
+		}
+		provider, err := app.NewRTWSearchSnapshotProvider(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		actualChecker, err := app.NewRTWEffectiveRevisionChecker(provider)
+		if err != nil {
+			t.Fatal(err)
+		}
+		planner := searchdomain.PlanFunc(func(_ context.Context, in searchdomain.PlanInput) ([]string, error) {
+			if in.Round != 1 || in.Depth != searchdomain.Fast || in.Intelligence != searchdomain.Low {
+				return nil, searchdomain.ErrUnavailable
+			}
+			return []string{in.Query}, nil
+		})
+		actual, err := searchdomain.New(lanes.dense, lanes.sparse, lanes.multi, planner, actualChecker,
+			searchdomain.Policy{Version: "real-bge-three-lane-fast-low-v1", Profiles: map[searchdomain.Depth]map[searchdomain.Intelligence]searchdomain.Limits{
+				searchdomain.Fast: {searchdomain.Low: {MaxBatches: 1, MaxSubqueries: 1, TopKPerLane: 2,
+					MaxEvidence: 1, WallTime: 50 * time.Second}},
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		searcher = searchdomain.ExecuteFunc(func(ctx context.Context, request searchdomain.Request) (searchdomain.Result, error) {
+			searches.Add(1)
+			for _, lane := range []searchdomain.Lane{searchdomain.Dense, searchdomain.Sparse, searchdomain.MultiVector} {
+				if request.Snapshot.Indexes[lane] != lanes.result.Indexes[string(lane)] {
+					return searchdomain.Result{}, errors.New("RTW published index differs from actual BGE lane")
+				}
+			}
+			found, err := actual.Execute(ctx, request)
+			if err != nil {
+				return found, err
+			}
+			if len(found.Verified) == 0 || found.Verified[0].Key.ChunkID != fixture.Candidate.ChunkID ||
+				len(found.Verified[0].Sources) != 3 || len(found.LaneStatus) != 3 {
+				return searchdomain.Result{}, errors.New("real three-lane recall did not rank the RTW source first in all lanes")
+			}
+			for _, status := range found.LaneStatus {
+				if !status.Executed || status.Failed || status.CandidateCount < 1 {
+					return searchdomain.Result{}, errors.New("real three-lane recall was incomplete")
+				}
+			}
+			return found, nil
+		})
+		adapter, err := app.NewRTWSearchCitationAdapter(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checker = actualChecker
+		source = searchdomain.SourceReadFunc(func(ctx context.Context, fixed searchdomain.Snapshot, candidate searchdomain.VerifiedCandidate) (corpus.Chunk, error) {
+			sourceReads.Add(1)
+			return adapter.Read(ctx, fixed, candidate)
+		})
+		accept = searchdomain.AcceptFunc(func(ctx context.Context, pack searchdomain.EvidencePack) (searchdomain.CitationReceipt, error) {
+			citationWrites.Add(1)
+			return adapter.Accept(ctx, pack)
+		})
+		productModel = &citedProductModel{client: client, calls: &modelCalls,
+			expectedQuote: fixture.RealIndex.ExpectedQuote, expectedHash: fixture.Candidate.QuoteHash}
+	} else if cited {
 		if fixture.ModuleID == "" || fixture.Candidate.RevisionID == "" || fixture.Candidate.QuoteHash == "" {
 			t.Fatal("incomplete published candidate identity")
 		}
