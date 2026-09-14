@@ -101,6 +101,33 @@ fi
   "$fact_root/warehouse/coverage/combined_acceptance.py" --runtime "$WAREHOUSE_FAVORITE_RUNTIME" \
   --output "$fact_tmp/cross-domain" --ready "$fact_ready" --pg-dsn "$DATABASE_URL" \
   --postgres-bin "$fact_pg_bin" >"$fact_tmp/cross-domain.log" 2>&1
+python3 - "$fact_tmp/cross-domain" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+summary_path = root / "report.json"
+summary = json.loads(summary_path.read_text())
+accepted = {}
+for label, fields in {
+    "real": ("w1_after_retract", "w2"),
+    "two": ("u1_w1_after_tail", "u1_w3", "u2_w3", "u3_empty_w3"),
+}.items():
+    report = json.loads((root / f"{label}-joined-ref.json").read_text())
+    receipts = report.get("accepted_v2", {})
+    if receipts.get("v1_and_serving_heads") != 0:
+        raise RuntimeError(f"{label} v2 acceptance moved a v1 or Serving head")
+    for field in fields:
+        receipt = receipts.get(field, {})
+        if receipt.get("status") != "accepted_historical_default_off" or receipt.get("replay") is not False:
+            raise RuntimeError(f"{label} missing default-off v2 historical receipt: {field}")
+    accepted[label] = {field: receipts[field] for field in fields}
+summary["accept_v2"] = "accepted_historical_default_off"
+summary["accepted_v2"] = accepted
+summary_path.write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
+print("V2 historical receipts accepted with v1 and Serving heads unchanged")
+PY
 : > "$fact_release"
 wait "$fact_rtw_pid"
 fact_rtw_pid=""
@@ -108,4 +135,4 @@ fact_rtw_pid=""
 (cd "$fact_root" && go mod verify)
 (cd "$fact_root" && git diff --check)
 rg '^--- PASS:|^PASS$|^ok[[:space:]]' "$fact_tmp/rtw-test.log" "$fact_tmp/cross-domain/real-combined-test.log" "$fact_tmp/cross-domain/two-combined-test.log" || true
-cat "$fact_tmp/cross-domain.log"
+printf 'Final combined report: %s\n' "$fact_tmp/cross-domain/report.json"
