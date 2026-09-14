@@ -110,3 +110,66 @@ func TestTechnicalClients(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestRepresentIdempotencyBoundary(t *testing.T) {
+	raw, err := os.ReadFile("testdata/dense.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Contract representation.Contract `json:"contract"`
+		Request  representation.Request  `json:"request"`
+		Response representation.Response `json:"response"`
+	}
+	if err = representation.Decode(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	failOnce := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		if !representationKeyPattern.MatchString(key) {
+			t.Error("invalid call key")
+		}
+		keys = append(keys, key)
+		if key == "stable-operation-1" && failOnce {
+			failOnce = false
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(fixture.Response)
+	}))
+	defer server.Close()
+	c, err := New(httpclient.Config{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err = c.Represent(context.Background(), fixture.Request, fixture.Contract, fixture.Response.Model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(keys) != 2 || keys[0] == keys[1] {
+		t.Fatal("independent equal payloads reused a call key", keys)
+	}
+	if _, err = c.RepresentWithKey(context.Background(), fixture.Request, fixture.Contract, fixture.Response.Model, "stable-operation-1"); err == nil {
+		t.Fatal("expected uncertain server failure")
+	}
+	if len(keys) != 3 {
+		t.Fatal("unexpected automatic retry")
+	}
+	if _, err = c.RepresentWithKey(context.Background(), fixture.Request, fixture.Contract, fixture.Response.Model, "stable-operation-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 4 || keys[2] != keys[3] {
+		t.Fatal("logical retry changed key", keys)
+	}
+	for _, bad := range []string{"", "short", "invalid key", "line\nbreak"} {
+		if _, err = c.RepresentWithKey(context.Background(), fixture.Request, fixture.Contract, fixture.Response.Model, bad); err == nil {
+			t.Fatal("accepted invalid key")
+		}
+	}
+	if len(keys) != 4 {
+		t.Fatal("invalid key reached server")
+	}
+}

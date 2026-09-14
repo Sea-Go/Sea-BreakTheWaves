@@ -3,10 +3,12 @@ package datacenter
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/eventing"
@@ -48,8 +50,24 @@ func resource(prefix, id, suffix string) (string, error) {
 	}
 	return prefix + s + suffix, nil
 }
+
+// Represent starts an independent model call. Identical payloads are not the
+// same operation. Call RepresentWithKey when persisting/retrying one operation.
 func (c *Client) Represent(ctx context.Context, q representation.Request, contract representation.Contract, physicalModel string) (representation.Response, error) {
+	return c.RepresentWithKey(ctx, q, contract, physicalModel, rand.Text())
+}
+
+var representationKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,200}$`)
+
+// RepresentWithKey uses a caller-owned logical call key. Persist the key before
+// dispatch and reuse it after uncertain outcomes; never derive it from body hash
+// alone, because separate calls with equal bodies have separate usage receipts.
+// The client does not automatically retry model calls.
+func (c *Client) RepresentWithKey(ctx context.Context, q representation.Request, contract representation.Contract, physicalModel, key string) (representation.Response, error) {
 	var result representation.Response
+	if !representationKeyPattern.MatchString(key) {
+		return result, errors.New("representation requires a valid logical call Idempotency-Key")
+	}
 	if err := q.Validate(); err != nil {
 		return result, err
 	}
@@ -59,7 +77,7 @@ func (c *Client) Represent(ctx context.Context, q representation.Request, contra
 	if physicalModel == "" {
 		return result, errors.New("fixed physical model is required")
 	}
-	raw, _, err := c.http.Do(ctx, http.MethodPost, "/v1/representations", nil, q, "")
+	raw, _, err := c.http.Do(ctx, http.MethodPost, "/v1/representations", nil, q, key)
 	if err != nil {
 		return result, err
 	}
