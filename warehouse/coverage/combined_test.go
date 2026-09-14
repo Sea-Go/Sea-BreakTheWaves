@@ -3,6 +3,8 @@ package coverage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,11 +70,27 @@ func joinedEnv(t *testing.T, warehouseDSN, modelDSN, dcURL, dcToken, authorityUR
 		t.Fatal(err)
 	}
 	t.Cleanup(model.Close)
-	if _, err := model.Exec(ctx, usermodelmigration.SQL); err != nil {
+	featuresSQL, err := os.ReadFile("../../migrations/usermodel/003_features.sql")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := model.Exec(ctx, usermodelmigration.CoverageSQL); err != nil {
+	servingSQL, err := os.ReadFile("../../migrations/usermodel/004_serving.sql")
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, migration := range []struct {
+		name string
+		sql  string
+	}{
+		{"001_facts", usermodelmigration.SQL},
+		{"002_coverage", usermodelmigration.CoverageSQL},
+		{"003_features", string(featuresSQL)},
+		{"004_serving", string(servingSQL)},
+		{"005_covered_baseline", usermodelmigration.CoveredBaselineSQL},
+	} {
+		if _, err := model.Exec(ctx, migration.sql); err != nil {
+			t.Fatalf("model migration %s: %v", migration.name, err)
+		}
 	}
 	observed, err := telemetry.New(ctx, telemetry.Config{Service: "coverage-combined-acceptance", Environment: "test", Version: "v2",
 		InstanceID: "isolated", Output: io.Discard, Level: slog.LevelInfo, TraceExporter: tracetest.NewInMemoryExporter(), SampleRatio: 1})
@@ -120,12 +138,14 @@ func joinedEnv(t *testing.T, warehouseDSN, modelDSN, dcURL, dcToken, authorityUR
 		t.Fatal(err)
 	}
 	objects := featurebaseline.RunnerCoveredObjects{Runner: featurebaseline.Runner{}}
-	return &joinedGate{warehouse: warehouse, model: model, store: store, dc: dc, binder: binder,
+	g := &joinedGate{warehouse: warehouse, model: model, store: store, dc: dc, binder: binder,
 		consumer:  &favoritesource.CoverageConsumer{DB: warehouse, Source: dc, Binder: binder, Limit: 1},
 		publisher: &favoritesource.CoveragePublisher{DB: warehouse, Source: dc, Binder: binder, S3Prefix: s3},
 		verifier:  verifier, worker: worker, graph: graph, objects: objects,
 		builder: featurebaseline.CoveredBuilder{State: featurebaseline.UsermodelCoveredReader{Store: store}, Objects: objects,
 			ArtifactRoot: strings.TrimRight(s3, "/") + "/warehouse-coverage"}}
+	g.assertNoServingHeads(t)
+	return g
 }
 
 func (g *joinedGate) sourceBytes(t *testing.T, ref sourcecoverage.GlobalPrefixRef) ([]byte, []byte) {
@@ -166,6 +186,54 @@ func (g *joinedGate) candidate(t *testing.T, subject sourcecoverage.SubjectRef, 
 		t.Fatalf("candidate escaped default-off/ref: %+v", result)
 	}
 	return result
+}
+
+func (g *joinedGate) coveredSubmission(t *testing.T, built featurebaseline.CoveredBuildResult) usermodel.CoveredBaselineSubmission {
+	t.Helper()
+	raw, err := g.objects.ReadFixed(context.Background(), built.ArtifactURL, built.ArtifactHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	encoded, err := json.Marshal(built.Candidate)
+	if err != nil || hex.EncodeToString(sum[:]) != built.ArtifactHash || !bytes.Equal(raw, encoded) {
+		t.Fatalf("H10 S3 original candidate bytes/hash differ: %v", err)
+	}
+	return usermodel.CoveredBaselineSubmission{ArtifactURL: built.ArtifactURL,
+		ArtifactSHA256: built.ArtifactHash, CandidateJSON: raw,
+		FeatureSpec: featurebaseline.FavoriteCandidateSpec()}
+}
+
+func (g *joinedGate) acceptCovered(t *testing.T, built featurebaseline.CoveredBuildResult,
+	wantReplay bool) usermodel.CoveredBaselineReceipt {
+	t.Helper()
+	input := g.coveredSubmission(t, built)
+	receipt, err := g.store.AcceptCoveredBaseline(context.Background(), input)
+	if err != nil || receipt.Status != "accepted_historical_default_off" || receipt.Replay != wantReplay ||
+		receipt.ArtifactSHA256 != built.ArtifactHash || receipt.Coverage != built.Candidate.Coverage ||
+		receipt.Subject != built.Candidate.Subject || receipt.Revision != built.Candidate.Revision {
+		t.Fatalf("v2 historical receipt differs: %+v %v", receipt, err)
+	}
+	var stored []byte
+	if err := g.model.QueryRow(context.Background(), `SELECT candidate_raw FROM usermodel_covered_baselines_v2
+		WHERE authority_id=$1 AND tenant_id=$2 AND subject_id=$3 AND revision=$4`,
+		receipt.Subject.AuthorityID, receipt.Subject.TenantID, receipt.Subject.SubjectID, receipt.Revision).Scan(&stored); err != nil || !bytes.Equal(stored, input.CandidateJSON) {
+		t.Fatalf("PG raw candidate differs from S3: %v", err)
+	}
+	g.assertNoServingHeads(t)
+	return receipt
+}
+
+func (g *joinedGate) assertNoServingHeads(t *testing.T) {
+	t.Helper()
+	for _, table := range []string{"usermodel_feature_baselines", "usermodel_feature_heads",
+		"usermodel_feature_snapshots", "usermodel_feature_snapshot_versions",
+		"usermodel_serving_bundles", "usermodel_serving_pointers"} {
+		var count int64
+		if err := g.model.QueryRow(context.Background(), "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("v2 acceptance moved v1/Serving table %s: %d %v", table, count, err)
+		}
+	}
 }
 
 func (g *joinedGate) graphAppendAt(t *testing.T, offset int64) {
@@ -272,6 +340,7 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 	}
 	g.verifySubject(t, s1.Ref)
 	g.verifySubject(t, se.Ref)
+	g.assertNoServingHeads(t)
 	b1 := g.candidate(t, u1, p1.Ref, "combined_real_candidate_w1", 1)
 	if len(b1.Candidate.Values) != 1 || b1.Candidate.Values[0].Value != "1" || !b1.Candidate.CurrentComplete {
 		t.Fatalf("real W1 count: %+v", b1.Candidate)
@@ -286,6 +355,17 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 	if late.Candidate.Values[0].Value != "1" || len(late.Candidate.Tail) != 1 || late.Candidate.Tail[0].Offset != 2 || late.Candidate.CurrentComplete {
 		t.Fatalf("W1 history lost after retract: %+v", late.Candidate)
 	}
+	acceptedW1 := g.acceptCovered(t, late, false)
+	g.acceptCovered(t, late, true)
+	if _, err := g.store.AcceptCoveredBaseline(ctx, g.coveredSubmission(t, b1)); !errors.Is(err, usermodel.ErrCoveredBaselineConflict) {
+		t.Fatalf("different W1 hash reused accepted revision: %v", err)
+	}
+	wrongBytes := g.coveredSubmission(t, late)
+	wrongBytes.CandidateJSON = append(bytes.Clone(wrongBytes.CandidateJSON), 'x')
+	if _, err := g.store.AcceptCoveredBaseline(ctx, wrongBytes); !errors.Is(err, usermodel.ErrCoveredBaselineInvalid) {
+		t.Fatalf("changed S3 candidate bytes retained old hash: %v", err)
+	}
+	g.assertNoServingHeads(t)
 	p2, err := g.publisher.PublishPrefix(ctx, 2, "combined_real_w2")
 	if err != nil {
 		t.Fatal(err)
@@ -303,6 +383,8 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 	if final.Candidate.Values[0].Value != "0" || !final.Candidate.CurrentComplete || final.ArtifactHash == b1.ArtifactHash {
 		t.Fatalf("real W2 count: %+v", final.Candidate)
 	}
+	acceptedW2 := g.acceptCovered(t, final, false)
+	g.acceptCovered(t, final, true)
 	if got, err := g.dc.ReadEvents(ctx, "btw-coverage-combined-fact", producer, 10); err != nil || got.FromOffset != 3 {
 		t.Fatalf("Graph ACK did not advance separately: %+v %v", got, err)
 	}
@@ -319,7 +401,8 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 		}
 	}
 	writeJoinedReport(t, os.Getenv("COVERAGE_JOIN_REAL_REPORT"), map[string]any{"G1": p1.Ref, "G2": p2.Ref, "U1W1": s1.Ref, "U2W1": se.Ref, "U1W2": s2.Ref,
-		"candidate_w1_sha256": b1.ArtifactHash, "candidate_w1_after_retract_sha256": late.ArtifactHash, "candidate_w2_sha256": final.ArtifactHash})
+		"candidate_w1_sha256": b1.ArtifactHash, "candidate_w1_after_retract_sha256": late.ArtifactHash, "candidate_w2_sha256": final.ArtifactHash,
+		"accepted_v2": map[string]any{"w1_after_retract": acceptedW1, "w2": acceptedW2, "v1_and_serving_heads": 0}})
 	t.Logf("true RTW/DC Publisher→Verifier→H10 W1=%s W2=%s candidate1=%s candidate2=%s", p1.Ref.EventIndexSHA256, p2.Ref.EventIndexSHA256, b1.ArtifactHash, final.ArtifactHash)
 }
 
@@ -461,6 +544,16 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 	if late.Candidate.Values[0].Value != "1" || len(late.Candidate.Tail) != 1 || late.Candidate.Tail[0].Offset != 3 || late.Candidate.CurrentComplete {
 		t.Fatalf("W1 assert lost to later retract: %+v", late.Candidate)
 	}
+	acceptedW1 := g.acceptCovered(t, late, false)
+	g.acceptCovered(t, late, true)
+	if acceptedW1.Status != "accepted_historical_default_off" || acceptedW1.InputStateVersion != late.Candidate.InputStateVersion ||
+		late.Candidate.CurrentComplete {
+		t.Fatalf("tail W1 was promoted to serving state: %+v", acceptedW1)
+	}
+	if _, err := g.store.AcceptCoveredBaseline(ctx, g.coveredSubmission(t, first)); !errors.Is(err, usermodel.ErrCoveredBaselineConflict) {
+		t.Fatalf("different W1 candidate hash reused revision: %v", err)
+	}
+	g.assertNoServingHeads(t)
 	i3, b3 := g.sourceBytes(t, p3.Ref)
 	parts := bytes.Split(bytes.TrimSuffix(i3, []byte{'\n'}), []byte{'\n'})
 	if len(parts) != 3 {
@@ -502,13 +595,24 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 	for _, ref := range []sourcecoverage.SubjectCoverageRef{s3u1.Ref, s3u2.Ref, s3u3.Ref} {
 		g.verifySubject(t, ref)
 	}
-	c1 := g.candidate(t, u1, p3.Ref, "combined_two_candidate_u1_w3", 3)
+	c1 := g.candidate(t, u1, p3.Ref, "combined_two_candidate_u1_w3", 2)
 	c2 := g.candidate(t, u2, p3.Ref, "combined_two_candidate_u2_w3", 1)
 	c3 := g.candidate(t, u3, p3.Ref, "combined_two_candidate_u3_w3", 1)
 	if c1.Candidate.Values[0].Value != "0" || c2.Candidate.Values[0].Value != "1" || c3.Candidate.Values[0].Value != "0" ||
 		!c1.Candidate.CurrentComplete || !c2.Candidate.CurrentComplete || !c3.Candidate.CurrentComplete {
 		t.Fatalf("W3 two-user counts: u1=%+v u2=%+v u3=%+v", c1.Candidate, c2.Candidate, c3.Candidate)
 	}
+	acceptedU1 := g.acceptCovered(t, c1, false)
+	acceptedU2 := g.acceptCovered(t, c2, false)
+	acceptedU3 := g.acceptCovered(t, c3, false)
+	for _, candidate := range []featurebaseline.CoveredBuildResult{c1, c2, c3} {
+		g.acceptCovered(t, candidate, true)
+	}
+	if acceptedU1.Revision != 2 || acceptedU2.Revision != 1 || acceptedU3.Revision != 1 ||
+		acceptedU3.Coverage.EventCount != 0 || acceptedU3.Status != "accepted_historical_default_off" {
+		t.Fatalf("multi-subject v2 historical receipts differ: u1=%+v u2=%+v empty=%+v", acceptedU1, acceptedU2, acceptedU3)
+	}
+	g.assertNoServingHeads(t)
 	old, err := g.objects.ReadFixed(ctx, first.ArtifactURL, first.ArtifactHash)
 	if err != nil || len(old) == 0 {
 		t.Fatalf("W1 artifact changed: %v", err)
@@ -556,6 +660,8 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 	}
 	writeJoinedReport(t, os.Getenv("COVERAGE_JOIN_TWO_REPORT"), map[string]any{"G1": p1.Ref, "G3": p3.Ref, "U1W1": s1.Ref, "U1W3": s3u1.Ref, "U2W3": s3u2.Ref, "U3W3": s3u3.Ref,
 		"candidate_w1_sha256": first.ArtifactHash, "candidate_w1_after_tail_sha256": late.ArtifactHash, "candidate_u1_w3_sha256": c1.ArtifactHash,
-		"candidate_u2_w3_sha256": c2.ArtifactHash, "candidate_u3_w3_sha256": c3.ArtifactHash})
+		"candidate_u2_w3_sha256": c2.ArtifactHash, "candidate_u3_w3_sha256": c3.ArtifactHash,
+		"accepted_v2": map[string]any{"u1_w1_after_tail": acceptedW1, "u1_w3": acceptedU1,
+			"u2_w3": acceptedU2, "u3_empty_w3": acceptedU3, "v1_and_serving_heads": 0}})
 	t.Logf("two-subject real DC/PG Publisher→Verifier→H10 W1=%s W3=%s u1=%s u2=%s empty=%s", p1.Ref.EventIndexSHA256, p3.Ref.EventIndexSHA256, s3u1.Ref.SparseIndexSHA256, s3u2.Ref.SparseIndexSHA256, s3u3.Ref.SparseIndexSHA256)
 }
