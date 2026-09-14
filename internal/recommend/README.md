@@ -11,3 +11,5 @@ ItemCF 候选工件 ID 同时绑定 TopK 与固定 DWS 水位；同一邻居数�
 WS08-D `ServingBundle`/PairRef 和 item embedding index、H11.b 配对生效属于 WS08-F；本包的三路搜索索引仅作为同代内容签名，不冒充推荐 item 向量空间。WS07-C 需要交付真实成熟 DWS/候选统计、完整水位和冻结 manifest；之后才能接入热门池、ItemCF 耐久邻居、配对 item 特征、H09.c 阶段事实与用户请求消费。
 
 验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。
+
+WS08-F 的不可变配对候选、item索引预构建声明、批准探针、活动CAS及请求时Bundle/排序门禁见 [WS08F_ACCEPTANCE.md](WS08F_ACCEPTANCE.md)。当前缺真实DC预测/索引/批准提供者，模型配对和公开Slate尚未上线。
