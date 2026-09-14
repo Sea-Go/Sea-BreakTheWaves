@@ -1,0 +1,13 @@
+# H10.b 合成QREL的锁定BGE-M3三头表示候选
+
+日期：2026-09-15。状态：**真实本机CPU权重与局部合成语料编码 LOCAL_VERIFIED；H11/搜索效果/Serving仍PARTIAL**。本切片只写`training/search/three_lane_encoder.py`及专属测试/说明；`training/src/sea_training.search_dataset`、`training/serving/bge_m3`模型锁/官方Provider和`warehouse/search`均只读。
+
+编码入口先以调用方给定SHA通过独立`open_search_dataset`核`sea.search-qrel-dataset.v1`全部冻结Parquet、23列、来源/时点和query family/查询近重复split；首片只允许`revision=2,data_kind=synthetic`。从**已验行**抽6个唯一query和6个唯一`[document_id,document_revision,chunk_id]`，复核重复文本/hash/时间一致。根训练Python有PyArrow/jsonschema而无FlagEmbedding；另一个仓内锁定BGE虚拟环境有torch/FlagEmbedding而无jsonschema，因此入口以带SHA的临时inventory交BGE子进程。子进程保留虚拟环境解释器路径、先对缓存9/9模型文件按`model.lock.json`长度/SHA复核并设置HF离线，再调用仓内`sea_bge_m3.model.Provider.represent`的真实`BGEM3FlagModel` CPU推理；无网络下载、无替代模型、无自行合成向量。
+
+manifest原字节是sort-key紧凑UTF-8 JSON（无末尾LF），分片为同格式逐行+LF；浮点序列化不宣称RFC8785/JCS。文件路径带各自原字节SHA：`manifest/<sha>.json`、`shards/queries/<sha>.jsonl`、`shards/chunks/<sha>.jsonl`。v1 manifest标`candidate_default_off`，固定H10.b manifest SHA、完整`BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`、model.lock/profiles原SHA、三个原profile/space与tokenizer，query/chunk源ID/修订/文本SHA。每条表示分别保留Dense`values[1024]` L2、官方学习型Sparse排序token indices/正权重与token矩阵`shape[N,1024]/values/mask=[true×N]`；query/document不加提示、超过128 tokens明确拒绝，ColBERT只用真实有效token、mean_maxsim由profile固定。输出不可变内容寻址，重复同路径不同字节拒绝。
+
+本机成功工件：`/private/tmp/sea-bge-qrel-three-lane.ZMGToD/run/manifest/719b4994b37133a8c6a82e60b333f3d015c4a8d1d9f965f7a2cb7c0a226a68d9.json`，manifest SHA与文件名一致；输入H10.b manifest `/private/tmp/sea-search-qrel-trainer.H2WUWL/run/dataset-v2/manifest.json` 的预期SHA为`10ae33b8dd5b5fc634493a5eddfdbf47105c16c7c9ced57279eee96c13b1bdb8`。query分片`cb944830e0a3c2d42a8280097f4635f55cec9fb62a056a97babb8c288e5e4446`（6行/717989 bytes），chunk分片`f80239eb5a070cb420736831dc5977d34af38e8f05d2f917b1e11fa63bb7d9db`（6行/2367592 bytes）；逐文件SHA、大小、行数与manifest重算一致。首query `q-test-coffee` Dense1024范数1、Sparse token IDs`[66,186,17997,79497]`权重首两项约`[0.1124778539,0.1368035376]`、token矩阵`[5,1024]`全true；首chunk矩阵`[17,1024]`。同一冻结输入和模型在同一输出目录再次完整CPU推理，manifest及两片SHA原值不变、不可变对象不覆盖。上述数值只是锁定指纹，不是相关性评分或模型质量。
+
+`SEA_BGE_QREL_MANIFEST=<上文输入路径> SEA_BGE_QREL_MANIFEST_SHA256=<上文输入SHA> SEA_BGE_MODEL_DIRECTORY=<本地锁定缓存> SEA_BGE_PYTHON=<仓内BGE虚拟环境解释器> PYTHONPATH=training/search:training uv run --project training --locked --python 3.12 python -m pytest -q training/search/tests/test_three_lane_encoder.py`在实机为**12 passed**，含真权重逐项形状/有限性/L2与锁定首query数值，密集维数、稀疏重复/非法权重、矩阵shape/mask/范数、错误来源SHA、缺模型文件和内容寻址覆盖的反例。初次尝试曾把venv解释器symlink解析成基础Python，导致缺torch；已按最早原因修正，失败轮不计验收。
+
+当前输入是先前真实CH/dbt→SeaweedFS已冻结并按SHA保存的**synthetic** Parquet本地副本；尚未在同一运行里连接生产者的在线S3，父验收需保留S3服务并用`--s3-endpoint`读原对象。工件没有新训练权重、索引、TopK对照或线上流量；Dense/Sparse/Multi-vector真实评分、DC配置/模型调用和效果由独立消费者验收，不能从本数值指纹推断检索质量。
