@@ -8,11 +8,11 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-from engine import PROJECT
+PROJECT = Path(__file__).resolve().parents[1]
 
 ARTIFACTS = [
     ('clickhouse', 'https://github.com/ClickHouse/ClickHouse/releases/download/v25.8.28.1-lts/clickhouse-macos-aarch64',
-     '1a13ff892a6ba964fc973d6227aa7ed2ea0ae453bdc1b9b51df2b4986a08cfea'),
+     '5f14f26104eb3c09f042e5c899529d25cef4f174507e9e73a3346325d0081429'),
     ('seaweedfs.tar.gz', 'https://github.com/seaweedfs/seaweedfs/releases/download/3.97/darwin_arm64.tar.gz',
      'ba91178e77fafa1aebad8a842c5b3d7d43821efac4099b048d9e958527fb66bf'),
 ]
