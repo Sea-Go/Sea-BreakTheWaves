@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
+	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
 	"go.opentelemetry.io/otel/trace"
@@ -89,6 +90,38 @@ func TestRTWRealProviderCitationAdapter(t *testing.T) {
 	}
 	if recovered, err := adapter.Recover(context.Background(), result.Pack.SearchID, result.Receipt.PackHash); err != nil || recovered != result.Receipt {
 		t.Fatalf("real RTW receipt cannot be recovered: %+v %v", recovered, err)
+	}
+	// The same actual RTW publication and citation receipt must also admit a
+	// validated product turn through BTW's generated answer-history client.
+	history, err := NewRTWAcceptedRootHistory(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := btwruntime.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "9123"}
+	turn := searchdomain.AcceptedRootTurn{
+		Request: searchdomain.SummaryRequest{SearchID: result.Pack.SearchID,
+			AnswerID: "answer-btw-real-provider", Subject: subject, SessionID: "cross-repo-learning-session",
+			Search: request},
+		Result: searchdomain.SummaryResult{Search: result, AnswerID: "answer-btw-real-provider",
+			Answer:    "The published source contains the cited evidence.",
+			Citations: []string{result.Pack.Evidence[0].ID}, SummaryStatus: "succeeded"},
+	}
+	if err := history.Commit(ctx, turn); err != nil {
+		t.Fatalf("real RTW refused the BTW validated product turn: %v", err)
+	}
+	if err := history.Commit(ctx, turn); err != nil {
+		t.Fatalf("real RTW answer idempotent replay failed: %v", err)
+	}
+	turns, err := history.List(ctx, subject, turn.Request.SessionID)
+	if err != nil || len(turns) != 1 || turns[0].Request.AnswerID != turn.Request.AnswerID ||
+		turns[0].Result.SummaryStatus != "succeeded" || len(turns[0].Result.Citations) != 1 ||
+		turns[0].Result.Citations[0] != result.Pack.Evidence[0].ID {
+		t.Fatalf("real RTW accepted history differs from BTW turn: %+v %v", turns, err)
+	}
+	if _, err := client.GetAcceptedAnswer(ctx, ridethewind.GetAcceptedAnswerReq{
+		AnswerId: turn.Request.AnswerID, AuthorityId: subject.AuthorityID,
+		TenantId: subject.TenantID, SubjectId: "another-user", SessionId: turn.Request.SessionID}); err == nil {
+		t.Fatal("real RTW exposed the accepted answer to another subject")
 	}
 	traceID := trace.SpanFromContext(ctx).SpanContext().TraceID()
 	if !traceID.IsValid() || fixture.TraceIDPath == "" {
