@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +150,8 @@ func TestIndexCoordinatorThreeLanesAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote.State = "READY" // RTW may already have accepted the local receipt on replay.
+	remote.IndexManifestRef = result.IndexManifest.Key
+	remote.IndexManifestHash = result.IndexManifest.SHA256
 	coordinator.source = reassignedBuildSource{RevisionSource: coordinator.source, build: remote}
 	replayed, err := coordinator.Index(ctx, "build", fence, nil)
 	if err != nil || replayed.IndexManifest != result.IndexManifest {
@@ -165,6 +168,59 @@ func TestIndexCoordinatorThreeLanesAndReplay(t *testing.T) {
 	b, err := store.Get(ctx, "build")
 	if err != nil || b.State != "READY" || b.Result == nil || *b.Result != result.IndexManifest {
 		t.Fatalf("store ready differs: %+v %v", b, err)
+	}
+}
+
+func TestIndexCoordinatorReadyRecoveryUnderNewTechnicalAttempt(t *testing.T) {
+	coordinator, store, oldFence, lanes := indexFixture(t)
+	ctx := context.Background()
+	first, err := coordinator.Index(ctx, "build", oldFence, nil)
+	if err != nil || first.State != "READY" {
+		t.Fatalf("first local ready: %+v %v", first, err)
+	}
+	var before int
+	if err := store.db.QueryRow(ctx, "SELECT COUNT(*) FROM content_outbox WHERE build_id=$1", "build").Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	newFence := oldFence
+	newFence.AttemptID = "ack-retry"
+	newFence.LeaseEpoch++
+	newFence.ExpiresAt = time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
+	remote, err := coordinator.source.GetBuild(ctx, "build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.AttemptId = newFence.AttemptID
+	remote.LeaseEpoch = newFence.LeaseEpoch
+	remote.LeaseExpiresAt = newFence.ExpiresAt.Format(time.RFC3339Nano)
+	reassigned := reassignedBuildSource{RevisionSource: coordinator.source, build: remote}
+	coordinator.source, coordinator.reconciler.source = reassigned, reassigned
+	if _, err := coordinator.Index(ctx, "build", oldFence, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("old attempt replayed against new RTW claim: %v", err)
+	}
+	replayed, err := coordinator.Index(ctx, "build", newFence, nil)
+	if err != nil || replayed.State != "READY" || replayed.IndexManifest != first.IndexManifest {
+		t.Fatalf("new attempt did not reuse committed READY: %+v %v", replayed, err)
+	}
+	stored, err := store.Get(ctx, "build")
+	if err != nil || stored.Fence.AttemptID != oldFence.AttemptID || stored.Result == nil || *stored.Result != first.IndexManifest {
+		t.Fatalf("READY fence or artifact was rewritten: %+v %v", stored, err)
+	}
+	var after int
+	if err := store.db.QueryRow(ctx, "SELECT COUNT(*) FROM content_outbox WHERE build_id=$1", "build").Scan(&after); err != nil || after != before {
+		t.Fatalf("READY outbox replayed: before=%d after=%d err=%v", before, after, err)
+	}
+	for lane, service := range lanes {
+		if service.calls != 1 {
+			t.Fatalf("%s rebuilt on technical ACK retry: %d", lane, service.calls)
+		}
+	}
+	remote.State = "READY"
+	remote.IndexManifestRef, remote.IndexManifestHash = "sha256/"+strings.Repeat("e", 64), strings.Repeat("e", 64)
+	reassigned = reassignedBuildSource{RevisionSource: reassigned.RevisionSource, build: remote}
+	coordinator.source, coordinator.reconciler.source = reassigned, reassigned
+	if _, err := coordinator.Index(ctx, "build", newFence, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("wrong RTW accepted result replayed: %v", err)
 	}
 }
 

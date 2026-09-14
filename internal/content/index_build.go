@@ -145,8 +145,7 @@ func (c *IndexCoordinator) Index(ctx context.Context, buildID string, fence Fenc
 		if err := checkRecordedResume(out.Lanes, resume); err != nil {
 			return out, err
 		}
-		out.IndexManifest, err = c.reconciler.Ready(ctx, fence)
-		return out, err
+		return c.recoverReady(ctx, initial, fence, out)
 	}
 	if initial.State != "BUILDING" {
 		return out, ErrConflict
@@ -173,8 +172,7 @@ func (c *IndexCoordinator) Index(ctx context.Context, buildID string, fence Fenc
 		return out, err
 	}
 	if current.State == "READY" {
-		out.IndexManifest, err = c.reconciler.Ready(ctx, fence)
-		return out, err
+		return c.recoverReady(ctx, current, fence, out)
 	}
 	if current.State != "BUILDING" || current.Chunks == nil || *current.Chunks != out.ChunkManifest {
 		return out, ErrConflict
@@ -216,6 +214,39 @@ func (c *IndexCoordinator) Index(ctx context.Context, buildID string, fence Fenc
 	return out, nil
 }
 
+// recoverReady acknowledges an immutable local result under a fresh technical
+// attempt without rewriting its original content fence or duplicating Outbox.
+// The new RTW claim is checked separately; the old fence is used only to read
+// and replay the already-committed READY artifact.
+func (c *IndexCoordinator) recoverReady(ctx context.Context, ready Build, current Fence, out IndexBuildResult) (IndexBuildResult, error) {
+	if ready.State != "READY" || ready.Result == nil || !validRef(*ready.Result) {
+		return out, ErrConflict
+	}
+	if err := c.checkRemoteBuildState(ctx, ready.BuildInput, current, ready.Result); err != nil {
+		return out, err
+	}
+	_, chunkProfile, err := c.fixedProfiles(ctx, ready.BuildInput)
+	if err != nil {
+		return out, err
+	}
+	if err := c.checkChunks(ctx, ready, chunkProfile); err != nil {
+		return out, err
+	}
+	ref, err := c.reconciler.Ready(ctx, ready.Fence)
+	if err != nil {
+		return out, err
+	}
+	if ref != *ready.Result {
+		return out, ErrConflict
+	}
+	if err := c.checkRemoteBuildState(ctx, ready.BuildInput, current, ready.Result); err != nil {
+		return out, err
+	}
+	out.IndexManifest = ref
+	out.State = "READY"
+	return out, nil
+}
+
 func checkRecordedResume(recorded, resume map[string]corpus.Ref) error {
 	for lane, hint := range resume {
 		if fixed, exists := recorded[lane]; exists && hint != fixed {
@@ -226,14 +257,23 @@ func checkRecordedResume(recorded, resume map[string]corpus.Ref) error {
 }
 
 func (c *IndexCoordinator) checkRemoteBuild(ctx context.Context, input BuildInput, fence Fence) error {
+	return c.checkRemoteBuildState(ctx, input, fence, nil)
+}
+
+func (c *IndexCoordinator) checkRemoteBuildState(ctx context.Context, input BuildInput, fence Fence, ready *corpus.Ref) error {
 	remote, err := c.source.GetBuild(ctx, input.BuildID)
 	if err != nil {
 		return fmt.Errorf("read fixed build: %w", err)
 	}
 	if remote.BuildId != input.BuildID || remote.ReleaseId != input.ReleaseID || remote.ModuleId != input.ModuleID ||
-		remote.Generation != input.Generation || remote.ManifestHash != input.InputHash || remote.State != "BUILDING" ||
+		remote.Generation != input.Generation || remote.ManifestHash != input.InputHash ||
 		remote.AttemptId != fence.AttemptID || remote.LeaseEpoch != fence.LeaseEpoch || remote.CancelVersion != fence.CancelVersion {
 		return fmt.Errorf("%w: RTW build claim differs from fixed content input", ErrConflict)
+	}
+	if remote.State != "BUILDING" {
+		if ready == nil || remote.State != "READY" || remote.IndexManifestRef != ready.Key || remote.IndexManifestHash != ready.SHA256 {
+			return fmt.Errorf("%w: RTW build result differs from local READY", ErrConflict)
+		}
 	}
 	expires, err := time.Parse(time.RFC3339Nano, remote.LeaseExpiresAt)
 	if err != nil || !expires.Equal(fence.ExpiresAt) {
