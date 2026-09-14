@@ -10,6 +10,8 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	a2alog "trpc.group/trpc-go/trpc-a2a-go/log"
 	agentlog "trpc.group/trpc-go/trpc-agent-go/log"
+	agentmetric "trpc.group/trpc-go/trpc-agent-go/telemetry/metric"
+	agenttrace "trpc.group/trpc-go/trpc-agent-go/telemetry/trace"
 )
 
 var installMu sync.Mutex
@@ -35,6 +37,9 @@ func (b *Bundle) InstallGlobals() error {
 			return nil
 		}
 		return fmt.Errorf("%w: another telemetry bundle already installed", ErrConfig)
+	}
+	if err := agentmetric.InitMeterProvider(b.meter); err != nil {
+		return fmt.Errorf("initialize framework metrics: %w", err)
 	}
 	logger, err := b.Logger("runtime", "framework")
 	if err != nil {
@@ -74,6 +79,11 @@ func (b *Bundle) InstallGlobals() error {
 		}
 	}
 	otel.SetTracerProvider(b.provider)
+	// v1.8.1 Agent, Tool and Graph spans use this exported framework tracer,
+	// which starts as noop and is not replaced by otel.SetTracerProvider alone.
+	// Reuse the process provider instead of starting a second OTLP exporter.
+	agenttrace.TracerProvider = b.provider
+	agenttrace.Tracer = otel.Tracer("trpc.agent.go")
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	otel.SetErrorHandler(exportErrorHandler{logger: collector})
 	installed = b

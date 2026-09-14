@@ -20,9 +20,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	framemetrics "trpc.group/trpc-go/trpc-agent-go/telemetry/semconv/metrics"
+	frameconv "trpc.group/trpc-go/trpc-agent-go/telemetry/semconv/trace"
 )
 
 var ErrConfig = errors.New("invalid telemetry configuration")
@@ -44,6 +48,7 @@ type Config struct {
 type Bundle struct {
 	base       *slog.Logger
 	provider   *sdktrace.TracerProvider
+	meter      *sdkmetric.MeterProvider
 	tracer     trace.Tracer
 	registry   *prometheus.Registry
 	operations *prometheus.CounterVec
@@ -83,7 +88,15 @@ func New(ctx context.Context, cfg Config) (*Bundle, error) {
 	if registry == nil {
 		registry = prometheus.NewPedanticRegistry()
 	}
+	metricExporter, err := otelprom.New(otelprom.WithRegisterer(registry))
+	if err != nil {
+		return nil, fmt.Errorf("register framework metric exporter: %w", err)
+	}
+	// The framework emits per-user/session attributes. Keep only configured
+	// operation/model/agent/tool dimensions in Prometheus series.
+	meter := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(metricExporter), sdkmetric.WithView(frameworkMetricView))
 	b := &Bundle{registry: registry, done: make(chan struct{}),
+		meter:      meter,
 		operations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "sea_btw_operations_total", Help: "Completed BTW operations by bounded component and outcome."}, []string{"component", "outcome"}),
 		durations:  prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "sea_btw_operation_duration_seconds", Help: "Completed BTW operation latency in seconds.", Buckets: prometheus.DefBuckets}, []string{"component", "outcome"}),
 		inflight:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "sea_btw_operations_inflight", Help: "Current BTW operations by bounded component."}, []string{"component"}),
@@ -110,6 +123,33 @@ func New(ctx context.Context, cfg Config) (*Bundle, error) {
 	b.provider = sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRatio))))
 	b.tracer = b.provider.Tracer("github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry")
 	return b, nil
+}
+
+// The locked framework uses three meters with some identical instrument names.
+// Scope-specific stream names prevent collisions while preserving its native
+// measurements. Values derived from users, sessions, model responses, agent
+// names and tool names are excluded; only framework-owned enums and bools remain.
+func frameworkMetricView(instrument sdkmetric.Instrument) (sdkmetric.Stream, bool) {
+	var scope string
+	switch instrument.Scope.Name {
+	case framemetrics.MeterNameChat:
+		scope = "chat"
+	case framemetrics.MeterNameExecuteTool:
+		scope = "tool"
+	case framemetrics.MeterNameInvokeAgent:
+		scope = "agent"
+	default:
+		return sdkmetric.Stream{}, false
+	}
+	return sdkmetric.Stream{
+		Name:        "trpc_agent_go_" + scope + "_" + strings.ReplaceAll(instrument.Name, ".", "_"),
+		Description: instrument.Description,
+		Unit:        instrument.Unit,
+		AttributeFilter: attribute.NewAllowKeysFilter(
+			attribute.Key(frameconv.KeyGenAIOperationName),
+			attribute.Key(framemetrics.KeyGenAITokenType), attribute.Key(framemetrics.KeyTRPCAgentGoStream),
+		),
+	}, true
 }
 
 // Logger is the single structured entry point for an approved bounded
@@ -307,6 +347,6 @@ func (b *Bundle) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	b.stop.Do(func() { b.stopErr = b.provider.Shutdown(ctx) })
+	b.stop.Do(func() { b.stopErr = errors.Join(b.provider.Shutdown(ctx), b.meter.Shutdown(ctx)) })
 	return b.stopErr
 }
