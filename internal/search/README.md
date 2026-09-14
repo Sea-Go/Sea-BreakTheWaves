@@ -24,6 +24,6 @@
 
 `Summarizer` 在证据和收据固定后才运行共享 telemetry 下的 tRPC-Agent-Go `LLMAgent→Runner`，给模型的唯一问题输入是固定 EvidencePack，装配零个搜索 Tool。完整 Runner 终态后解析 `answer/citations` JSON，并检查 citation ID 来自本包；失败时保留搜索状态、不返回答案。当前只提供完整答案，不提供符合产品流协议的公开 SSE 增量、答案历史或 RTW answer_id 映射接纳。搜索阶段现在还是 `SearchExecutor` 普通服务实现；尚未把搜索与总结装在**单个根 GraphAgent**，不能据 Summary Runner 的 Span 宣称 C17 正式搜索链已满足。
 
-`ToolSession` 每个已验证主体/调用创建一次，固定 CorpusSnapshot、operation_id 与剩余额度；`search_fast`、`search_detailed`、`read_evidence` 是 tRPC-Agent-Go v1.8.1 原生 typed FunctionTool。模型 JSON 只能指定 query、等级或本次返回的 evidence ID，不能改发布范围、索引或总预算。Tool 只返回 SearchResult、EvidencePack、收据和剩余额度，不产生搜索方最终答案。阅读重新向 RTW 请求同版原文并复核当前有效状态。预算在调用前按最大允许读取量**保守预留**，失败和重试也消耗，不是精确实际用量；ToolSession 当前进程内存储，跨进程恢复、游标/上下文续读、同 search_id 继续详搜与模型 token 账本未实现，`continue_search_id` 显式返回 `ErrUnavailable`。
+`ToolSession` 每个已验证主体/调用创建一次，固定 CorpusSnapshot、operation_id 与剩余额度；`search_fast`、`search_detailed`、`read_evidence` 是 tRPC-Agent-Go v1.8.1 原生 typed FunctionTool。模型 JSON 只能指定 query、等级或本次返回的 evidence ID，不能改发布范围、索引或总预算。Tool 只返回 SearchResult、EvidencePack、收据和剩余额度，不产生搜索方最终答案。阅读重新向 RTW 请求同版原文并复核当前有效状态。预算在调用前按最大允许读取量**保守预留**，成功后按 `source_read_attempts/quote_runes` 退还未使用的额度，失败和重试保留预留消耗；ToolSession 当前进程内存储，跨进程恢复、游标/上下文续读、同 search_id 继续详搜与模型 token 账本未实现，`continue_search_id` 显式返回 `ErrUnavailable`。
 
 WS06-F 反馈事实、负例资格和词典准入仍为 `NOT_IMPLEMENTED`。不得从未点击候选推导负反馈，也不能把共点击自动当成同义词；这两部分需与 WS07 数据产品、RTW/客户端真实展示收据及 WS09 评测合同对齐后单独实现和验收。
