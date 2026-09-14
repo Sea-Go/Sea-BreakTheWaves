@@ -7,7 +7,9 @@ revision = subprocess.check_output(['git','-C',str(root),'rev-parse',sys.argv[2]
 def read(rel):return subprocess.check_output(['git','-C',str(root),'show',revision+':'+str(rel)])
 source = pathlib.Path('service/knowledge/api/internal/types/types.go')
 raw = read(source).decode()
-wanted = {'Revision','SourceRef','Release','RetrievalProfile','Build','Compile','ClaimBuildReq','AcceptBuildReq','ClaimCompileReq','AcceptCompileReq'}
+wanted = {'Revision','SourceRef','Release','RetrievalProfile','Build','Compile','ClaimBuildReq','AcceptBuildReq','ClaimCompileReq','AcceptCompileReq',
+          'CitationLocation','CitationObject','CitationChunk','ReadSearchSourceReq','AcceptSearchCitationsReq',
+          'SearchCitationReceipt','SearchCitationReference','SearchCitationRecord'}
 blocks = dict(re.findall(r'type (\w+) struct \{(.*?)\n\}', raw, re.S))
 result = ['// Code generated from RideTheWind api/knowledge.api via goctl types. DO NOT EDIT.\npackage ridethewind\n']
 for name in sorted(wanted):

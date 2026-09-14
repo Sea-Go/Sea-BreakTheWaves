@@ -30,12 +30,17 @@ func request[T any](ctx context.Context, c *Client, method, resource, id, action
 	if err != nil {
 		return zero, err
 	}
+	return decodeEnvelope[T](raw)
+}
+
+func decodeEnvelope[T any](raw []byte) (T, error) {
+	var zero T
 	var response struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data *T     `json:"data"`
 	}
-	if err = httpclient.Decode(raw, &response); err != nil {
+	if err := httpclient.Decode(raw, &response); err != nil {
 		return zero, err
 	}
 	if response.Code != 200 {
@@ -45,6 +50,15 @@ func request[T any](ctx context.Context, c *Client, method, resource, id, action
 		return zero, errors.New("RTW response missing data")
 	}
 	return *response.Data, nil
+}
+
+func post[T any](ctx context.Context, c *Client, path, idempotency string, input any) (T, error) {
+	var zero T
+	raw, _, err := c.http.Do(ctx, http.MethodPost, "/internal/v1/knowledge/"+path, nil, input, idempotency)
+	if err != nil {
+		return zero, err
+	}
+	return decodeEnvelope[T](raw)
 }
 func (c *Client) GetRevision(ctx context.Context, id string) (Revision, error) {
 	v, e := request[Revision](ctx, c, http.MethodGet, "revisions", id, "", nil)
@@ -73,6 +87,44 @@ func (c *Client) GetCompile(ctx context.Context, id string) (Compile, error) {
 		e = errors.New("RTW compile identity mismatch")
 	}
 	return v, e
+}
+
+func (c *Client) ReadSearchSource(ctx context.Context, q ReadSearchSourceReq) (CitationChunk, error) {
+	chunk, err := post[CitationChunk](ctx, c, "search-sources/read", "", q)
+	if err != nil {
+		return CitationChunk{}, err
+	}
+	if chunk.ChunkId != q.ChunkId || chunk.RevisionId != q.RevisionId || chunk.ContentId == "" ||
+		chunk.SourceKind == "" || chunk.Original.Key == "" || chunk.Original.Sha256 == "" ||
+		chunk.Location.Locator == "" || chunk.Text == "" || chunk.TextHash == "" {
+		return CitationChunk{}, errors.New("RTW search source identity or body mismatch")
+	}
+	return chunk, nil
+}
+
+func (c *Client) AcceptSearchCitations(ctx context.Context, q AcceptSearchCitationsReq) (SearchCitationReceipt, error) {
+	if q.SearchId == "" || q.PackHash == "" || q.PackJson == "" {
+		return SearchCitationReceipt{}, errors.New("search citation request requires fixed identity and pack")
+	}
+	receipt, err := post[SearchCitationReceipt](ctx, c, "search-citations", q.SearchId, q)
+	if err != nil {
+		return SearchCitationReceipt{}, err
+	}
+	if receipt.SearchId != q.SearchId || receipt.PackHash != q.PackHash || receipt.DurableRef == "" {
+		return SearchCitationReceipt{}, errors.New("RTW citation receipt mismatch")
+	}
+	return receipt, nil
+}
+
+func (c *Client) GetSearchCitations(ctx context.Context, searchID string) (SearchCitationRecord, error) {
+	record, err := request[SearchCitationRecord](ctx, c, http.MethodGet, "search-citations", searchID, "", nil)
+	if err != nil {
+		return SearchCitationRecord{}, err
+	}
+	if record.SearchId != searchID || record.PackHash == "" || record.DurableRef == "" {
+		return SearchCitationRecord{}, errors.New("RTW citation lookup identity mismatch")
+	}
+	return record, nil
 }
 func (c *Client) ClaimBuild(ctx context.Context, q ClaimBuildReq) (Build, error) {
 	v, e := request[Build](ctx, c, http.MethodPost, "builds", q.BuildId, "/claim", q)
