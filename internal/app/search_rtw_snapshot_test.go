@@ -73,3 +73,24 @@ func TestRTWSearchSnapshotProviderRejectsUntrustedOrMalformedProjection(t *testi
 		t.Fatalf("valid RTW snapshot projection failed: %+v %v", actual, err)
 	}
 }
+
+func TestRTWSearchSnapshotProviderKeepsEmptyRevisionArray(t *testing.T) {
+	ref := artifacts.Reference([]byte("empty publication lane"))
+	wire := ridethewind.SearchSnapshot{ModuleId: "module-empty", ReleaseId: "release-empty",
+		Generation: 1, PublicationRevision: "1", ValidRevisionIds: []string{},
+		Indexes: map[string]ridethewind.CitationObject{
+			"dense":       {Key: ref.Key, Sha256: ref.SHA256},
+			"sparse":      {Key: ref.Key, Sha256: ref.SHA256},
+			"multivector": {Key: ref.Key, Sha256: ref.SHA256},
+		}}
+	provider, err := NewRTWSearchSnapshotProvider(snapshotClientFunc(func(context.Context, string) (ridethewind.SearchSnapshot, error) {
+		return wire, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := provider.Current(context.Background(), wire.ModuleId)
+	if err != nil || got.ValidRevisionIDs == nil || len(got.ValidRevisionIDs) != 0 {
+		t.Fatalf("empty RTW revision array changed: %+v %v", got, err)
+	}
+}

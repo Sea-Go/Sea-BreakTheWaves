@@ -62,5 +62,5 @@ func (p *RTWSearchSnapshotProvider) Current(ctx context.Context, moduleID string
 	}
 	return searchdomain.Snapshot{ModuleID: wire.ModuleId, ReleaseID: wire.ReleaseId,
 		Generation: wire.Generation, PublicationRevision: wire.PublicationRevision,
-		Indexes: indexes, ValidRevisionIDs: append([]string(nil), wire.ValidRevisionIds...)}, nil
+		Indexes: indexes, ValidRevisionIDs: append([]string{}, wire.ValidRevisionIds...)}, nil
 }

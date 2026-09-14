@@ -298,7 +298,9 @@ func validSnapshot(s Snapshot) bool {
 }
 func cloneSnapshot(s Snapshot) Snapshot {
 	out := s
-	out.ValidRevisionIDs = append([]string(nil), s.ValidRevisionIDs...)
+	if s.ValidRevisionIDs != nil {
+		out.ValidRevisionIDs = append([]string{}, s.ValidRevisionIDs...)
+	}
 	out.Indexes = make(map[Lane]corpus.Ref, 3)
 	for k, v := range s.Indexes {
 		out.Indexes[k] = v

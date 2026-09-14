@@ -212,7 +212,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func copySnapshot(s searchdomain.Snapshot) searchdomain.Snapshot {
-	s.ValidRevisionIDs = append([]string(nil), s.ValidRevisionIDs...)
+	if s.ValidRevisionIDs != nil {
+		s.ValidRevisionIDs = append([]string{}, s.ValidRevisionIDs...)
+	}
 	indexes := make(map[searchdomain.Lane]corpus.Ref, len(s.Indexes))
 	for lane, ref := range s.Indexes {
 		indexes[lane] = ref
