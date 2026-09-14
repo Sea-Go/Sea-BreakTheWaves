@@ -1,5 +1,5 @@
-// Command worker runs one explicitly selected local content job through
-// tRPC-Agent-Go. The prepare and index job types use separate processes.
+// Command worker runs one explicitly selected local content job or favorite
+// fact consumer through tRPC-Agent-Go. Each mode uses a separate process.
 package main
 
 import (
@@ -38,12 +38,20 @@ func run() int {
 	defer stop()
 	cfg, err := loadConfig(os.Getenv)
 	if err != nil {
+		event := "content.worker.configuration_failed"
+		if cfg.JobType == favoriteFactJobType {
+			event = "usermodel.worker.configuration_failed"
+		}
 		bootstrapLogger(os.Stderr, cfg).ErrorContext(ctx, "worker configuration rejected",
-			"event", "content.worker.configuration_failed", "outcome", "failed", "error_code", "WORKER_CONFIG_INVALID",
+			"event", event, "outcome", "failed", "error_code", "WORKER_CONFIG_INVALID",
 			"error_type", "config", "error_message", err.Error())
 		return 2
 	}
-	if err := serve(ctx, cfg, os.Stderr); err != nil {
+	serveMode := serve
+	if cfg.JobType == favoriteFactJobType {
+		serveMode = serveFavoriteFacts
+	}
+	if err := serveMode(ctx, cfg, os.Stderr); err != nil {
 		return 1
 	}
 	return 0
@@ -67,12 +75,19 @@ func bootstrapLogger(output io.Writer, cfg config) *slog.Logger {
 		}
 		return attr
 	}})
+	component := "content"
+	if cfg.JobType == favoriteFactJobType {
+		component = "usermodel"
+	}
 	return slog.New(handler).With("service", workerService(cfg), "environment", known(cfg.Environment),
 		"service_version", known(cfg.Version), "instance_id", known(cfg.InstanceID),
-		"component", "content", "log_source", "application")
+		"component", component, "log_source", "application")
 }
 
 func workerService(cfg config) string {
+	if cfg.JobType == favoriteFactJobType {
+		return "sea-btw-favorite-fact-worker"
+	}
 	if cfg.JobType == app.IndexJobType {
 		return "sea-btw-index-worker"
 	}
@@ -235,8 +250,8 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 
 func safeError(err error, cfg config) string {
 	message := err.Error()
-	secrets := []string{cfg.DCToken, cfg.RTWToken, cfg.ContentDSN, cfg.SessionDSN}
-	for _, dsn := range []string{cfg.ContentDSN, cfg.SessionDSN} {
+	secrets := []string{cfg.DCToken, cfg.RTWToken, cfg.ContentDSN, cfg.SessionDSN, cfg.AuthorityToken, cfg.FactDSN}
+	for _, dsn := range []string{cfg.ContentDSN, cfg.SessionDSN, cfg.FactDSN} {
 		if parsed, parseErr := url.Parse(dsn); parseErr == nil && parsed.User != nil {
 			if password, ok := parsed.User.Password(); ok {
 				secrets = append(secrets, password)

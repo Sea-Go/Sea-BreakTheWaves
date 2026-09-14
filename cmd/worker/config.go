@@ -13,6 +13,9 @@ import (
 
 var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var revision = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var factConsumer = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+
+const favoriteFactJobType = "usermodel.favorite-facts.v1"
 
 type config struct {
 	JobType        string
@@ -44,10 +47,19 @@ type config struct {
 	Version        string
 	Environment    string
 	InstanceID     string
+	FactConsumer   string
+	FactBatchLimit int
+	FactDSN        string
+	FactSchema     string
+	AuthorityURL   string
+	AuthorityToken string
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
 	var c config
+	if getenv("BTW_JOB_TYPE") == favoriteFactJobType {
+		return loadFavoriteFactConfig(getenv)
+	}
 	if getenv("BTW_MODE") != "local" || getenv("BTW_ARTIFACT_STORE") != "local" {
 		return c, errors.New("BTW_MODE and BTW_ARTIFACT_STORE must explicitly be local")
 	}
@@ -136,6 +148,59 @@ func loadConfig(getenv func(string) string) (config, error) {
 		if err != nil {
 			return config{}, fmt.Errorf("BTW_INDEX_CONFIG_FILE: %w", err)
 		}
+	}
+	return c, nil
+}
+
+func loadFavoriteFactConfig(getenv func(string) string) (config, error) {
+	c := config{JobType: favoriteFactJobType}
+	if getenv("BTW_MODE") != "local" {
+		return c, errors.New("favorite fact consumer requires BTW_MODE=local")
+	}
+	for _, key := range []string{"BTW_DC_URL", "BTW_DC_TOKEN", "BTW_FAVORITE_AUTHORITY_URL",
+		"BTW_FAVORITE_AUTHORITY_TOKEN", "BTW_FACT_POSTGRES_DSN", "BTW_FACT_SCHEMA", "BTW_FACT_CONSUMER",
+		"BTW_FACT_BATCH_LIMIT", "BTW_POLL_INTERVAL", "BTW_HTTP_TIMEOUT", "BTW_OTLP_TRACES_URL",
+		"BTW_METRICS_ADDR", "BTW_SERVICE_VERSION", "BTW_ENVIRONMENT", "BTW_INSTANCE_ID"} {
+		if strings.TrimSpace(getenv(key)) == "" {
+			return c, fmt.Errorf("%s is required", key)
+		}
+	}
+	c.DCURL, c.DCToken = getenv("BTW_DC_URL"), getenv("BTW_DC_TOKEN")
+	c.AuthorityURL, c.AuthorityToken = getenv("BTW_FAVORITE_AUTHORITY_URL"), getenv("BTW_FAVORITE_AUTHORITY_TOKEN")
+	c.FactDSN, c.FactSchema, c.FactConsumer = getenv("BTW_FACT_POSTGRES_DSN"), getenv("BTW_FACT_SCHEMA"), getenv("BTW_FACT_CONSUMER")
+	c.OTLPTracesURL, c.MetricsAddr = getenv("BTW_OTLP_TRACES_URL"), getenv("BTW_METRICS_ADDR")
+	c.Version, c.Environment, c.InstanceID = getenv("BTW_SERVICE_VERSION"), getenv("BTW_ENVIRONMENT"), getenv("BTW_INSTANCE_ID")
+	var err error
+	if c.FactBatchLimit, err = positiveInt(getenv("BTW_FACT_BATCH_LIMIT"), "BTW_FACT_BATCH_LIMIT", 1, 128); err != nil {
+		return c, err
+	}
+	if c.PollInterval, err = boundedDuration(getenv("BTW_POLL_INTERVAL"), "BTW_POLL_INTERVAL", 100*time.Millisecond, time.Minute); err != nil {
+		return c, err
+	}
+	if c.HTTPTimeout, err = boundedDuration(getenv("BTW_HTTP_TIMEOUT"), "BTW_HTTP_TIMEOUT", time.Second, time.Minute); err != nil {
+		return c, err
+	}
+	if !factConsumer.MatchString(c.FactConsumer) || !identifier.MatchString(c.FactSchema) {
+		return c, errors.New("fact consumer and schema must be fixed bounded identifiers")
+	}
+	if len(c.AuthorityToken) < 32 {
+		return c, errors.New("BTW_FAVORITE_AUTHORITY_TOKEN must have at least 32 bytes")
+	}
+	if !revision.MatchString(c.Version) || (c.Environment != "local" && c.Environment != "test") {
+		return c, errors.New("BTW_SERVICE_VERSION must be a full commit SHA and BTW_ENVIRONMENT must be local or test")
+	}
+	for name, raw := range map[string]string{"BTW_DC_URL": c.DCURL,
+		"BTW_FAVORITE_AUTHORITY_URL": c.AuthorityURL, "BTW_OTLP_TRACES_URL": c.OTLPTracesURL} {
+		if err := endpoint(raw); err != nil {
+			return c, fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	host, port, err := net.SplitHostPort(c.MetricsAddr)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || port == "" {
+		return c, errors.New("BTW_METRICS_ADDR must bind an explicit loopback IP and port")
+	}
+	if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
+		return c, errors.New("BTW_METRICS_ADDR port must be 1..65535")
 	}
 	return c, nil
 }
