@@ -16,12 +16,12 @@
 
 ## 执行与证据
 
-既有 `internal/app/TestRTWRealItemPoolHandoff` 可选真实RTW父夹具已扩展：同次将已发布真实item/revision/content-hash全集写入配对proposal与索引预构建代，并断言没有DC/index/批准验证器时仍 `Pending`、不产生Slate。该子测试当前在无 `SEA_RTW_ITEM_POOL_FIXTURE` 时只编译并跳过；**这不是已执行的真实RTW→Pair跨仓验收**，固定权重和索引对象也不等于真实DC工件。RTW父测试复跑后才能提升该子链状态。
+`internal/app/TestRTWRealItemPoolHandoff` 已在 RTW 真实人工发布父测试中跨仓执行：同次将RTW当前item/revision/content-hash全集写入BTW隔离PG的PairProposal与ItemIndexGeneration，并断言没有DC/index/批准验证器时仍 `Pending`、不产生Slate。命令 `GOFLAGS=-p=2 GOMAXPROCS=2 KNOWLEDGE_KEEP_EVIDENCE=1 KNOWLEDGE_REAL_USER_GATE=1 SEA_BTW_ITEM_CONSUMER_ROOT=<本BTW独立树> bash service/knowledge/scripts/acceptance.sh` 退出0；RTW真实UserCenter工作流30.51秒、普通工作流11.32秒均PASS，各自打印本次人工发布的module/revision已被独立BTW进程消费。日志 `/tmp/sea-rtw-ws08f-pair-cross-20260914.log`，隔离PG证据 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T/sea-knowledge-acceptance.HZK0N2`。此**真实内容ref→固定预构建子链为`INTEGRATED`**；user/item权重、候选manifest和item索引对象仍为固定夹具，绝不等于真实DC工件/批准/活动模型。
 
 最终 `RECOMMEND_KEEP_EVIDENCE=1 bash internal/recommend/test-postgres.sh` 退出0；日志 `/tmp/sea-btw-ws08f-pg-final-20260914.log`，隔离PG证据 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T/sea-recommend-acceptance.V2qZh9`。`TestRealPostgresPairActivationUnknownAfterCommittedPointer` 在真实PG里使前两次探针通过、提交后第三次失败，核`CurrentPointer`可见已提交版本而`Active`与`Plan`拒绝服务；探针恢复后同一指针恢复。
 
 隔离PG16脚本以 `-race -count=1` 跑推荐包和app，局部vet退出0；根 `go test -mod=readonly -race -count=1 ./...`、`go vet ./...`、`go mod verify` 均退出0。测试证明：proposal/index不自动授权，缺验证器与ranker探针拒批准，错space/缺item覆盖拒收，同批准重试ID稳定，撤销后同键批准回放拒绝，并发两个相同CAS只有一个激活，未激活release不给usermodel授权，活动后DC探针失效或RTW内容换代即不给授权/列表，错Bundle不给列表，计划期间活动pair切换不给旧规则列表，model pair没有真实评分器时保持Pending；触发器拒改不可变release。
 
-这里的 user/item/ranker权重、模型调用、item索引和批准证明**全部来自固定测试夹具**。`training/export`只交候选包及本地数值对照；BTW当前DC客户端没有推荐双塔/精排实际装载与probe适配，也没有item索引Builder/Reader/正式批准者。故当前状态 **`LOCAL_VERIFIED/PARTIAL`**，绝不称真实H11.b活动模型、线上推荐或实际收益。H08.b真实本人Bundle跨store链、同次RTW真发布到pair/索引、正式H09.c请求/候选/展示事件、实验分桶/反馈与Collector下钻仍待对口owner联验。
+批准激活的 user/item/ranker权重、模型调用、item索引和批准证明**全部来自固定测试夹具**。`training/export`只交候选包及本地数值对照；BTW当前DC客户端没有推荐双塔/精排实际装载与probe适配，也没有item索引Builder/Reader/正式批准者。故WS08-F整体仍 **`PARTIAL`**，绝不称真实H11.b活动模型、线上推荐或实际收益。H08.b真实本人Bundle跨store链、真实DC权重/索引配对探针、正式H09.c请求/候选/展示事件、实验分桶/反馈与Collector下钻仍待对口owner联验。
 
 部署先显式应用 `migrations/recommend/001_pools.sql`，再应用 `002_pairs.sql`；`NewStore/NewPairStore` 不迁移数据库。真正激活前，H05/DC应提供带权重/输入/空间/版本/调用ID的真实模型和ranker探针，WS08 item_index提供固定内容全集/对象hash/查询探针，推荐批准者提供可撤销的批准证明，WS08-D在同一PairRef下预构建并验证用户Bundle，WS09/H12提供对照报告；所有这些提供者完成后才可装配真实 `PairVerifier` 并执行 CAS。
