@@ -112,7 +112,7 @@ func (w *PrepareWorker) RunOnce(ctx context.Context) (bool, error) {
 func (w *PrepareWorker) ProcessClaim(parent context.Context, job jobs.Job) (receipt content.PrepareGraphReceipt, resultErr error) {
 	ctx, stage, err := w.observed.Begin(parent, "content", "content.worker.prepare",
 		slog.String("job_id", job.ID), slog.String("operation_id", job.Request.OperationID),
-		slog.String("attempt_id", job.AttemptID), slog.Int64("lease_epoch", job.LeaseEpoch))
+		slog.String("attempt_id", job.AttemptID), slog.Int64("dc_lease_epoch", job.LeaseEpoch))
 	if err != nil {
 		return receipt, err
 	}
@@ -127,29 +127,27 @@ func (w *PrepareWorker) ProcessClaim(parent context.Context, job jobs.Job) (rece
 		stage.End(ctx, outcome, code, resultErr, slog.Int("chunk_count", receipt.ChunkCount),
 			slog.String("chunk_manifest_hash", receipt.ChunkManifest.SHA256))
 	}()
-	input, fence, err := DecodePrepareClaim(job, w.config.WorkerID, PrepareJobType, w.config.ResourceProfile, time.Now())
+	input, dcFence, err := DecodePrepareClaim(job, w.config.WorkerID, PrepareJobType, w.config.ResourceProfile, time.Now())
 	if err != nil {
 		return receipt, err
 	}
 	eligible = true
 	// Stop before the lease deadline so the local fence and DC technical ACK
 	// have a bounded chance to commit. A later claim obtains a new attempt.
-	if !fence.ExpiresAt.After(time.Now().Add(time.Second)) {
+	if !dcFence.ExpiresAt.After(time.Now().Add(time.Second)) {
 		return receipt, ErrExpiredPrepareLease
 	}
-	ctx, cancel := context.WithDeadline(ctx, fence.ExpiresAt.Add(-time.Second))
+	ctx, cancel := context.WithDeadline(ctx, dcFence.ExpiresAt.Add(-time.Second))
 	defer cancel()
 	remote, err := w.builds.GetBuild(ctx, input.BuildID)
 	if err != nil {
 		return receipt, fmt.Errorf("read fixed RTW build: %w", err)
 	}
 	if remote.BuildId != input.BuildID || remote.ModuleId != input.ModuleID || remote.ReleaseId != input.ReleaseID ||
-		remote.Generation != input.Generation || remote.ManifestHash != input.InputHash || remote.CancelVersion != fence.CancelVersion || remote.State != "BUILDING" {
+		remote.Generation != input.Generation || remote.ManifestHash != input.InputHash || remote.CancelVersion != dcFence.CancelVersion || remote.State != "BUILDING" {
 		return receipt, fmt.Errorf("%w: RTW build differs from DC fixed job", content.ErrConflict)
 	}
-	_, err = w.builds.ClaimBuild(ctx, ridethewind.ClaimBuildReq{BuildId: input.BuildID,
-		Generation: input.Generation, ManifestHash: input.InputHash, CancelVersion: fence.CancelVersion,
-		AttemptId: fence.AttemptID, LeaseEpoch: fence.LeaseEpoch, LeaseExpiresAt: fence.ExpiresAt.UTC().Format(time.RFC3339Nano)})
+	fence, err := claimAllocatedRTWBuildFence(ctx, w.builds, remote, dcFence)
 	if err != nil {
 		return receipt, fmt.Errorf("claim RTW build: %w", err)
 	}
@@ -207,13 +205,13 @@ func (w *PrepareWorker) ProcessClaim(parent context.Context, job jobs.Job) (rece
 		Hash: receipt.ChunkManifest.SHA256, MediaType: prepareResultMediaType}}
 	terminalAttempted = true
 	if _, err := w.jobs.CompleteJob(ctx, job.ID, jobs.Complete{Lease: jobs.Lease{WorkerID: w.config.WorkerID,
-		AttemptID: fence.AttemptID, LeaseEpoch: fence.LeaseEpoch, CancelVersion: fence.CancelVersion}, Result: completed}); err != nil {
+		AttemptID: dcFence.AttemptID, LeaseEpoch: dcFence.LeaseEpoch, CancelVersion: dcFence.CancelVersion}, Result: completed}); err != nil {
 		// The receipt could have been lost after DC committed. Read the exact job
 		// before deciding whether this attempt remains uncertain.
 		confirmed, readErr := w.jobs.GetJob(ctx, job.ID)
 		if readErr == nil && confirmed.State == "succeeded" && confirmed.WorkerID == w.config.WorkerID &&
-			confirmed.AttemptID == fence.AttemptID && confirmed.LeaseEpoch == fence.LeaseEpoch &&
-			confirmed.CancelVersion == fence.CancelVersion && confirmed.Result != nil && confirmed.Result.State == "succeeded" && confirmed.Result.Ref != nil &&
+			confirmed.AttemptID == dcFence.AttemptID && confirmed.LeaseEpoch == dcFence.LeaseEpoch &&
+			confirmed.CancelVersion == dcFence.CancelVersion && confirmed.Result != nil && confirmed.Result.State == "succeeded" && confirmed.Result.Ref != nil &&
 			*confirmed.Result.Ref == *completed.Ref {
 			return receipt, nil
 		}

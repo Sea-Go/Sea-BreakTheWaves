@@ -162,8 +162,14 @@ func TestActualWorkerProcessPreparesClaim(t *testing.T) {
 			}
 			buildClaims.Add(1)
 			buildMu.Lock()
-			build.AttemptId, build.LeaseEpoch, build.CancelVersion, build.LeaseExpiresAt =
-				request.AttemptId, request.LeaseEpoch, request.CancelVersion, request.LeaseExpiresAt
+			if request.LeaseEpoch != 0 {
+				t.Errorf("prepare worker sent DC epoch as RTW fence: %d", request.LeaseEpoch)
+			}
+			if build.AttemptId != request.AttemptId {
+				build.LeaseEpoch++
+			}
+			build.AttemptId, build.CancelVersion, build.LeaseExpiresAt =
+				request.AttemptId, request.CancelVersion, request.LeaseExpiresAt
 			data = build
 			buildMu.Unlock()
 		case "GET /internal/v1/knowledge/releases/release":

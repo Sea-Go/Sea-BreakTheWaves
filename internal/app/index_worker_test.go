@@ -28,11 +28,14 @@ type fakeIndexStore struct {
 }
 
 func (s *fakeIndexStore) Get(context.Context, string) (content.Build, error) { return s.build, nil }
-func (s *fakeIndexStore) AttachIndexDispatch(_ context.Context, buildID, jobID, workerID string, fence content.Fence) error {
-	if s.dispatch.Fence.LeaseEpoch != fence.LeaseEpoch {
+func (s *fakeIndexStore) AttachIndexDispatch(_ context.Context, buildID, jobID, workerID string,
+	dc content.TechnicalFence, fence content.Fence) error {
+	if s.dispatch.Fence.LeaseEpoch != fence.LeaseEpoch || s.dispatch.JobID != jobID ||
+		s.dispatch.DC.AttemptID != dc.AttemptID || s.dispatch.DC.LeaseEpoch != dc.LeaseEpoch {
 		s.delivered = false
 	}
 	s.dispatch.BuildID, s.dispatch.JobID, s.dispatch.WorkerID, s.dispatch.Fence = buildID, jobID, workerID, fence
+	s.dispatch.DC = dc
 	s.stage = "pending"
 	return nil
 }
@@ -65,6 +68,8 @@ func (s *fakeIndexStore) DeliverIndexDispatch(_ context.Context, claim content.I
 type fakeIndexBuilds struct {
 	build             ridethewind.Build
 	claims            []ridethewind.ClaimBuildReq
+	claimErr          error
+	grantBeforeError  bool
 	wrongClaim        bool
 	acceptErr         error
 	commitBeforeError bool
@@ -76,12 +81,49 @@ func (f *fakeIndexBuilds) GetBuild(context.Context, string) (ridethewind.Build, 
 }
 func (f *fakeIndexBuilds) ClaimBuild(_ context.Context, q ridethewind.ClaimBuildReq) (ridethewind.Build, error) {
 	f.claims = append(f.claims, q)
-	f.build.AttemptId, f.build.LeaseEpoch, f.build.CancelVersion = q.AttemptId, q.LeaseEpoch, q.CancelVersion
+	if f.claimErr != nil && !f.grantBeforeError {
+		return ridethewind.Build{}, f.claimErr
+	}
+	if q.LeaseEpoch == 0 {
+		if f.build.AttemptId != q.AttemptId {
+			f.build.LeaseEpoch++
+		}
+	} else {
+		f.build.LeaseEpoch = q.LeaseEpoch
+	}
+	f.build.AttemptId, f.build.CancelVersion = q.AttemptId, q.CancelVersion
 	f.build.LeaseExpiresAt = q.LeaseExpiresAt
 	if f.wrongClaim {
 		f.build.LeaseEpoch++
 	}
+	if f.claimErr != nil {
+		return ridethewind.Build{}, f.claimErr
+	}
 	return f.build, nil
+}
+
+func TestIndexWorkerRecoversOnlyCommittedRTWGrantAfterLostReply(t *testing.T) {
+	for _, committed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "committed", false: "not_committed"}[committed], func(t *testing.T) {
+			worker, dc, rtw, store, _ := newIndexWorkerFixture(t, nil)
+			rtw.claimErr = errors.New("RTW claim reply lost")
+			rtw.grantBeforeError = committed
+			worked, err := worker.RunOnce(context.Background())
+			if !worked {
+				t.Fatal("DC job was not claimed")
+			}
+			if committed {
+				if err != nil || !store.delivered || store.build.State != "READY" ||
+					len(dc.completed) != 1 || dc.completed[0].Result.State != "succeeded" ||
+					len(rtw.claims) != 1 || rtw.claims[0].LeaseEpoch != 0 {
+					t.Fatalf("committed RTW grant did not recover: err=%v store=%+v DC=%+v", err, store, dc.completed)
+				}
+			} else if err == nil || store.delivered || store.build.State == "READY" ||
+				len(dc.completed) != 1 || dc.completed[0].Result.State != "failed" {
+				t.Fatalf("uncommitted RTW grant promoted local READY: err=%v store=%+v DC=%+v", err, store, dc.completed)
+			}
+		})
+	}
 }
 func (f *fakeIndexBuilds) AcceptBuild(_ context.Context, q ridethewind.AcceptBuildReq) (ridethewind.Build, error) {
 	f.accepts = append(f.accepts, q)
@@ -316,7 +358,7 @@ func TestIndexWorkerLostReceiptAndNewAttemptReplay(t *testing.T) {
 	oldFence, oldRef := store.build.Fence, *store.build.Result
 	indexer.oldReady = true
 	newJob := dc.job
-	newJob.AttemptID, newJob.LeaseEpoch = "index-attempt-2", oldFence.LeaseEpoch+1
+	newJob.AttemptID, newJob.LeaseEpoch = "index-attempt-2", dc.job.LeaseEpoch+1
 	dc.job, dc.completeErr, dc.completed = newJob, nil, nil
 	worked, err = worker.RunOnce(context.Background())
 	if !worked || err != nil || len(dc.completed) != 1 || dc.completed[0].Result.State != "succeeded" ||
@@ -397,7 +439,9 @@ func TestIndexDispatchRevalidatesOldRTWAcceptanceForNewDCAttempt(t *testing.T) {
 	newFence := store.dispatch.Fence
 	newFence.AttemptID, newFence.LeaseEpoch = "retry-attempt", newFence.LeaseEpoch+1
 	newFence.ExpiresAt = time.Now().Add(time.Minute)
-	if err := store.AttachIndexDispatch(context.Background(), store.build.BuildInput.BuildID, "retry-job", "worker-1", newFence); err != nil {
+	if err := store.AttachIndexDispatch(context.Background(), store.build.BuildInput.BuildID, "retry-job", "worker-1",
+		content.TechnicalFence{AttemptID: newFence.AttemptID, LeaseEpoch: newFence.LeaseEpoch,
+			CancelVersion: newFence.CancelVersion, ExpiresAt: newFence.ExpiresAt}, newFence); err != nil {
 		t.Fatal(err)
 	}
 	if !store.dispatch.RTWAccepted {
