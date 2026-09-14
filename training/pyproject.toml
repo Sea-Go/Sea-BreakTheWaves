@@ -21,5 +21,11 @@ testpaths = ["tests"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/sea_training"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"../contracts/jsonschema" = "sea_training/schemas"
+# The sdist carries a generated snapshot of the one authoritative repository
+# directory. A wheel built from that sdist must use the snapshot, while a
+# direct wheel reads the same repository directory via the build hook.
+[tool.hatch.build.targets.sdist.force-include]
+"../contracts/jsonschema" = "contracts/jsonschema"
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
