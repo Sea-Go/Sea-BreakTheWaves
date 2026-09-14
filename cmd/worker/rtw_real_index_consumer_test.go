@@ -37,22 +37,26 @@ import (
 )
 
 type realRTWIndexFixture struct {
-	BaseURL           string   `json:"base_url"`
-	WorkerToken       string   `json:"worker_token"`
-	DCJobURL          string   `json:"dc_job_url"`
-	DCJobToken        string   `json:"dc_job_token"`
-	DCJobDSN          string   `json:"dc_job_dsn"`
-	BGERuntimeFile    string   `json:"bge_runtime_file"`
-	ObjectsDir        string   `json:"objects_dir"`
-	BuildID           string   `json:"build_id"`
-	ReleaseID         string   `json:"release_id"`
-	ModuleID          string   `json:"module_id"`
-	SourceRevisionIDs []string `json:"source_revision_ids"`
-	WikiRevisionIDs   []string `json:"wiki_revision_ids"`
-	ChunkProfile      string   `json:"chunk_profile"`
-	ChunkSize         int      `json:"chunk_size"`
-	ChunkOverlap      int      `json:"chunk_overlap"`
-	ResultPath        string   `json:"result_path"`
+	BaseURL                  string   `json:"base_url"`
+	WorkerToken              string   `json:"worker_token"`
+	AdminToken               string   `json:"admin_token"`
+	PublishedReleaseID       string   `json:"published_release_id"`
+	PublishedBuildID         string   `json:"published_build_id"`
+	PublishedPointerRevision int64    `json:"published_pointer_revision"`
+	DCJobURL                 string   `json:"dc_job_url"`
+	DCJobToken               string   `json:"dc_job_token"`
+	DCJobDSN                 string   `json:"dc_job_dsn"`
+	BGERuntimeFile           string   `json:"bge_runtime_file"`
+	ObjectsDir               string   `json:"objects_dir"`
+	BuildID                  string   `json:"build_id"`
+	ReleaseID                string   `json:"release_id"`
+	ModuleID                 string   `json:"module_id"`
+	SourceRevisionIDs        []string `json:"source_revision_ids"`
+	WikiRevisionIDs          []string `json:"wiki_revision_ids"`
+	ChunkProfile             string   `json:"chunk_profile"`
+	ChunkSize                int      `json:"chunk_size"`
+	ChunkOverlap             int      `json:"chunk_overlap"`
+	ResultPath               string   `json:"result_path"`
 }
 
 func readRealRTWIndexFixture(t *testing.T) (realRTWIndexFixture, bool) {
