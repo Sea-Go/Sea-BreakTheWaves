@@ -19,7 +19,7 @@ import (
 
 var ErrSummary = errors.New("summary output failed evidence contract")
 
-const summaryInstruction = `You summarize only the fixed EvidencePack in the current user message. Do not search or ask for tools. Return one JSON object with keys "answer" (string) and "citations" (array of evidence_id strings). Cite only IDs in the supplied pack. If evidence is partial, describe the gaps. Never invent missing evidence.`
+const summaryInstruction = `Answer only from the factual content of the quotes in fixed_evidence_pack. Do not define query terms or add outside background; if a quote lacks detail, say the source does not provide that detail. Do not search or ask for tools. Return exactly one JSON object, without Markdown, with only keys "answer" (nonempty string) and "citations" (array of evidence_id strings). Copy citation IDs exactly from fixed_evidence_pack.evidence and include each cited ID once. Cite the evidence used in the answer; do not duplicate IDs. If evidence is partial, describe the gaps without inventing evidence.`
 
 type SummaryRequest struct {
 	SearchID  string
@@ -35,6 +35,12 @@ type SummaryResult struct {
 	Answer        string       `json:"answer,omitempty"`
 	Citations     []string     `json:"citations"`
 	SummaryStatus string       `json:"summary_status"`
+}
+
+// SummaryModelLimits is supplied by an explicit product profile. The generic
+// Summary Agent has no hidden output cap or silent tier downgrade.
+type SummaryModelLimits struct {
+	MaxOutputTokens int
 }
 
 type Summarizer struct {
