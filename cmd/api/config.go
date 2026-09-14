@@ -24,7 +24,7 @@ var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type config struct {
 	APIAddr, MetricsAddr             string
-	ScopeKey                         string
+	ScopeKey, ToolsScopeKey          string
 	RTWURL, RTWToken                 string
 	DCURL, DCToken                   string
 	ModelURL, ModelKey               string
@@ -61,7 +61,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if getenv("BTW_SEARCH_MODE") != "local-exact" {
 		return c, errors.New("BTW_SEARCH_MODE must explicitly be local-exact")
 	}
-	required := []string{"BTW_SEARCH_API_ADDR", "BTW_SEARCH_METRICS_ADDR", "BTW_SEARCH_SCOPE_KEY",
+	required := []string{"BTW_SEARCH_API_ADDR", "BTW_SEARCH_METRICS_ADDR", "BTW_SEARCH_SCOPE_KEY", "BTW_SEARCH_TOOLS_SCOPE_KEY",
 		"BTW_RTW_URL", "BTW_RTW_TOKEN", "BTW_DC_URL", "BTW_DC_TOKEN", "BTW_SEARCH_MODEL_URL",
 		"BTW_SEARCH_MODEL_KEY", "BTW_SEARCH_MODEL_NAME", "BTW_ARTIFACT_DIR", "BTW_SEARCH_INDEX_FILE",
 		"BTW_SEARCH_POLICY_FILE", "BTW_SEARCH_MAX_QUOTE_RUNES", "BTW_SEARCH_HTTP_TIMEOUT",
@@ -80,8 +80,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return c, errors.New("BTW_SEARCH_METRICS_ADDR must be a distinct explicit loopback address")
 	}
 	c.ScopeKey = getenv("BTW_SEARCH_SCOPE_KEY")
-	if len(c.ScopeKey) < 32 {
-		return c, errors.New("BTW_SEARCH_SCOPE_KEY requires at least 32 bytes")
+	c.ToolsScopeKey = getenv("BTW_SEARCH_TOOLS_SCOPE_KEY")
+	if len(c.ScopeKey) < 32 || len(c.ToolsScopeKey) < 32 {
+		return c, errors.New("BTW_SEARCH_SCOPE_KEY and BTW_SEARCH_TOOLS_SCOPE_KEY each require at least 32 bytes")
 	}
 	c.RTWURL, c.RTWToken = getenv("BTW_RTW_URL"), getenv("BTW_RTW_TOKEN")
 	c.DCURL, c.DCToken = getenv("BTW_DC_URL"), getenv("BTW_DC_TOKEN")
