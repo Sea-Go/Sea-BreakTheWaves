@@ -87,6 +87,7 @@ func joinedEnv(t *testing.T, warehouseDSN, modelDSN, dcURL, dcToken, authorityUR
 		{"003_features", string(featuresSQL)},
 		{"004_serving", string(servingSQL)},
 		{"005_covered_baseline", usermodelmigration.CoveredBaselineSQL},
+		{"006_covered_snapshot", usermodelmigration.CoveredSnapshotSQL},
 	} {
 		if _, err := model.Exec(ctx, migration.sql); err != nil {
 			t.Fatalf("model migration %s: %v", migration.name, err)
@@ -224,6 +225,45 @@ func (g *joinedGate) acceptCovered(t *testing.T, built featurebaseline.CoveredBu
 	return receipt
 }
 
+func (g *joinedGate) freezeCovered(t *testing.T, built featurebaseline.CoveredBuildResult,
+	wantCurrent bool) (usermodel.CoveredHistoricalSnapshot, usermodel.CoveredBundleCandidateV2) {
+	t.Helper()
+	ctx := context.Background()
+	subject := built.Candidate.Subject
+	spec := featurebaseline.FavoriteCandidateSpec()
+	snapshot, err := g.store.FreezeCoveredSnapshot(ctx, subject, built.Candidate.Revision, spec)
+	if err != nil || snapshot.Status != "historical_default_off" || snapshot.BaselineArtifactSHA256 != built.ArtifactHash ||
+		len(snapshot.Values) != 1 || snapshot.Values[0].Value != built.Candidate.Values[0].Value {
+		t.Fatalf("same-run v2 snapshot differs from H10 candidate: %+v %v", snapshot, err)
+	}
+	stored, err := g.store.CoveredSnapshotV2ByID(ctx, subject, snapshot.ID)
+	if err != nil || stored.ID != snapshot.ID || stored.Replay {
+		t.Fatalf("v2 snapshot historical read differs: %+v %v", stored, err)
+	}
+	pair, err := usermodel.CoveredFixedCandidatePair(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := g.store.BuildFixedCoveredBundleCandidate(ctx, subject, snapshot.ID, pair)
+	if !wantCurrent {
+		if !errors.Is(err, usermodel.ErrCoveredBundlePending) {
+			t.Fatalf("W1 history with accepted tail became current: %+v %v", bundle, err)
+		}
+		g.assertNoServingHeads(t)
+		return snapshot, usermodel.CoveredBundleCandidateV2{}
+	}
+	if err != nil || bundle.Status != "candidate_default_off" || bundle.CoveredSnapshotID != snapshot.ID ||
+		len(bundle.Vector) != 1 || bundle.Vector[0] != float64(len(snapshot.Contributions)) {
+		t.Fatalf("same-run v2 fixed candidate differs: %+v %v", bundle, err)
+	}
+	storedBundle, err := g.store.CoveredBundleCandidateByID(ctx, subject, bundle.ID)
+	if err != nil || storedBundle.ID != bundle.ID || storedBundle.Replay {
+		t.Fatalf("v2 bundle historical read differs: %+v %v", storedBundle, err)
+	}
+	g.assertNoServingHeads(t)
+	return snapshot, bundle
+}
+
 func (g *joinedGate) assertNoServingHeads(t *testing.T) {
 	t.Helper()
 	for _, table := range []string{"usermodel_feature_baselines", "usermodel_feature_heads",
@@ -357,6 +397,7 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 	}
 	acceptedW1 := g.acceptCovered(t, late, false)
 	g.acceptCovered(t, late, true)
+	snapshotW1, _ := g.freezeCovered(t, late, false)
 	if _, err := g.store.AcceptCoveredBaseline(ctx, g.coveredSubmission(t, b1)); !errors.Is(err, usermodel.ErrCoveredBaselineConflict) {
 		t.Fatalf("different W1 hash reused accepted revision: %v", err)
 	}
@@ -385,6 +426,7 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 	}
 	acceptedW2 := g.acceptCovered(t, final, false)
 	g.acceptCovered(t, final, true)
+	snapshotW2, bundleW2 := g.freezeCovered(t, final, true)
 	if got, err := g.dc.ReadEvents(ctx, "btw-coverage-combined-fact", producer, 10); err != nil || got.FromOffset != 3 {
 		t.Fatalf("Graph ACK did not advance separately: %+v %v", got, err)
 	}
@@ -402,7 +444,9 @@ func TestCombinedRealRTWPublisherVerifierH10(t *testing.T) {
 	}
 	writeJoinedReport(t, os.Getenv("COVERAGE_JOIN_REAL_REPORT"), map[string]any{"G1": p1.Ref, "G2": p2.Ref, "U1W1": s1.Ref, "U2W1": se.Ref, "U1W2": s2.Ref,
 		"candidate_w1_sha256": b1.ArtifactHash, "candidate_w1_after_retract_sha256": late.ArtifactHash, "candidate_w2_sha256": final.ArtifactHash,
-		"accepted_v2": map[string]any{"w1_after_retract": acceptedW1, "w2": acceptedW2, "v1_and_serving_heads": 0}})
+		"accepted_v2": map[string]any{"w1_after_retract": acceptedW1, "w2": acceptedW2, "v1_and_serving_heads": 0},
+		"snapshot_v2": map[string]any{"w1_after_retract": snapshotW1, "w2": snapshotW2},
+		"bundle_v2":   map[string]any{"w1_after_retract": "pending_tail", "w2": bundleW2}})
 	t.Logf("true RTW/DC Publisher→Verifier→H10 W1=%s W2=%s candidate1=%s candidate2=%s", p1.Ref.EventIndexSHA256, p2.Ref.EventIndexSHA256, b1.ArtifactHash, final.ArtifactHash)
 }
 
@@ -546,6 +590,7 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 	}
 	acceptedW1 := g.acceptCovered(t, late, false)
 	g.acceptCovered(t, late, true)
+	snapshotW1, _ := g.freezeCovered(t, late, false)
 	if acceptedW1.Status != "accepted_historical_default_off" || acceptedW1.InputStateVersion != late.Candidate.InputStateVersion ||
 		late.Candidate.CurrentComplete {
 		t.Fatalf("tail W1 was promoted to serving state: %+v", acceptedW1)
@@ -605,6 +650,9 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 	acceptedU1 := g.acceptCovered(t, c1, false)
 	acceptedU2 := g.acceptCovered(t, c2, false)
 	acceptedU3 := g.acceptCovered(t, c3, false)
+	snapshotU1, bundleU1 := g.freezeCovered(t, c1, true)
+	snapshotU2, bundleU2 := g.freezeCovered(t, c2, true)
+	snapshotU3, bundleU3 := g.freezeCovered(t, c3, true)
 	for _, candidate := range []featurebaseline.CoveredBuildResult{c1, c2, c3} {
 		g.acceptCovered(t, candidate, true)
 	}
@@ -662,6 +710,10 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 		"candidate_w1_sha256": first.ArtifactHash, "candidate_w1_after_tail_sha256": late.ArtifactHash, "candidate_u1_w3_sha256": c1.ArtifactHash,
 		"candidate_u2_w3_sha256": c2.ArtifactHash, "candidate_u3_w3_sha256": c3.ArtifactHash,
 		"accepted_v2": map[string]any{"u1_w1_after_tail": acceptedW1, "u1_w3": acceptedU1,
-			"u2_w3": acceptedU2, "u3_empty_w3": acceptedU3, "v1_and_serving_heads": 0}})
+			"u2_w3": acceptedU2, "u3_empty_w3": acceptedU3, "v1_and_serving_heads": 0},
+		"snapshot_v2": map[string]any{"u1_w1_after_tail": snapshotW1, "u1_w3": snapshotU1,
+			"u2_w3": snapshotU2, "u3_empty_w3": snapshotU3},
+		"bundle_v2": map[string]any{"u1_w1_after_tail": "pending_tail", "u1_w3": bundleU1,
+			"u2_w3": bundleU2, "u3_empty_w3": bundleU3}})
 	t.Logf("two-subject real DC/PG Publisher→Verifier→H10 W1=%s W3=%s u1=%s u2=%s empty=%s", p1.Ref.EventIndexSHA256, p3.Ref.EventIndexSHA256, s3u1.Ref.SparseIndexSHA256, s3u2.Ref.SparseIndexSHA256, s3u3.Ref.SparseIndexSHA256)
 }

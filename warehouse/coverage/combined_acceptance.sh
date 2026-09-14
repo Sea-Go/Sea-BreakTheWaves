@@ -110,6 +110,8 @@ root = Path(sys.argv[1])
 summary_path = root / "report.json"
 summary = json.loads(summary_path.read_text())
 accepted = {}
+snapshots = {}
+bundles = {}
 for label, fields in {
     "real": ("w1_after_retract", "w2"),
     "two": ("u1_w1_after_tail", "u1_w3", "u2_w3", "u3_empty_w3"),
@@ -122,11 +124,25 @@ for label, fields in {
         receipt = receipts.get(field, {})
         if receipt.get("status") != "accepted_historical_default_off" or receipt.get("replay") is not False:
             raise RuntimeError(f"{label} missing default-off v2 historical receipt: {field}")
+        snapshot = report.get("snapshot_v2", {}).get(field, {})
+        if snapshot.get("status") != "historical_default_off" or snapshot.get("baseline_artifact_sha256") != receipt.get("artifact_sha256"):
+            raise RuntimeError(f"{label} missing same-run v2 historical snapshot: {field}")
     accepted[label] = {field: receipts[field] for field in fields}
+    snapshots[label] = {field: report["snapshot_v2"][field]["snapshot_id"] for field in fields}
+    expected_vectors = {"real": {"w2": 0}, "two": {"u1_w3": 0, "u2_w3": 1, "u3_empty_w3": 0}}[label]
+    if report.get("bundle_v2", {}).get(fields[0]) != "pending_tail":
+        raise RuntimeError(f"{label} W1 with accepted tail became a current bundle")
+    for field, vector in expected_vectors.items():
+        bundle = report["bundle_v2"].get(field, {})
+        if bundle.get("status") != "candidate_default_off" or bundle.get("user_vector") != [vector] or bundle.get("covered_snapshot_id") != snapshots[label][field]:
+            raise RuntimeError(f"{label} missing same-run default-off bundle: {field}")
+    bundles[label] = {field: report["bundle_v2"][field]["bundle_id"] for field in expected_vectors}
 summary["accept_v2"] = "accepted_historical_default_off"
 summary["accepted_v2"] = accepted
+summary["snapshot_v2"] = snapshots
+summary["bundle_v2"] = {"status": "candidate_default_off", "heads": "unchanged", "ids": bundles}
 summary_path.write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
-print("V2 historical receipts accepted with v1 and Serving heads unchanged")
+print("V2 historical receipts and default-off snapshots/bundles accepted with v1 and Serving heads unchanged")
 PY
 : > "$fact_release"
 wait "$fact_rtw_pid"
