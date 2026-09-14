@@ -58,7 +58,7 @@ func bootstrap(output io.Writer) *slog.Logger {
 
 func redacted(err error, cfg config) string {
 	message := err.Error()
-	for _, secret := range []string{cfg.ScopeKey, cfg.RTWToken, cfg.DCToken, cfg.ModelKey} {
+	for _, secret := range []string{cfg.ScopeKey, cfg.ToolsScopeKey, cfg.RTWToken, cfg.DCToken, cfg.ModelKey} {
 		if secret != "" {
 			message = strings.ReplaceAll(message, secret, "[REDACTED]")
 		}
@@ -79,6 +79,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		return err
 	}
 	var boundary *searchdomain.RootSessionBoundary
+	var toolsBoundary *searchdomain.ToolRunBoundary
 	var apiServer, metricsServer *http.Server
 	var rtwTransport, dcTransport *http.Transport
 	defer func() {
@@ -94,6 +95,9 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		}
 		if boundary != nil {
 			resultErr = errors.Join(resultErr, boundary.Close())
+		}
+		if toolsBoundary != nil {
+			resultErr = errors.Join(resultErr, toolsBoundary.Close())
 		}
 		if rtwTransport != nil {
 			rtwTransport.CloseIdleConnections()
@@ -187,8 +191,21 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
+	toolsBoundary, err = searchdomain.NewToolRunBoundary(delivery, bundle)
+	if err != nil {
+		return fmt.Errorf("construct tool search graph: %w", err)
+	}
+	toolsResolver, err := searchhttp.NewSignedToolsScopeResolver([]byte(cfg.ToolsScopeKey))
+	if err != nil {
+		return err
+	}
+	toolsHandler, err := searchhttp.NewToolsHandler(toolsResolver, toolsBoundary, bundle)
+	if err != nil {
+		return err
+	}
 	apiMux := http.NewServeMux()
 	apiMux.Handle(searchhttp.Route, handler)
+	apiMux.Handle(searchhttp.ToolsRoute, toolsHandler)
 	apiMux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("GET /metrics", bundle.MetricsHandler())
@@ -210,7 +227,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	go func() { stopped <- metricsServer.Serve(metricsListener) }()
 	logger.InfoContext(ctx, "search API started", "event", "search.api.started", "outcome", "succeeded",
 		"api_addr", apiListener.Addr().String(), "metrics_addr", metricsListener.Addr().String(),
-		"backend", "local-exact", "supported_profile", "fast.low")
+		"backend", "local-exact", "supported_profile", "fast.low", "tools_route", searchhttp.ToolsRoute)
 	select {
 	case <-ctx.Done():
 		return nil
