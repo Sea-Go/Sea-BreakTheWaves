@@ -24,7 +24,7 @@
 | 同版原文与引用前置 | `TestEvidenceRequiresSameRevisionAndDurableReceipt`：RTW 替身返回的修订、对象 hash、locator、quote hash 逐项核对；错版/错定位/错原文/错对象均在收据前拒绝；收据 search_id/pack_hash/durable_ref 不匹配时无 EvidencePack 外泄 | fixture 通过，正式 RTW API 未接 |
 | Graph 接入防漂移 | `TestDeliveryRejectsGraphAdapterScopeDriftBeforeRTWRead`：注入的执行器即使返回新 release、索引文本或失效修订，也在 RTW 读取前被拒绝 | fixture 通过，正式 Search GraphAgent 仍未接 |
 | 无证据、局部不可读、取消和失败成本 | `TestEvidenceEmptyPartialAndCancellation`、`TestFailedSourceReadsStillSpendReadBudget`：无候选不调用接纳；显式允许部分时保留可读证据和 gap；取消不交付引用；失败读取仍计次且达到上限停下 | fixture 通过 |
-| Tools、预算与续读 | `TestTypedToolsShareSnapshotAndCumulativeBudget`：三个原生 typed FunctionTool 的名字与结构化结果、同版续读、调用方改写返回值不影响保存证据、累计预算不刷新、错 search_id 和未实现的继续详搜显式拒绝 | fixture 通过；预算是保守预留，非完整 H07 账本 |
+| Tools、预算与续读 | `TestTypedToolsShareSnapshotAndCumulativeBudget`、`TestToolReservationRefundsActualUsageForFollowupRead`：三个原生 typed FunctionTool 的名字与结构化结果、同版续读、调用方改写返回值不影响保存证据、累计预算不刷新；成功搜索按实际读/quote 用量退还预留，后续读仍有界；错 search_id 和未实现的继续详搜显式拒绝 | fixture 通过；失败调用耗完整预留，仍非完整 H07 账本 |
 | summary 与收据时序 | `TestSummaryRunsNativeLLMAgentRunnerAfterReceipt`：真正运行 tRPC-Agent-Go v1.8.1 `LLMAgent→Runner`；模型请求 `Tools` 空，收据先于模型调用；只在完整终态和 citation ID 校验后返回答案；错引用失败仍保留搜索结果；无证据不调用模型 | fixture 通过；正式 DC 模型、RTW answer_id/历史未接 |
 | 调用方 Tool 框架路径 | 同一测试再运行调用方 `Runner→LLMAgent→search_fast FunctionTool`，模型第二次调用收到结构化证据 Tool 消息；真实框架 `invoke_agent search_caller`、`execute_tool search_fast` 共用 TraceID，`chat` 同一调用下，Prometheus 有框架原生 Agent/Chat/Tool 指标 | fixture 通过，不等于正式 Search GraphAgent |
 | 12 组合 | 同一测试逐个运行 fast/detailed × low/medium/high 的 summary 与 typed Tool 各六个 fixture；每个核对请求/实际 profile、引用收据与状态 | 局部 12/12；模型规划、高智能语义、真实三路与客户端未验收 |
