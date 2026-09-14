@@ -6,6 +6,8 @@
 
 `RTWSearchCitationAdapter` 同时满足搜索 `SourceReader` 与 `CitationAcceptor`：按module/release/generation/十进制publication revision/revision/chunk请求RTW同版原文，返回前将所有片段元数据与索引候选逐项对照并重算quote hash；把原 `json.Marshal(EvidencePack)` 字节和SHA256作为RTW接纳输入，只在匹配search_id/pack_hash/durable_ref的收据后返给搜索。若POST响应在RTW已提交后丢失，调用方可带**原固定pack hash**用`Recover(search_id, expected_hash)`查同一耐久收据；错误hash不获恢复。
 
-`TestRTWSearchCitationAdapterHTTPReceiptRecovery` 使用真实 BTW 生成客户端对隔离 HTTP 契约fixture调用，验证原文读取/接纳同一Trace的W3C传播、POST已提交却返回503时不公开引用、GET按原hash恢复、错误hash拒收、正确引用包交付、RTW伪造正文在接纳前拒收。`go test -mod=readonly -race -count=1 ./internal/app ./internal/clients/ridethewind`、`go vet`与根模块回归均通过。RTW提供者自己的`service/knowledge/scripts/acceptance.sh`已在独立仓真实PG16/HTTP证明发布/撤回/引用事务，但本切片**尚未在同一进程链同时运行真实RTW服务与BTW客户端**。
+`TestRTWSearchCitationAdapterHTTPReceiptRecovery` 使用真实 BTW 生成客户端对隔离 HTTP 契约fixture调用，验证原文读取/接纳同一Trace的W3C传播、POST已提交却返回503时不公开引用、GET按原hash恢复、错误hash拒收、正确引用包交付、RTW伪造正文在接纳前拒收。`go test -mod=readonly -race -count=1 ./internal/app ./internal/clients/ridethewind`、`go vet`与根模块回归均通过。这是首轮消费者局部测试；后续与真实RTW进程的联验见下段。
 
-状态：提供者与消费者各自 `LOCAL_VERIFIED`，H07双方真实联调、实际三路同代索引、RTW `AcceptedRootHistory`、正式BTW API/SSE和Collector→DataCenter仍 `NOT_VERIFIED`。不能以生成DTO、fixture的200或当前Trace作为整个H07接纳。
+后续两仓同进程链局部联验：在RTW集成树运行`SEA_BTW_CITATION_CONSUMER_ROOT=<固定BTW集成工作树> bash service/knowledge/scripts/acceptance.sh`，实际RTW go-zero HTTP进程和隔离PG16发布固定release/结构性三路IndexManifest，再启动BTW自身的`TestRTWRealProviderCitationAdapter`子进程。BTW生成客户端从该真实RTW实例读取固定chunk/quote，`Delivery`先校验原文再提交新search_id EvidencePack，GET回查同一RTW数据库耐久Ref；RTW原文读取/引用接纳JSON终态与BTW父Span共享W3C Trace ID，引用计数在原fixture与新search_id共两次唯一提交、重放不多计。完整RTW脚本含全仓知识服务race/vet退出码0；BTW子测试PASS。此处输入三路IndexManifest仍是合成结构fixture，不证明真实模型/三引擎数值链。
+
+状态：H07**引用子合同**达到隔离环境`INTEGRATED`；实际三路同代索引、RTW权威Answer历史的BTW消费与正式搜索API/SSE、客户端、Collector→DataCenter仍`NOT_VERIFIED`。不能把同版引用成功替代整个H07或OBS接纳。
