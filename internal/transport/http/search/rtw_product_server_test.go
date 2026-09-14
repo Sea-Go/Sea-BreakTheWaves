@@ -38,6 +38,7 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 		t.Fatalf("product fixture must be a regular private file: %v", err)
 	}
 	var fixture struct {
+		BuildOnly   bool             `json:"build_only"`
 		RTWBase     string           `json:"rtw_base"`
 		WorkerToken string           `json:"worker_token"`
 		ScopeKey    string           `json:"scope_key"`
@@ -57,6 +58,15 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil || fixture.RTWBase == "" ||
 		fixture.WorkerToken == "" || len(fixture.ScopeKey) < 32 || fixture.ReadyPath == "" {
 		t.Fatal("incomplete RTW product server fixture")
+	}
+	if fixture.BuildOnly {
+		if fixture.RealIndex.DCRuntime == "" || fixture.RealIndex.ResultPath == "" {
+			t.Fatal("formal API mode requires a real three-lane index build")
+		}
+		if _, err := buildRTWRealThreeLane(context.Background(), fixture.RealIndex); err != nil {
+			t.Fatalf("build real three-lane artifacts for formal cmd/api: %v", err)
+		}
+		return
 	}
 	client, err := ridethewind.New(httpclient.Config{BaseURL: fixture.RTWBase, Token: fixture.WorkerToken})
 	if err != nil {
