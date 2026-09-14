@@ -37,6 +37,20 @@ type TrustedFactBinder interface {
 	BindFact(context.Context, eventing.Event) (usermodel.Event, error)
 }
 
+// FactSourceEvidence is the immutable DC evidence for one batch item. A
+// source adapter may compare its own committed event and technical receipt
+// against all fields before choosing the subject or domain action.
+type FactSourceEvidence struct {
+	Event     eventing.Event
+	InputHash string
+	Offset    int64
+	Receipt   eventing.Receipt
+}
+
+type TrustedFactEvidenceBinder interface {
+	BindFactWithEvidence(context.Context, FactSourceEvidence) (usermodel.Event, error)
+}
+
 type FactGraphCommitter interface {
 	Append(context.Context, usermodel.FactGraphRequest) (usermodel.FactGraphReceipt, error)
 }
@@ -63,10 +77,11 @@ type FactWorkerConfig struct {
 // domain action together. A binder must obtain SubjectRef from its source's
 // authoritative owner, never from the DC event payload alone.
 type FactEventBinding struct {
-	EventType     string
-	SchemaVersion int
-	Action        usermodel.Action
-	Binder        TrustedFactBinder
+	EventType      string
+	SchemaVersion  int
+	Action         usermodel.Action
+	Binder         TrustedFactBinder
+	EvidenceBinder TrustedFactEvidenceBinder
 }
 
 // FactWorker borrows the one process telemetry Bundle, DataCenter SDK,
@@ -102,7 +117,7 @@ func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedF
 		for _, binding := range cfg.Bindings {
 			if !factDeliveryToken.MatchString(binding.EventType) || binding.SchemaVersion < 1 ||
 				(binding.Action != usermodel.Assert && binding.Action != usermodel.Correct && binding.Action != usermodel.Retract) ||
-				nilDependency(binding.Binder) {
+				(nilDependency(binding.Binder) == nilDependency(binding.EvidenceBinder)) {
 				return nil, fmt.Errorf("invalid fact event binding: %w", ErrFactDeliveryContract)
 			}
 			if _, exists := bindings[binding.EventType]; exists {
@@ -233,10 +248,16 @@ func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (re
 		return receipt, fmt.Errorf("DC event received time: %w", ErrFactDeliveryContract)
 	}
 	binding, allowed := w.eventBinding(item.Event.EventType)
-	if !allowed || nilDependency(binding.Binder) {
+	if !allowed {
 		return receipt, fmt.Errorf("missing trusted fact event binding: %w", ErrFactDeliveryContract)
 	}
-	bound, err := binding.Binder.BindFact(ctx, item.Event)
+	var bound usermodel.Event
+	if !nilDependency(binding.EvidenceBinder) {
+		bound, err = binding.EvidenceBinder.BindFactWithEvidence(ctx, FactSourceEvidence{
+			Event: item.Event, InputHash: item.InputHash, Offset: item.Offset, Receipt: dcReceipt})
+	} else {
+		bound, err = binding.Binder.BindFact(ctx, item.Event)
+	}
 	if err != nil {
 		return receipt, fmt.Errorf("bind RTW-issued fact subject and EventSpec: %w", err)
 	}
