@@ -1,0 +1,90 @@
+{
+  "status": "passed",
+  "scope": "isolated_clickhouse_dbt_seaweedfs_synthetic_export",
+  "source_revision": "sha256:a3c610b7cf91535fce341f614c1dbac9756dc16c32913dba94d4bdf411569b76",
+  "clickhouse": "25.8.28.1",
+  "datasets": {
+    "v1": "dataset_v1/manifest.json",
+    "v2": "dataset_v2/manifest.json"
+  },
+  "s3_manifests": {
+    "v1": "sea-fixture/sea_gen_v1_a1/manifest.json",
+    "v2": "sea-fixture/sea_gen_v2_a1/manifest.json"
+  },
+  "v1_rows": 4,
+  "v2_rows": 6,
+  "negative_cases": [
+    "conflict",
+    "duplicate_grain"
+  ],
+  "assertions": [
+    "exact_redelivery_deduplicated",
+    "unexposed_not_negative",
+    "orphan_preserved_not_sample",
+    "future_feature_excluded",
+    "in_request_available_feature_accepted",
+    "pending_not_negative",
+    "late_label_new_generation",
+    "current_merge_keeps_rebuildable_history",
+    "v1_rebuild_parquet_hash_equal",
+    "old_manifest_files_unchanged",
+    "s3_existing_generation_write_rejected",
+    "cancelled_sql_result_not_published"
+  ],
+  "runtime_status": "isolated services are task-owned and ephemeral; this record is not a live endpoint",
+  "python_unit_tests": 6,
+  "dbt": {
+    "v1": {
+      "statuses": {
+        "success": 11,
+        "pass": 5
+      },
+      "dbt_log_sha256": "02902dfca5c2901fd6d15a5043c6e5b6668c9ef02f57b1ece0d68e11145de2b1",
+      "manifest_sha256": "687c2aa10feef292e87dcebfb3bfc23d3dc61bf136be41f01d9dc62b8eafd715",
+      "run_results_sha256": "95dd699446e74585e39b70175c4321de22f5872210dd450b4499a4096572cbac"
+    },
+    "v1_replay": {
+      "statuses": {
+        "success": 11,
+        "pass": 5
+      },
+      "dbt_log_sha256": "2ffe194797fccec53829a70cb660d15b546de56ffab162bd41137ee51fcc9ba5",
+      "manifest_sha256": "e75e94eac0c86a820086a982e5b051b0a5c5c72d7d890ab3815a246312a4ca3d",
+      "run_results_sha256": "5387330f0d19f17a191883dce0a74b17171a4526fd7bb140297a859ce41a2e65"
+    },
+    "v2": {
+      "statuses": {
+        "success": 11,
+        "pass": 5
+      },
+      "dbt_log_sha256": "4be2d7535f89c9d5d61f7025bab424f86f51f2e5a669d27b8764da763c90fbf7",
+      "manifest_sha256": "0136acd1f406bd874ce020d857e0df30f4e76bd5b98c29dd6eb181ca519bae98",
+      "run_results_sha256": "e199945cd03ef77f014fb1581cc815b87bdedab91a9c8a1ed443a8cc0236f4aa"
+    },
+    "conflict": {
+      "statuses": {
+        "success": 1,
+        "fail": 1,
+        "skipped": 14
+      },
+      "dbt_log_sha256": "628a309973f73cda33b1c99856ae96327b8fd4e95cd966fc975725eb889ddb17",
+      "manifest_sha256": "66e6a18e81e40753f0fb21e96189fffff7fbae6ec0662a4db9bfdee0b158261a",
+      "run_results_sha256": "7c3af4a32d19cad803c045b25e87c82e3d01086e1f2b88f270275b4f1b332b31"
+    },
+    "duplicate_grain": {
+      "statuses": {
+        "success": 8,
+        "pass": 2,
+        "fail": 1,
+        "skipped": 5
+      },
+      "dbt_log_sha256": "50a82307894c272676cf5d93f72ad47bc10420b31e0d907363884be64d1a96ae",
+      "manifest_sha256": "0c735f7ca1a39f84b8aaad31e285996ec21d4da56c48b8e72323577be099d2e6",
+      "run_results_sha256": "7622ab2a8cb8b21d6ddaf42385ecbc352d2dcc78dd120090bebd7f33199688ad"
+    }
+  },
+  "dataset_manifests_sha256": {
+    "v1": "0270dccb8c4e7ffc006c562043e7079214ea8099ec228f9234d2515c676ac250",
+    "v2": "431a4c62f386d4b847ebc6411546fd75dbfcb6a04e2cb8ed7be4b37fbc19da84"
+  }
+}

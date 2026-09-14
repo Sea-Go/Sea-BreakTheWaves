@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: landing
+    schema: "{{ var('landing_schema') }}"
+    tables:
+      - name: event_history
+        description: Append-only immutable source event revisions; never the current projection.
