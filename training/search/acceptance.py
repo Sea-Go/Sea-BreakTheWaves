@@ -78,13 +78,25 @@ def _three_lane_acceptance(manifest_key: str, expected_qrel_sha256: str,
             "--output", str(score_path),
         ], env=env, log_path=output / f"scoring-{split}.log")
         report = json.loads(score_path.read_bytes())
+        def no_formal_metrics(value: dict) -> bool:
+            return value.get("status") == "not_evaluable" and all(
+                value.get(name, "missing") is None for name in ("recall_at_k", "mrr_at_k", "ndcg_at_k"))
+
         if report.get("status") != "candidate_default_off" or \
-                report.get("evaluation", {}).get("status") != "not_evaluable" or \
+                report.get("data_kind") != "synthetic" or \
+                report.get("qrel_reader_status") != "validated_synthetic_fixture" or \
+                report.get("candidate_pool_scope") != "all_frozen_chunks_available_at_query_time" or \
+                not no_formal_metrics(report.get("evaluation", {})) or \
                 report.get("representation_manifest_sha256") != representation_sha256 or \
                 report.get("qrel_manifest_sha256") != expected_qrel_sha256 or \
-                report.get("split") != split or not report.get("queries") or \
-                any(set(query.get("lanes", {})) != {"dense", "sparse", "token_matrix"} or
-                    any(lane.get("evaluation", {}).get("status") != "not_evaluable"
+                report.get("split") != split or report.get("top_k") != 3 or \
+                not report.get("queries") or any(
+                    not query.get("candidate_set") or
+                    set(query.get("lanes", {})) != {"dense", "sparse", "token_matrix"} or
+                    any(not lane.get("raw_scores") or not lane.get("top_k") or
+                        lane.get("judged_coverage", {}).get("candidate_total") != len(lane["raw_scores"]) or
+                        lane.get("judged_coverage", {}).get("top_k_total") != len(lane["top_k"]) or
+                        not no_formal_metrics(lane.get("evaluation", {}))
                         for lane in query["lanes"].values()) for query in report["queries"]):
             raise RuntimeError("synthetic qrel scoring was misreported as complete or active")
         scores[split] = {"sha256": sha256(score_path.read_bytes()).hexdigest(),
@@ -104,11 +116,19 @@ def _three_lane_acceptance(manifest_key: str, expected_qrel_sha256: str,
             go_report.get("representation_manifest_sha256") != representation_sha256 or \
             go_report.get("python_scores_sha256") != scores["test"]["sha256"]:
         raise RuntimeError("Go exact retrieval did not match frozen Python lane scores")
+    lanes = go_report.get("lanes", {})
+    if set(lanes) != {"dense", "sparse", "token_matrix"} or \
+            any(not lane.get("topk_equal") or lane.get("compared_scores", 0) < 1 or
+                lane.get("max_abs_delta", 1) > 1e-5 for lane in lanes.values()) or \
+            lanes["sparse"].get("candidate_semantics") != "positive_intersection_only" or \
+            any(not lanes[name].get("python_full_topk_equal") for name in ("dense", "token_matrix")):
+        raise RuntimeError("Go lane parity report is incomplete or misstates sparse semantics")
     return {"status": "passed", "data_kind": "synthetic", "activation": "none",
             "model_quality": None, "business_improvement": None,
             "representation_manifest_sha256": representation_sha256,
             "qrel_manifest_sha256": expected_qrel_sha256,
-            "splits": scores, "go_parity_report_sha256": sha256(go_report_path.read_bytes()).hexdigest()}
+            "splits": scores, "go_parity_report_sha256": sha256(go_report_path.read_bytes()).hexdigest(),
+            "go_lanes": lanes, "limits": go_report.get("limits", [])}
 
 
 def producer_module():
@@ -241,6 +261,7 @@ def run(runtime: Path, output: Path, *, model_directory: Path | None = None,
                 manifest_key, expected, f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
                 output / "three-lane", model_directory=model_directory,
                 bge_python=bge_python)
+            report["evidence_level"] = "L2_same_run_synthetic_qrel_BGE_CPU_Python_Go_exact"
         (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
         return report
     finally:
