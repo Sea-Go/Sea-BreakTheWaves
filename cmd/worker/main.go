@@ -1,6 +1,5 @@
-// Command worker runs the local content-preparation path through tRPC-Agent-Go.
-// It only prepares chunk evidence; the three retrieval lanes and READY commit
-// belong to independently scheduled work.
+// Command worker runs one explicitly selected local content job through
+// tRPC-Agent-Go. The prepare and index job types use separate processes.
 package main
 
 import (
@@ -29,6 +28,7 @@ import (
 	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"trpc.group/trpc-go/trpc-agent-go/agent"
 )
 
 func main() { os.Exit(run()) }
@@ -67,13 +67,20 @@ func bootstrapLogger(output io.Writer, cfg config) *slog.Logger {
 		}
 		return attr
 	}})
-	return slog.New(handler).With("service", "sea-btw-prepare-worker", "environment", known(cfg.Environment),
+	return slog.New(handler).With("service", workerService(cfg), "environment", known(cfg.Environment),
 		"service_version", known(cfg.Version), "instance_id", known(cfg.InstanceID),
 		"component", "content", "log_source", "application")
 }
 
+func workerService(cfg config) string {
+	if cfg.JobType == app.IndexJobType {
+		return "sea-btw-index-worker"
+	}
+	return "sea-btw-prepare-worker"
+}
+
 func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) {
-	bundle, err := telemetry.New(ctx, telemetry.Config{Service: "sea-btw-prepare-worker", Environment: cfg.Environment,
+	bundle, err := telemetry.New(ctx, telemetry.Config{Service: workerService(cfg), Environment: cfg.Environment,
 		Version: cfg.Version, InstanceID: cfg.InstanceID, Output: output, Level: slog.LevelInfo,
 		OTLPEndpoint: cfg.OTLPTracesURL, SampleRatio: 1})
 	if err != nil {
@@ -167,28 +174,48 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return fmt.Errorf("open local artifact directory: %w", err)
 	}
-	chunker, err := content.NewChunker(content.ChunkConfig{ID: cfg.ChunkProfile, Size: cfg.ChunkSize, Overlap: cfg.ChunkOverlap})
-	if err != nil {
-		return fmt.Errorf("construct chunker: %w", err)
-	}
 	store := content.NewStore(pool)
-	preparer, err := content.NewPreparer(rtw, objects, store, chunker, bundle)
-	if err != nil {
-		return fmt.Errorf("construct content preparer: %w", err)
+	var graph agent.Agent
+	if cfg.JobType == app.IndexJobType {
+		graph, err = newIndexGraph(cfg.IndexSettings, dc, rtw, objects, store, bundle)
+		if err != nil {
+			return fmt.Errorf("construct framework index graph: %w", err)
+		}
+	} else {
+		var chunker *content.Chunker
+		chunker, err = content.NewChunker(content.ChunkConfig{ID: cfg.ChunkProfile, Size: cfg.ChunkSize, Overlap: cfg.ChunkOverlap})
+		if err != nil {
+			return fmt.Errorf("construct chunker: %w", err)
+		}
+		var preparer *content.Preparer
+		preparer, err = content.NewPreparer(rtw, objects, store, chunker, bundle)
+		if err != nil {
+			return fmt.Errorf("construct content preparer: %w", err)
+		}
+		graph, err = content.NewPrepareGraphAgent(preparer)
+		if err != nil {
+			return fmt.Errorf("construct framework prepare graph: %w", err)
+		}
 	}
-	graph, err := content.NewPrepareGraphAgent(preparer)
-	if err != nil {
-		return fmt.Errorf("construct framework prepare graph: %w", err)
+	appName := "sea-btw-content-prepare"
+	if cfg.JobType == app.IndexJobType {
+		appName = "sea-btw-content-index"
 	}
-	runner, err = btwRuntime.OpenPostgres("sea-btw-content-prepare", graph, btwRuntime.PostgresConfig{DSN: cfg.SessionDSN,
+	runner, err = btwRuntime.OpenPostgres(appName, graph, btwRuntime.PostgresConfig{DSN: cfg.SessionDSN,
 		Schema: cfg.SessionSchema, TablePrefix: cfg.SessionPrefix, Initialize: cfg.SessionInit}, bundle)
 	if err != nil {
 		return fmt.Errorf("open framework Postgres Runner: %w", err)
 	}
-	worker, err := app.NewPrepareWorker(app.PrepareWorkerConfig{WorkerID: cfg.WorkerID,
-		ResourceProfile: cfg.Resource, LeaseSeconds: cfg.LeaseSeconds}, dc, rtw, runner, store, objects, bundle)
+	var worker poller
+	if cfg.JobType == app.IndexJobType {
+		worker, err = app.NewIndexWorker(app.IndexWorkerConfig{WorkerID: cfg.WorkerID,
+			ResourceProfile: cfg.Resource, LeaseSeconds: cfg.LeaseSeconds}, dc, rtw, runner, store, objects, bundle)
+	} else {
+		worker, err = app.NewPrepareWorker(app.PrepareWorkerConfig{WorkerID: cfg.WorkerID,
+			ResourceProfile: cfg.Resource, LeaseSeconds: cfg.LeaseSeconds}, dc, rtw, runner, store, objects, bundle)
+	}
 	if err != nil {
-		return fmt.Errorf("construct content worker: %w", err)
+		return fmt.Errorf("construct %s worker: %w", cfg.JobType, err)
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", bundle.MetricsHandler())
@@ -200,9 +227,9 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	}
 	metricsErrors := make(chan error, 1)
 	go func() { metricsErrors <- metrics.Serve(listener) }()
-	logger.InfoContext(ctx, "content prepare worker started", "event", "content.worker.started", "outcome", "succeeded",
+	logger.InfoContext(ctx, "content worker started", "event", "content.worker.started", "outcome", "succeeded",
 		"worker_id", cfg.WorkerID, "resource_profile", cfg.Resource, "metrics_addr", listener.Addr().String(),
-		"artifact_store", "local", "job_type", app.PrepareJobType)
+		"artifact_store", "local", "index_backend", cfg.IndexBackend, "job_type", cfg.JobType)
 	return poll(ctx, worker, cfg.PollInterval, metricsErrors)
 }
 

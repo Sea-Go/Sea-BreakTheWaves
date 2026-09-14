@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -63,6 +65,41 @@ func TestLoadConfigRequiresExplicitLocalAndDDLControls(t *testing.T) {
 				t.Fatalf("configuration error exposed credential: %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildJobNeedsExplicitRealLaneSettings(t *testing.T) {
+	values := validEnvironment()
+	values["BTW_JOB_TYPE"] = "content.build.v1"
+	delete(values, "BTW_CHUNK_PROFILE_ID")
+	delete(values, "BTW_CHUNK_SIZE")
+	delete(values, "BTW_CHUNK_OVERLAP")
+	getenv := func(key string) string { return values[key] }
+	if _, err := loadConfig(getenv); err == nil || !strings.Contains(err.Error(), "BTW_INDEX_CONFIG_FILE") {
+		t.Fatalf("build job accepted without pinned lane settings: %v", err)
+	}
+	settings, _ := fixedIndexSettings()
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "fixed-index-config.json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	values["BTW_INDEX_CONFIG_FILE"] = path
+	values["BTW_INDEX_BACKEND"] = "exact"
+	cfg, err := loadConfig(getenv)
+	if err != nil || cfg.JobType != "content.build.v1" || cfg.IndexBackend != "exact" {
+		t.Fatalf("explicit local index mode rejected: %+v %v", cfg, err)
+	}
+	values["BTW_INDEX_BACKEND"] = "milvus"
+	if _, err := loadConfig(getenv); err == nil {
+		t.Fatal("unsupported backend claimed as wired")
+	}
+	values["BTW_JOB_TYPE"] = "content.publish.v1"
+	if _, err := loadConfig(getenv); err == nil {
+		t.Fatal("unknown technical job type accepted")
 	}
 }
 

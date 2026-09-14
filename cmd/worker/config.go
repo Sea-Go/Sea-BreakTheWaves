@@ -15,6 +15,10 @@ var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var revision = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type config struct {
+	JobType        string
+	IndexConfig    string
+	IndexBackend   string
+	IndexSettings  indexSettings
 	WorkerID       string
 	Resource       string
 	LeaseSeconds   int
@@ -48,15 +52,32 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return c, errors.New("BTW_MODE and BTW_ARTIFACT_STORE must explicitly be local")
 	}
 	required := []string{"BTW_WORKER_ID", "BTW_RESOURCE_PROFILE", "BTW_DC_URL", "BTW_RTW_URL",
-		"BTW_CONTENT_POSTGRES_DSN", "BTW_CONTENT_SCHEMA", "BTW_ARTIFACT_DIR", "BTW_CHUNK_PROFILE_ID",
+		"BTW_CONTENT_POSTGRES_DSN", "BTW_CONTENT_SCHEMA", "BTW_ARTIFACT_DIR",
 		"BTW_SESSION_POSTGRES_DSN", "BTW_SESSION_SCHEMA", "BTW_SESSION_TABLE_PREFIX",
 		"BTW_OTLP_TRACES_URL", "BTW_METRICS_ADDR", "BTW_SERVICE_VERSION", "BTW_ENVIRONMENT", "BTW_INSTANCE_ID"}
+	jobType := getenv("BTW_JOB_TYPE")
+	if jobType == "" || jobType == "content.prepare.v1" {
+		required = append(required, "BTW_CHUNK_PROFILE_ID")
+	}
 	for _, key := range required {
 		if strings.TrimSpace(getenv(key)) == "" {
 			return c, fmt.Errorf("%s is required", key)
 		}
 	}
 	c.WorkerID, c.Resource = getenv("BTW_WORKER_ID"), getenv("BTW_RESOURCE_PROFILE")
+	c.JobType = getenv("BTW_JOB_TYPE")
+	if c.JobType == "" {
+		c.JobType = "content.prepare.v1"
+	}
+	if c.JobType != "content.prepare.v1" && c.JobType != "content.build.v1" {
+		return config{}, errors.New("BTW_JOB_TYPE must be content.prepare.v1 or content.build.v1")
+	}
+	if c.JobType == "content.build.v1" {
+		c.IndexConfig, c.IndexBackend = strings.TrimSpace(getenv("BTW_INDEX_CONFIG_FILE")), getenv("BTW_INDEX_BACKEND")
+		if c.IndexConfig == "" || c.IndexBackend != "exact" {
+			return config{}, errors.New("content.build.v1 requires BTW_INDEX_CONFIG_FILE and BTW_INDEX_BACKEND=exact")
+		}
+	}
 	c.DCURL, c.DCToken = getenv("BTW_DC_URL"), getenv("BTW_DC_TOKEN")
 	c.RTWURL, c.RTWToken = getenv("BTW_RTW_URL"), getenv("BTW_RTW_TOKEN")
 	c.ContentDSN, c.ContentSchema = getenv("BTW_CONTENT_POSTGRES_DSN"), getenv("BTW_CONTENT_SCHEMA")
@@ -68,11 +89,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if c.LeaseSeconds, err = positiveInt(getenv("BTW_LEASE_SECONDS"), "BTW_LEASE_SECONDS", 5, 3600); err != nil {
 		return config{}, err
 	}
-	if c.ChunkSize, err = positiveInt(getenv("BTW_CHUNK_SIZE"), "BTW_CHUNK_SIZE", 1, 32768); err != nil {
-		return config{}, err
-	}
-	if c.ChunkOverlap, err = positiveInt(getenv("BTW_CHUNK_OVERLAP"), "BTW_CHUNK_OVERLAP", 0, c.ChunkSize-1); err != nil {
-		return config{}, err
+	if c.JobType == "content.prepare.v1" {
+		if c.ChunkSize, err = positiveInt(getenv("BTW_CHUNK_SIZE"), "BTW_CHUNK_SIZE", 1, 32768); err != nil {
+			return config{}, err
+		}
+		if c.ChunkOverlap, err = positiveInt(getenv("BTW_CHUNK_OVERLAP"), "BTW_CHUNK_OVERLAP", 0, c.ChunkSize-1); err != nil {
+			return config{}, err
+		}
 	}
 	if c.PollInterval, err = boundedDuration(getenv("BTW_POLL_INTERVAL"), "BTW_POLL_INTERVAL", 100*time.Millisecond, time.Minute); err != nil {
 		return config{}, err
@@ -107,6 +130,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
 		return config{}, errors.New("BTW_METRICS_ADDR port must be 1..65535")
+	}
+	if c.JobType == "content.build.v1" {
+		c.IndexSettings, err = readIndexSettings(c.IndexConfig)
+		if err != nil {
+			return config{}, fmt.Errorf("BTW_INDEX_CONFIG_FILE: %w", err)
+		}
 	}
 	return c, nil
 }
