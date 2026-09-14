@@ -20,14 +20,55 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 )
 
-type fakeIndexStore struct{ build content.Build }
+type fakeIndexStore struct {
+	build     content.Build
+	dispatch  content.IndexDispatch
+	delivered bool
+	stage     string
+}
 
 func (s *fakeIndexStore) Get(context.Context, string) (content.Build, error) { return s.build, nil }
+func (s *fakeIndexStore) AttachIndexDispatch(_ context.Context, buildID, jobID, workerID string, fence content.Fence) error {
+	if s.dispatch.Fence.LeaseEpoch != fence.LeaseEpoch {
+		s.delivered = false
+	}
+	s.dispatch.BuildID, s.dispatch.JobID, s.dispatch.WorkerID, s.dispatch.Fence = buildID, jobID, workerID, fence
+	s.stage = "pending"
+	return nil
+}
+func (s *fakeIndexStore) ClaimIndexDispatch(_ context.Context, buildID string) (content.IndexDispatch, bool, error) {
+	if s.delivered || s.stage != "pending" || s.build.State != "READY" ||
+		buildID != "" && buildID != s.dispatch.BuildID {
+		return content.IndexDispatch{}, false, nil
+	}
+	s.dispatch.ClaimEpoch++
+	s.dispatch.ClaimUntil = time.Now().Add(30 * time.Second)
+	s.dispatch.Result = *s.build.Result
+	return s.dispatch, true, nil
+}
+func (s *fakeIndexStore) NoteIndexRTWAccepted(_ context.Context, claim content.IndexDispatch) error {
+	s.dispatch.RTWAccepted = true
+	return nil
+}
+func (s *fakeIndexStore) DeferIndexDispatch(_ context.Context, claim content.IndexDispatch, stage, _ string) error {
+	s.stage = stage
+	return nil
+}
+func (s *fakeIndexStore) DeliverIndexDispatch(_ context.Context, claim content.IndexDispatch) error {
+	if !s.dispatch.RTWAccepted {
+		return content.ErrConflict
+	}
+	s.delivered, s.stage = true, "complete"
+	return nil
+}
 
 type fakeIndexBuilds struct {
-	build      ridethewind.Build
-	claims     []ridethewind.ClaimBuildReq
-	wrongClaim bool
+	build             ridethewind.Build
+	claims            []ridethewind.ClaimBuildReq
+	wrongClaim        bool
+	acceptErr         error
+	commitBeforeError bool
+	accepts           []ridethewind.AcceptBuildReq
 }
 
 func (f *fakeIndexBuilds) GetBuild(context.Context, string) (ridethewind.Build, error) {
@@ -39,6 +80,16 @@ func (f *fakeIndexBuilds) ClaimBuild(_ context.Context, q ridethewind.ClaimBuild
 	f.build.LeaseExpiresAt = q.LeaseExpiresAt
 	if f.wrongClaim {
 		f.build.LeaseEpoch++
+	}
+	return f.build, nil
+}
+func (f *fakeIndexBuilds) AcceptBuild(_ context.Context, q ridethewind.AcceptBuildReq) (ridethewind.Build, error) {
+	f.accepts = append(f.accepts, q)
+	if f.acceptErr == nil || f.commitBeforeError {
+		f.build.State, f.build.IndexManifestRef, f.build.IndexManifestHash = q.State, q.IndexManifestRef, q.IndexManifestHash
+	}
+	if f.acceptErr != nil {
+		return ridethewind.Build{}, f.acceptErr
 	}
 	return f.build, nil
 }
@@ -190,8 +241,8 @@ func TestIndexWorkerAcksOnlyCommittedReadyThroughFramework(t *testing.T) {
 	if dc.completed[0].Result.State != "succeeded" || dc.completed[0].Result.Ref == nil ||
 		dc.completed[0].Result.Ref.MediaType != indexResultMediaType ||
 		dc.completed[0].Result.Ref.Hash != store.build.Result.SHA256 ||
-		store.build.OperationID != "original-prepare-operation" || rtw.build.State != "BUILDING" {
-		t.Fatalf("technical ACK changed fixed input/publication: %+v %+v %+v", dc.completed, store.build, rtw.build)
+		store.build.OperationID != "original-prepare-operation" || rtw.build.State != "READY" || !store.delivered {
+		t.Fatalf("RTW acceptance/DC ACK changed fixed input or missed outbox: %+v %+v %+v", dc.completed, store.build, rtw.build)
 	}
 	if !indexer.observedTrace.IsValid() || indexer.observedTrace != parent.SpanContext().TraceID() {
 		t.Fatalf("Index Graph lost parent trace: %s vs %s", indexer.observedTrace, parent.SpanContext().TraceID())
@@ -265,11 +316,97 @@ func TestIndexWorkerLostReceiptAndNewAttemptReplay(t *testing.T) {
 	oldFence, oldRef := store.build.Fence, *store.build.Result
 	indexer.oldReady = true
 	newJob := dc.job
-	newJob.ID, newJob.AttemptID, newJob.LeaseEpoch = "job-index-2", "index-attempt-2", oldFence.LeaseEpoch+1
+	newJob.AttemptID, newJob.LeaseEpoch = "index-attempt-2", oldFence.LeaseEpoch+1
 	dc.job, dc.completeErr, dc.completed = newJob, nil, nil
 	worked, err = worker.RunOnce(context.Background())
 	if !worked || err != nil || len(dc.completed) != 1 || dc.completed[0].Result.State != "succeeded" ||
 		store.build.Fence != oldFence || *store.build.Result != oldRef {
 		t.Fatalf("new DC attempt rewrote old READY: %t %v %+v %+v", worked, err, dc.completed, store.build)
+	}
+}
+
+func TestIndexDispatchUnknownRTWReplyAndScannerRecovery(t *testing.T) {
+	t.Run("committed_reply_lost", func(t *testing.T) {
+		worker, dc, rtw, store, _ := newIndexWorkerFixture(t, nil)
+		rtw.acceptErr = errors.New("RTW reply lost after commit")
+		rtw.commitBeforeError = true
+		worked, err := worker.RunOnce(context.Background())
+		if !worked || err != nil || !store.delivered || len(dc.completed) != 1 ||
+			rtw.build.State != "READY" || len(rtw.accepts) != 1 {
+			t.Fatalf("uncertain committed RTW receipt not recovered: %t %v %+v", worked, err, store)
+		}
+	})
+	t.Run("restart_scans_unaccepted_outbox", func(t *testing.T) {
+		worker, dc, rtw, store, _ := newIndexWorkerFixture(t, nil)
+		rtw.acceptErr = errors.New("RTW unavailable before commit")
+		worked, err := worker.RunOnce(context.Background())
+		if !worked || err == nil || store.delivered || len(dc.completed) != 0 || store.stage != "pending" {
+			t.Fatalf("failed RTW accepted prematurely: %t %v %+v", worked, err, store)
+		}
+		// Simulate a newly constructed worker: only the persisted Store and
+		// authoritative remote states are retained, not a method-local receipt.
+		rtw.acceptErr = nil
+		restarted := *worker
+		worked, err = restarted.RunOnce(context.Background())
+		if !worked || err != nil || !store.delivered || len(dc.completed) != 1 || len(rtw.accepts) != 2 {
+			t.Fatalf("restart did not scan/finish READY outbox: %t %v %+v", worked, err, store)
+		}
+	})
+}
+
+func TestIndexDispatchTerminalAndStaleAttemptsNeverAck(t *testing.T) {
+	for _, scenario := range []string{"stale_rtw_claim", "withdrawn_rtw_build", "dc_attempt_exhausted"} {
+		t.Run(scenario, func(t *testing.T) {
+			worker, dc, rtw, store, _ := newIndexWorkerFixture(t, nil)
+			rtw.acceptErr = errors.New("prepare durable outbox before RTW commit")
+			if worked, err := worker.RunOnce(context.Background()); !worked || err == nil || store.build.State != "READY" {
+				t.Fatalf("did not prepare pending READY: %t %v", worked, err)
+			}
+			rtw.acceptErr = nil
+			switch scenario {
+			case "stale_rtw_claim":
+				rtw.build.LeaseEpoch++
+			case "withdrawn_rtw_build":
+				rtw.build.State = "CANCELLED"
+			case "dc_attempt_exhausted":
+				failed := dc.job
+				failed.State, failed.Attempt, failed.Request.MaxAttempts = "failed", 1, 1
+				dc.getOverride = &failed
+			}
+			worked, err := worker.DispatchReadyOnce(context.Background(), "")
+			if !worked || err == nil || store.delivered || len(dc.completed) != 0 {
+				t.Fatalf("bad dispatch promoted DC: scenario=%s worked=%t err=%v store=%+v", scenario, worked, err, store)
+			}
+			expect := "needs_new_attempt"
+			if scenario != "stale_rtw_claim" {
+				expect = "manual"
+			}
+			if store.stage != expect {
+				t.Fatalf("stage=%s want=%s", store.stage, expect)
+			}
+		})
+	}
+}
+
+func TestIndexDispatchRevalidatesOldRTWAcceptanceForNewDCAttempt(t *testing.T) {
+	worker, dc, rtw, store, _ := newIndexWorkerFixture(t, nil)
+	if worked, err := worker.RunOnce(context.Background()); !worked || err != nil || !store.delivered {
+		t.Fatalf("initial accepted build: %t %v", worked, err)
+	}
+	oldRef := *store.build.Result
+	newFence := store.dispatch.Fence
+	newFence.AttemptID, newFence.LeaseEpoch = "retry-attempt", newFence.LeaseEpoch+1
+	newFence.ExpiresAt = time.Now().Add(time.Minute)
+	if err := store.AttachIndexDispatch(context.Background(), store.build.BuildInput.BuildID, "retry-job", "worker-1", newFence); err != nil {
+		t.Fatal(err)
+	}
+	if !store.dispatch.RTWAccepted {
+		t.Fatal("fixture did not retain acceptance before re-reading immutable READY")
+	}
+	rtw.build.IndexManifestHash = strings.Repeat("f", 64)
+	worked, err := worker.DispatchReadyOnce(context.Background(), store.build.BuildInput.BuildID)
+	if !worked || err == nil || store.delivered || store.stage != "manual" ||
+		len(dc.completed) != 1 || *store.build.Result != oldRef {
+		t.Fatalf("stale RTW accepted marker hid current remote mismatch: worked=%t err=%v store=%+v", worked, err, store)
 	}
 }
