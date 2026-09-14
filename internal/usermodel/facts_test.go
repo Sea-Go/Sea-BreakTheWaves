@@ -247,6 +247,7 @@ func TestPostgresReadingDoesNotInventImpression(t *testing.T) {
 	s := testStore(t, nil)
 	ctx := context.Background()
 	reading := fixture("read-1", 1)
+	reading.RequestID = "request-1"
 	forged := reading
 	forged.ImpressionID = "imp-1"
 	if _, err := s.Append(ctx, forged); !errors.Is(err, ErrInvalid) {
@@ -263,13 +264,22 @@ func TestPostgresReadingDoesNotInventImpression(t *testing.T) {
 	impression := fixture("display-1", 2)
 	impression.Kind, impression.Predicate, impression.ValueRef = Impression, "display", "article/rev-1"
 	impression.ImpressionID, impression.VisibilityEvidenceRef = "imp-1", "visible/imp-1"
+	impression.RequestID = reading.RequestID
+	// The display arrives later but happened before the reading.
+	impression.OccurredAt = reading.OccurredAt.Add(-time.Second)
 	requireAppend(t, s, impression)
 	version, err := s.LinkImpression(ctx, reading.Subject, reading.EventKey, "imp-1", "visible/imp-1")
 	if err != nil || version != 3 {
 		t.Fatalf("real link %d %v", version, err)
 	}
 	p, err := s.Current(ctx, reading.Subject)
-	if err != nil || len(p.Active) != 2 || !p.Active[0].ImpressionLinked || p.Active[0].LinkedImpression != "imp-1" {
+	linked := false
+	for _, fact := range p.Active {
+		if fact.EventID == reading.EventID {
+			linked = fact.ImpressionLinked && fact.LinkedImpression == "imp-1"
+		}
+	}
+	if err != nil || len(p.Active) != 2 || !linked {
 		t.Fatalf("linked projection %+v %v", p, err)
 	}
 	gaps, err = s.CountEvidenceGaps(ctx, reading.Subject)
@@ -302,6 +312,7 @@ func TestPostgresAttributionRequiresSameItemAndRequest(t *testing.T) {
 	display.Kind, display.Predicate = Impression, "display"
 	display.ImpressionID, display.VisibilityEvidenceRef = "impression-a", "visible/a"
 	display.ItemID, display.RequestID = "other-item", "request-a"
+	display.OccurredAt = reading.OccurredAt.Add(-time.Second)
 	requireAppend(t, s, display)
 	if _, err := s.LinkImpression(ctx, reading.Subject, reading.EventKey, "impression-a", "visible/a"); !errors.Is(err, ErrPending) {
 		t.Fatalf("wrong item attributed: %v", err)
@@ -311,9 +322,100 @@ func TestPostgresAttributionRequiresSameItemAndRequest(t *testing.T) {
 	corrected.Supersedes = &display.EventKey
 	corrected.ImpressionID, corrected.VisibilityEvidenceRef = "impression-a", "visible/a"
 	corrected.RequestID = "request-b"
+	corrected.OccurredAt = reading.OccurredAt.Add(-time.Second)
 	requireAppend(t, s, corrected)
 	if _, err := s.LinkImpression(ctx, reading.Subject, reading.EventKey, "impression-a", "visible/a"); !errors.Is(err, ErrPending) {
 		t.Fatalf("wrong request attributed: %v", err)
+	}
+}
+
+func TestPostgresAttributionRejectsFutureDisplayAndMissingRequest(t *testing.T) {
+	s := testStore(t, nil)
+	ctx := context.Background()
+	reading := fixture("read-before-display", 1)
+	reading.RequestID = "request-a"
+	requireAppend(t, s, reading)
+	future := fixture("future-display", 2)
+	future.Kind, future.Predicate = Impression, "display"
+	future.ImpressionID, future.VisibilityEvidenceRef = "future-imp", "visible/future"
+	future.RequestID = reading.RequestID
+	requireAppend(t, s, future)
+	if _, err := s.LinkImpression(ctx, reading.Subject, reading.EventKey, future.ImpressionID, future.VisibilityEvidenceRef); !errors.Is(err, ErrPending) {
+		t.Fatalf("future display attributed an earlier reading: %v", err)
+	}
+	previous := fixture("display-without-request", 3)
+	previous.Kind, previous.Predicate = Impression, "display"
+	previous.ImpressionID, previous.VisibilityEvidenceRef = "previous-imp", "visible/previous"
+	previous.OccurredAt = reading.OccurredAt.Add(-time.Second)
+	requireAppend(t, s, previous)
+	if _, err := s.LinkImpression(ctx, reading.Subject, reading.EventKey, previous.ImpressionID, previous.VisibilityEvidenceRef); !errors.Is(err, ErrPending) {
+		t.Fatalf("display lacking same request attributed reading: %v", err)
+	}
+	unscoped := fixture("read-without-request", 4)
+	requireAppend(t, s, unscoped)
+	if _, err := s.LinkImpression(ctx, unscoped.Subject, unscoped.EventKey, future.ImpressionID, future.VisibilityEvidenceRef); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("reading without request accepted display attribution: %v", err)
+	}
+	gaps, err := s.CountEvidenceGaps(ctx, reading.Subject)
+	if err != nil || gaps["unattributed_reading_or_action"] != 2 {
+		t.Fatalf("rejected attribution changed facts: gaps=%v err=%v", gaps, err)
+	}
+}
+
+func TestPostgresPendingCycleRejectedWithoutFalseAcceptance(t *testing.T) {
+	s := testStore(t, nil)
+	a := fixture("cycle-a", 1)
+	a.Action, a.Supersedes = Correct, &EventKey{"rtw.product", "cycle-b"}
+	if receipt := requireAppend(t, s, a); receipt.Status != "pending_dependency" {
+		t.Fatalf("first missing predecessor: %+v", receipt)
+	}
+	b := fixture("cycle-b", 2)
+	b.Action, b.Supersedes = Correct, &a.EventKey
+	if _, err := s.Append(context.Background(), b); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cyclic dependency admitted: %v", err)
+	}
+	projection, err := s.Current(context.Background(), a.Subject)
+	if err != nil || projection.StateVersion != 0 || projection.Pending != 1 || len(projection.Active) != 0 {
+		t.Fatalf("cycle created accepted state: %+v %v", projection, err)
+	}
+	rows, err := s.OutboxAfter(context.Background(), a.Subject, 0, 10)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("cycle created outbox: %+v %v", rows, err)
+	}
+}
+
+func TestPostgresActiveImpressionIDUniqueAndOnlyBehaviorAttributed(t *testing.T) {
+	s := testStore(t, nil)
+	ctx := context.Background()
+	display := fixture("unique-display", 1)
+	display.Kind, display.Predicate = Impression, "display"
+	display.ImpressionID, display.VisibilityEvidenceRef = "imp-unique", "visible/unique"
+	display.RequestID = "request-unique"
+	requireAppend(t, s, display)
+	reading := fixture("unique-reading", 2)
+	reading.RequestID = display.RequestID
+	requireAppend(t, s, reading)
+	if _, err := s.LinkImpression(ctx, reading.Subject, reading.EventKey, display.ImpressionID, display.VisibilityEvidenceRef); err != nil {
+		t.Fatalf("real reading attribution: %v", err)
+	}
+	duplicate := fixture("duplicate-display", 3)
+	duplicate.Kind, duplicate.Predicate = Impression, "display"
+	duplicate.ImpressionID, duplicate.VisibilityEvidenceRef = display.ImpressionID, "visible/other"
+	duplicate.ItemID = "other-item"
+	duplicate.RequestID = display.RequestID
+	if _, err := s.Append(ctx, duplicate); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate active impression ID admitted: %v", err)
+	}
+	self := fixture("self-report-with-item", 4)
+	self.Kind, self.Predicate = SelfReport, "self_report"
+	self.RequestID = display.RequestID
+	requireAppend(t, s, self)
+	if _, err := s.LinkImpression(ctx, self.Subject, self.EventKey, display.ImpressionID, display.VisibilityEvidenceRef); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("self-report falsely attributed to display: %v", err)
+	}
+	projection, err := s.Current(ctx, reading.Subject)
+	if err != nil || projection.StateVersion != 4 {
+		t.Fatalf("rejected display or self-report changed version: %+v %v", projection, err)
 	}
 }
 

@@ -298,6 +298,13 @@ func appendTx(ctx context.Context, tx pgx.Tx, e Event, hash string, body []byte)
 	status := "accepted"
 	var predecessorProducer, predecessorID any
 	if e.Supersedes != nil {
+		cycle, cycleErr := wouldCreateDependencyCycle(ctx, tx, e)
+		if cycleErr != nil {
+			return Receipt{}, cycleErr
+		}
+		if cycle {
+			return Receipt{}, fmt.Errorf("%w: cyclic predecessor chain", ErrConflict)
+		}
 		predecessorProducer, predecessorID = e.Supersedes.Producer, e.Supersedes.EventID
 		var targetStatus string
 		err := tx.QueryRow(ctx, `SELECT status FROM usermodel_events WHERE authority_id=$1 AND tenant_id=$2 AND subject_id=$3 AND producer=$4 AND event_id=$5`,
@@ -336,6 +343,28 @@ func appendTx(ctx context.Context, tx pgx.Tx, e Event, hash string, body []byte)
 	return Receipt{Subject: s, EventKey: e.EventKey, NormalizedHash: hash, Status: status, StateVersion: initialVersion}, nil
 }
 
+// A newly arriving predecessor can close a previously parked chain. UNION
+// deduplicates visited rows, so even preexisting corrupt cycles terminate.
+func wouldCreateDependencyCycle(ctx context.Context, tx pgx.Tx, e Event) (bool, error) {
+	if e.Supersedes == nil {
+		return false, nil
+	}
+	var cycle bool
+	err := tx.QueryRow(ctx, `WITH RECURSIVE chain(producer,event_id,supersedes_producer,supersedes_event_id) AS (
+		SELECT producer,event_id,supersedes_producer,supersedes_event_id FROM usermodel_events
+		WHERE authority_id=$1 AND tenant_id=$2 AND subject_id=$3 AND producer=$4 AND event_id=$5
+		UNION
+		SELECT p.producer,p.event_id,p.supersedes_producer,p.supersedes_event_id FROM usermodel_events p
+		JOIN chain c ON p.producer=c.supersedes_producer AND p.event_id=c.supersedes_event_id
+		WHERE p.authority_id=$1 AND p.tenant_id=$2 AND p.subject_id=$3
+	)
+	SELECT EXISTS(SELECT 1 FROM chain WHERE (producer=$6 AND event_id=$7)
+		OR (supersedes_producer=$6 AND supersedes_event_id=$7))`,
+		e.Subject.AuthorityID, e.Subject.TenantID, e.Subject.SubjectID,
+		e.Supersedes.Producer, e.Supersedes.EventID, e.Producer, e.EventID).Scan(&cycle)
+	return cycle, err
+}
+
 func nullableVersion(status string, version int64) any {
 	if status != "accepted" {
 		return nil
@@ -368,8 +397,12 @@ func applyAccepted(ctx context.Context, tx pgx.Tx, e Event, hash string, version
 		}
 	}
 	if e.Action != Retract {
-		if _, err := tx.Exec(ctx, `INSERT INTO usermodel_active_facts(authority_id,tenant_id,subject_id,producer,event_id,activated_version) VALUES($1,$2,$3,$4,$5,$6)`,
-			s.AuthorityID, s.TenantID, s.SubjectID, e.Producer, e.EventID, version); err != nil {
+		var impressionID any
+		if e.Kind == Impression {
+			impressionID = e.ImpressionID
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO usermodel_active_facts(authority_id,tenant_id,subject_id,producer,event_id,impression_id,activated_version) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+			s.AuthorityID, s.TenantID, s.SubjectID, e.Producer, e.EventID, impressionID, version); err != nil {
 			return err
 		}
 	}
@@ -573,14 +606,14 @@ func (s *Store) LinkImpression(ctx context.Context, subject SubjectRef, key Even
 	if err != nil {
 		return 0, err
 	}
-	if status != "accepted" || kind == string(Impression) || action == string(Retract) {
+	if status != "accepted" || (kind != string(Reading) && kind != string(ProductAction)) || action == string(Retract) {
 		return 0, ErrInvalid
 	}
 	var behavior Event
 	if err := json.Unmarshal(behaviorBody, &behavior); err != nil {
 		return 0, err
 	}
-	if !token.MatchString(behavior.ItemID) {
+	if !token.MatchString(behavior.ItemID) || !token.MatchString(behavior.RequestID) {
 		return 0, ErrInvalid
 	}
 	var oldImpression, oldEvidence string
@@ -607,9 +640,10 @@ func (s *Store) LinkImpression(ctx context.Context, subject SubjectRef, key Even
 		WHERE e.authority_id=$1 AND e.tenant_id=$2 AND e.subject_id=$3 AND e.semantic_kind='impression'
 		AND e.status='accepted' AND e.event_body->>'impression_id'=$4
 		AND e.event_body->>'visibility_evidence_ref'=$5 AND e.event_body->>'item_id'=$6
-		AND ($7='' OR e.event_body->>'request_id'=$7) AND ($8='' OR e.event_body->>'slate_id'=$8)`,
+		AND e.event_body->>'request_id'=$7 AND ($8='' OR e.event_body->>'slate_id'=$8)
+		AND e.occurred_at <= $9`,
 		subject.AuthorityID, subject.TenantID, subject.SubjectID, impressionID, evidenceRef,
-		behavior.ItemID, behavior.RequestID, behavior.SlateID).Scan(&actualCount)
+		behavior.ItemID, behavior.RequestID, behavior.SlateID, behavior.OccurredAt).Scan(&actualCount)
 	if err != nil {
 		return 0, err
 	}

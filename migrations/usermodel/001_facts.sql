@@ -59,11 +59,15 @@ CREATE TABLE IF NOT EXISTS usermodel_subject_bindings (
 CREATE TABLE IF NOT EXISTS usermodel_active_facts (
     authority_id text NOT NULL, tenant_id text NOT NULL, subject_id text NOT NULL,
     producer text NOT NULL, event_id text NOT NULL,
+    impression_id text,
     activated_version bigint NOT NULL,
     PRIMARY KEY (authority_id,tenant_id,subject_id,producer,event_id),
     FOREIGN KEY (authority_id,tenant_id,subject_id,producer,event_id)
         REFERENCES usermodel_events(authority_id,tenant_id,subject_id,producer,event_id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS usermodel_active_impression_uq
+    ON usermodel_active_facts(authority_id,tenant_id,subject_id,impression_id)
+    WHERE impression_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS usermodel_attributions (
     authority_id text NOT NULL, tenant_id text NOT NULL, subject_id text NOT NULL,
