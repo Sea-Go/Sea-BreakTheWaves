@@ -42,4 +42,20 @@ internal/app/test-fact-worker-favorite-dc.sh
 
 实跑 `go test -race` 的 RTW 真实 DC 用例和 BTW 多类型用例、BTW `go test -race ./internal/app`、`go vet ./internal/app`、`go mod verify`、`git diff --check` 均退出 0；本次证据目录为 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T//sea-fact-multitype.0W8zvk`。RTW 在联验时的旧小 ID payload 使用 JSON 整数；测试 Binder 按原始十进制字面量比对，并接受 RTW 将来对 Snowflake 高位 ID 使用的十进制 JSON 字符串，不经浮点转换。
 
-此联验说明真实 RTW **技术事件**已由 BTW 消费到 fixture 语义的 Graph/PG；测试 Binder 并非 RTW 权威主体读面。RTW 冻结事件与 SubjectRef 的私有权威查询尚未在该分支装配，因此 H09 领域接纳、完整来源交叉核对与正式 consumer 进程保持 `PARTIAL`。
+此轮联验只说明真实 RTW **技术事件**已由 BTW 消费到 fixture 语义的 Graph/PG；当时的测试 Binder 并非 RTW 权威主体读面。后续权威对照与领域接纳见下节；正式 consumer 进程仍未装配。
+
+## RTW 私有权威读到 BTW 领域接纳（2026-09-15）
+
+后续独立分支接入 `NewFavoriteAuthorityBinder`，只在显式设置 RTW 内部服务根 URL 与至少 32 字节的服务令牌时构造。`FactEventBinding.EvidenceBinder` 是逐类型可信适配入口，旧单类型 `TrustedFactBinder` 仍可用。worker 先读 DC batch 与不可变 event receipt，再把整个 EventSpec、input hash、offset、receipt 交给 RTW Binder；Binder 仅凭 `producer/event_id` 读取 RTW 私有 `GET /internal/v1/favorite/facts/{producer}/{event_id}`，不向 RTW 传入客户端主体或目标。它以项目锁定的 JCS 版本计算并比较**完整** RTW 冻结 EventSpec 与 DC 批次 EventSpec、`source_event_hash` 和两侧 `input_hash`，再核对回执 ID、offset 和 received_at；只有全部一致才从 RTW `subject_ref` 构造用户事实。assert 无前驱；retract 的 `predecessor_event_id` 必须是同收藏建立事件，并作为 `Supersedes`。`favorite_id/folder_id` 用十进制 JSON 字符串无损解析；旧安全小整数仅按原字面量兼容，超过 2^53 的 JSON 数字拒绝。
+
+从本 BTW 工作树复现真实三服务联验：
+
+```bash
+SEA_DC_PLATFORM_ROOT=/path/to/isolated/DataCenter \
+SEA_RTW_FAVORITE_ROOT=/path/to/RTW-authority-checkout \
+internal/app/test-fact-worker-authority.sh
+```
+
+该脚本自建随机端口 PG16，运行 DC `cmd/platform -migrate`、RTW 真实 `cmd/fact-dispatch` 和私有 `cmd/fact-authority`。RTW 自身测试 `TestFavoriteDeliverySharedAuthorityFixture` 用原业务事务生成高位 ID 收藏建立/撤回，派发进同一 DC producer，保持源 PG 与 HTTP 服务存活直到 BTW 验收释放；凭证只经权限 0600 的本地 ready 文件传给 BTW 子测试环境，不回显。BTW 独立 schema 中跑真实 `FactGraphRuntime` 的 Runner/Graph/PG/Outbox。权威 HTTP 错令牌 401、缺来源 404、以测试代理篡改来源 hash 或 `subject_ref` 均无事实提交且 DC 游标不前进；来源一致时两条事实接纳、Outbox 两版，模拟 ACK 前丢失后重读两条均 replay 且不双计，最终 ACK 到撤回 offset；当前事实已撤回。脚本的 RTW 与 BTW 两个 `-race -count=1` 用例、`go vet ./internal/app`、`go mod verify`、`git diff --check` 均退出 0；另独立运行 BTW `go test -race -count=1 ./internal/app`、`go test -count=1 ./...`、`go vet ./...` 均退出 0。固定联验源码 RTW `5945a4a`、DC `e8c8cd6`；最终证据目录 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T//sea-fact-authority.gFPUbi`。
+
+此切片证明**这两条高位 RTW 收藏正反事实**经 RTW 权威来源与 DC 双回执对照后在 BTW 领域接纳。它没有把 FactWorker 装配成常驻正式进程，也未证明更多 RTW 事件类别、DWD 入仓、用户特征生效、Collector 下钻或生产服务配置；H09/WS08-A 总项继续 `PARTIAL`。上线时必须以真实服务凭证显式启用，并约定来源 404/503、未知 EventType 与缺前驱的隔离处置，不能跳过 offset。
