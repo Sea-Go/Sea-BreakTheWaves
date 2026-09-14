@@ -7,8 +7,10 @@ dependency. The training slice owns only its own orchestration and candidate.
 from __future__ import annotations
 
 import argparse
+from hashlib import sha256
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 from urllib.parse import urlsplit
@@ -25,6 +27,90 @@ ROOT = Path(__file__).resolve().parents[2]
 PRODUCER_PATH = ROOT / "warehouse" / "search" / "acceptance.py"
 
 
+def _run_logged(command: list[str], *, env: dict[str, str], log_path: Path) -> None:
+    with log_path.open("wb") as log:
+        subprocess.run(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+
+
+def _three_lane_acceptance(manifest_key: str, expected_qrel_sha256: str,
+                           s3_endpoint: str, output: Path, *,
+                           model_directory: Path, bge_python: Path) -> dict:
+    """Freeze official BGE-M3 values, score each qrel split, and check Go parity.
+
+    The same live SeaweedFS snapshot used by the graded-pair acceptance remains
+    online for every independent qrel read. All outputs are default-off evidence.
+    """
+    if not model_directory.is_dir() or not bge_python.is_file():
+        raise RuntimeError("locked BGE-M3 model directory or interpreter is missing")
+    py = ROOT / "training" / ".venv" / "bin" / "python"
+    if not py.is_file():
+        raise RuntimeError("locked training interpreter is missing")
+    output.mkdir()
+    representation_dir = output / "representations"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join((str(ROOT / "training" / "src"),
+                                          str(ROOT / "training" / "search")))
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    _run_logged([
+        str(py), str(ROOT / "training" / "search" / "three_lane_encoder.py"),
+        "--manifest-uri", manifest_key, "--expected-manifest-sha256", expected_qrel_sha256,
+        "--s3-endpoint", s3_endpoint, "--model-directory", str(model_directory),
+        "--bge-python", str(bge_python), "--output", str(representation_dir),
+    ], env=env, log_path=output / "encoder.log")
+    manifests = list((representation_dir / "manifest").glob("*.json"))
+    if len(manifests) != 1:
+        raise RuntimeError("BGE-M3 encoder did not freeze exactly one manifest")
+    representation_manifest = manifests[0]
+    representation_sha256 = sha256(representation_manifest.read_bytes()).hexdigest()
+    if representation_manifest.stem != representation_sha256:
+        raise RuntimeError("BGE-M3 representation manifest content address differs")
+    scores: dict[str, dict] = {}
+    for split in ("train", "validation", "test"):
+        score_path = output / f"scores-{split}.json"
+        _run_logged([
+            str(py), str(ROOT / "training" / "search" / "three_lane_scoring.py"),
+            "--representation-manifest", str(representation_manifest),
+            "--representation-sha256", representation_sha256,
+            "--qrel-manifest-uri", manifest_key, "--qrel-sha256", expected_qrel_sha256,
+            "--s3-endpoint", urlsplit(s3_endpoint).netloc,
+            "--split", split, "--top-k", "3",
+            "--output", str(score_path),
+        ], env=env, log_path=output / f"scoring-{split}.log")
+        report = json.loads(score_path.read_bytes())
+        if report.get("status") != "candidate_default_off" or \
+                report.get("evaluation", {}).get("status") != "not_evaluable" or \
+                report.get("representation_manifest_sha256") != representation_sha256 or \
+                report.get("qrel_manifest_sha256") != expected_qrel_sha256 or \
+                report.get("split") != split or not report.get("queries") or \
+                any(set(query.get("lanes", {})) != {"dense", "sparse", "token_matrix"} or
+                    any(lane.get("evaluation", {}).get("status") != "not_evaluable"
+                        for lane in query["lanes"].values()) for query in report["queries"]):
+            raise RuntimeError("synthetic qrel scoring was misreported as complete or active")
+        scores[split] = {"sha256": sha256(score_path.read_bytes()).hexdigest(),
+                         "queries": len(report.get("queries", [])),
+                         "evaluation_status": "not_evaluable"}
+    go_report_path = output / "go-parity.json"
+    go_env = env.copy()
+    go_env.update({"SEA_BGE_THREE_LANE_MANIFEST": str(representation_manifest),
+                   "SEA_BGE_THREE_LANE_SCORES": str(output / "scores-test.json"),
+                   "SEA_BGE_THREE_LANE_REPORT": str(go_report_path),
+                   "GOFLAGS": "-mod=readonly -p=2", "GOMAXPROCS": "2"})
+    _run_logged(["go", "test", "-race", "-count=1", "-run", "^TestFrozenBGEThreeLaneParity$",
+                 "./internal/retrieval/three_lane_parity"],
+                env=go_env, log_path=output / "go-parity.log")
+    go_report = json.loads(go_report_path.read_bytes())
+    if go_report.get("status") != "passed" or \
+            go_report.get("representation_manifest_sha256") != representation_sha256 or \
+            go_report.get("python_scores_sha256") != scores["test"]["sha256"]:
+        raise RuntimeError("Go exact retrieval did not match frozen Python lane scores")
+    return {"status": "passed", "data_kind": "synthetic", "activation": "none",
+            "model_quality": None, "business_improvement": None,
+            "representation_manifest_sha256": representation_sha256,
+            "qrel_manifest_sha256": expected_qrel_sha256,
+            "splits": scores, "go_parity_report_sha256": sha256(go_report_path.read_bytes()).hexdigest()}
+
+
 def producer_module():
     spec = importlib.util.spec_from_file_location("sea_search_qrel_producer", PRODUCER_PATH)
     if spec is None or spec.loader is None:
@@ -34,9 +120,12 @@ def producer_module():
     return producer
 
 
-def run(runtime: Path, output: Path) -> dict:
+def run(runtime: Path, output: Path, *, model_directory: Path | None = None,
+        bge_python: Path | None = None) -> dict:
     if output.exists():
         raise RuntimeError("search training evidence directory already exists")
+    if (model_directory is None) != (bge_python is None):
+        raise RuntimeError("BGE-M3 model directory and interpreter must be specified together")
     output.mkdir(parents=True)
     for name in ("clickhouse", "weed", ".venv/bin/dbt"):
         if not (runtime / name).exists():
@@ -147,6 +236,11 @@ def run(runtime: Path, output: Path) -> dict:
                   "trained_representation": "lexical_pairwise_candidate_only",
                   "dense_sparse_multi_vector_training": "not_implemented",
                   "generations": generations}
+        if model_directory is not None and bge_python is not None:
+            report["three_lane_frozen_inference"] = _three_lane_acceptance(
+                manifest_key, expected, f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+                output / "three-lane", model_directory=model_directory,
+                bge_python=bge_python)
         (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
         return report
     finally:
@@ -164,8 +258,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--three-lane-model-directory")
+    parser.add_argument("--bge-python")
     args = parser.parse_args()
-    result = run(Path(args.runtime).resolve(), Path(args.output).resolve())
+    result = run(Path(args.runtime).resolve(), Path(args.output).resolve(),
+                 model_directory=Path(args.three_lane_model_directory).resolve()
+                 if args.three_lane_model_directory else None,
+                 bge_python=Path(args.bge_python).resolve() if args.bge_python else None)
     print(json.dumps(result, sort_keys=True, ensure_ascii=False, allow_nan=False))
 
 
