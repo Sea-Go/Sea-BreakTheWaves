@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/exemplar"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -94,7 +95,11 @@ func New(ctx context.Context, cfg Config) (*Bundle, error) {
 	}
 	// The framework emits per-user/session attributes. Keep only configured
 	// operation/model/agent/tool dimensions in Prometheus series.
-	meter := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(metricExporter), sdkmetric.WithView(frameworkMetricView))
+	// The framework emits request identities as dropped metric attributes. SDK
+	// exemplars would reattach them and can exceed Prometheus' label limit;
+	// trace/log correlation remains available through the shared provider.
+	meter := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(metricExporter),
+		sdkmetric.WithView(frameworkMetricView), sdkmetric.WithExemplarFilter(exemplar.AlwaysOffFilter))
 	b := &Bundle{registry: registry, done: make(chan struct{}),
 		meter:      meter,
 		operations: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "sea_btw_operations_total", Help: "Completed BTW operations by bounded component and outcome."}, []string{"component", "outcome"}),

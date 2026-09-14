@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -180,6 +181,7 @@ func TestActualWorkerProcessPreparesClaim(t *testing.T) {
 	var traceMu sync.Mutex
 	var spanNames []string
 	var nativeTraceID string
+	var traceBatches [][]byte
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/traces" || r.Header.Get("Content-Type") != "application/x-protobuf" {
 			t.Errorf("unexpected OTLP request: %s %s", r.URL.Path, r.Header.Get("Content-Type"))
@@ -191,6 +193,7 @@ func TestActualWorkerProcessPreparesClaim(t *testing.T) {
 			t.Errorf("decode OTLP: %v", err)
 		} else {
 			traceMu.Lock()
+			traceBatches = append(traceBatches, append([]byte(nil), body.Bytes()...))
 			for _, resource := range export.GetResourceSpans() {
 				for _, scope := range resource.GetScopeSpans() {
 					for _, span := range scope.GetSpans() {
@@ -333,6 +336,9 @@ func TestActualWorkerProcessPreparesClaim(t *testing.T) {
 		!strings.Contains(logs, `"event":"content.prepare.finished"`) {
 		t.Fatalf("missing stop log: %s", logs)
 	}
+	if strings.Contains(logs, `"event":"telemetry.export.failed"`) {
+		t.Fatalf("framework metric scrape or trace export failed: %s", logs)
+	}
 	for _, line := range strings.Split(logs, "\n") {
 		var record map[string]any
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
@@ -358,5 +364,38 @@ func TestActualWorkerProcessPreparesClaim(t *testing.T) {
 	}
 	if remoteTraceID == "" || frameworkTraceID != remoteTraceID {
 		t.Fatalf("RTW trace %q differs from framework GraphAgent trace %q", remoteTraceID, frameworkTraceID)
+	}
+	if evidence := os.Getenv("BTW_WORKER_EVIDENCE_DIR"); evidence != "" {
+		if err := os.MkdirAll(evidence, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for name, raw := range map[string][]byte{
+			"worker.jsonl": []byte(logs + "\n"), "metrics.prom": metricBody.Bytes(),
+		} {
+			if err := os.WriteFile(filepath.Join(evidence, name), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		traceMu.Lock()
+		batches := append([][]byte(nil), traceBatches...)
+		traceMu.Unlock()
+		for i, raw := range batches {
+			if err := os.WriteFile(filepath.Join(evidence, fmt.Sprintf("otlp-%d.pb", i)), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		summary, err := json.MarshalIndent(map[string]any{
+			"code_commit": strings.TrimSpace(string(version)), "job_type": "content.prepare.v1",
+			"dc_state": completion.State, "chunk_manifest_sha256": completion.Ref.Hash,
+			"content_state": state, "rtw_state": remoteState, "chunk_count": len(chunks.Chunks),
+			"native_trace_id": frameworkTraceID, "rtw_trace_id": remoteTraceID,
+			"framework_span_names": exported, "otlp_batches": len(batches),
+		}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(evidence, "summary.json"), append(summary, '\n'), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

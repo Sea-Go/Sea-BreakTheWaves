@@ -29,6 +29,7 @@ for sea_db in content sessions; do
 done
 export BTW_WORKER_TEST_CONTENT_DSN="postgres://sea_btw_worker_test@127.0.0.1:$sea_port/content?sslmode=disable"
 export BTW_WORKER_TEST_SESSION_DSN="postgres://sea_btw_worker_test@127.0.0.1:$sea_port/sessions?sslmode=disable"
+export BTW_WORKER_EVIDENCE_DIR="$sea_tmp/evidence"
 cd "$sea_root"
 go test -race -count=1 -v ./cmd/worker | tee "$sea_tmp/tests.log"
 go vet ./cmd/worker
