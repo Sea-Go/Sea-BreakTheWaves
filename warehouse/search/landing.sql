@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS {database}.qrel_history (
   status LowCardinality(String), query_id String, query_family_id String,
   near_duplicate_cluster_id String, query_text String, query_text_sha256 String,
   document_id String, document_revision String, chunk_id String, chunk_text String,
-  chunk_text_sha256 String, relevance_grade UInt8, judged_mask Bool,
+  chunk_text_sha256 String, relevance_grade Nullable(UInt8), judged_mask Bool,
   judgment_source String, judgment_source_ref String, judgment_source_hash String,
   query_time DateTime64(6, 'UTC'), content_available_at DateTime64(6, 'UTC'),
   judged_at DateTime64(6, 'UTC'), available_at DateTime64(6, 'UTC'),
