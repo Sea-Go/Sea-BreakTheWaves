@@ -1,0 +1,223 @@
+{
+  "build": {
+    "Index": {
+      "schema_version": 1,
+      "build_id": "real-bge-multi",
+      "generation": 1,
+      "input_manifest_hash": "c96c6d5be8d08a12e7b5cdc1b207fa6b2430974c86803d8891675e76fd992c20",
+      "chunk_manifest": {
+        "key": "sha256/fdd734ac4cb0668cf2b39dbc0a716c0f9d28feea47a936b64ac8b02ba4a04618",
+        "sha256": "fdd734ac4cb0668cf2b39dbc0a716c0f9d28feea47a936b64ac8b02ba4a04618"
+      },
+      "profile": {
+        "lane": "multivector",
+        "encoder": "BAAI/bge-m3@5617a9f61b02",
+        "tokenizer": "bge-m3-tokenizer@5617a9f61b02",
+        "space": "bge-m3-token-matrix@5617a9f61b02-fp32-v1",
+        "dimensions": 1024,
+        "mask": "valid",
+        "aggregation": "mean_maxsim"
+      },
+      "shards": [
+        {
+          "artifact": {
+            "key": "sha256/565eb06ce98781e42d352ad8aa3d5126071a0b7433ca1165ac119c071c8a10f4",
+            "sha256": "565eb06ce98781e42d352ad8aa3d5126071a0b7433ca1165ac119c071c8a10f4"
+          },
+          "chunk_ids": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "artifact": {
+            "key": "sha256/01f6298bbfbb74c0cc58e63299cb36b62617645e70305dda7aca9f0f00d070ab",
+            "sha256": "01f6298bbfbb74c0cc58e63299cb36b62617645e70305dda7aca9f0f00d070ab"
+          },
+          "chunk_ids": [
+            "c",
+            "d"
+          ]
+        }
+      ]
+    },
+    "Ref": {
+      "key": "sha256/1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5",
+      "sha256": "1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5"
+    },
+    "Usage": {
+      "prompt_tokens": 32,
+      "total_tokens": 32
+    },
+    "StoredUsage": {
+      "prompt_tokens": 32,
+      "total_tokens": 32
+    },
+    "EncodedChunks": 4,
+    "ReusedChunks": 0,
+    "UsageUnknown": false,
+    "Reused": false,
+    "active_token_rows": 28,
+    "matrix_value_bytes": 229376
+  },
+  "result": {
+    "candidates": [
+      {
+        "chunk": {
+          "chunk_id": "b",
+          "revision_id": "rb",
+          "content_id": "b",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/2b51e1508d2f0e04c785abf10c47c69aa275a0a62ed85e9c696076ada0ced2fa",
+            "sha256": "2b51e1508d2f0e04c785abf10c47c69aa275a0a62ed85e9c696076ada0ced2fa"
+          },
+          "location": {
+            "locator": "paragraph:1",
+            "original_byte_start": 0,
+            "original_byte_end": 24,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 24
+          },
+          "text": "whale whale large mammal",
+          "text_hash": "2b51e1508d2f0e04c785abf10c47c69aa275a0a62ed85e9c696076ada0ced2fa",
+          "encoding_key": "a54ef05a5823ef7539eaa8cf018c30e3197efe77fab2f25692a0e79984b755cb",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "multivector",
+        "index_ref": {
+          "key": "sha256/1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5",
+          "sha256": "1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5"
+        },
+        "score": 0.9066234930044504,
+        "aggregation": "mean_maxsim",
+        "backend_token_score": 0.9133098125457764,
+        "rank": 1
+      },
+      {
+        "chunk": {
+          "chunk_id": "a",
+          "revision_id": "ra",
+          "content_id": "a",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/0993adddf5c916548a57d024ae5a195505bd8f3d735cdb28825feabfb0f02ee5",
+            "sha256": "0993adddf5c916548a57d024ae5a195505bd8f3d735cdb28825feabfb0f02ee5"
+          },
+          "location": {
+            "locator": "paragraph:1",
+            "original_byte_start": 0,
+            "original_byte_end": 18,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 18
+          },
+          "text": "whale mammal ocean",
+          "text_hash": "0993adddf5c916548a57d024ae5a195505bd8f3d735cdb28825feabfb0f02ee5",
+          "encoding_key": "0a81c403b82ccb664c337fcb9dabd640cdfddbba757f5a9efd3aec6520979630",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "multivector",
+        "index_ref": {
+          "key": "sha256/1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5",
+          "sha256": "1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5"
+        },
+        "score": 0.86100686347922,
+        "aggregation": "mean_maxsim",
+        "backend_token_score": 0.8935496807098389,
+        "rank": 2
+      },
+      {
+        "chunk": {
+          "chunk_id": "d",
+          "revision_id": "rd",
+          "content_id": "d",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/2fabeb71bb6948eb9fd9f5d4780657956d2b0ddeb76f424ba99a1635b9f46fdd",
+            "sha256": "2fabeb71bb6948eb9fd9f5d4780657956d2b0ddeb76f424ba99a1635b9f46fdd"
+          },
+          "location": {
+            "locator": "paragraph:1",
+            "original_byte_start": 0,
+            "original_byte_end": 24,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 24
+          },
+          "text": "ocean mammals and whales",
+          "text_hash": "2fabeb71bb6948eb9fd9f5d4780657956d2b0ddeb76f424ba99a1635b9f46fdd",
+          "encoding_key": "c37a390e69258e7eef49ac6111a1f05f01ff9cce0ebaff08a7fc32a087bc3e3d",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "multivector",
+        "index_ref": {
+          "key": "sha256/1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5",
+          "sha256": "1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5"
+        },
+        "score": 0.842823395344921,
+        "aggregation": "mean_maxsim",
+        "backend_token_score": 0.884549081325531,
+        "rank": 3
+      },
+      {
+        "chunk": {
+          "chunk_id": "c",
+          "revision_id": "rc",
+          "content_id": "c",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/1dedfd4457d30ba23c895848f5501c8ef307febc8f9470fe1ee61881e5158b4a",
+            "sha256": "1dedfd4457d30ba23c895848f5501c8ef307febc8f9470fe1ee61881e5158b4a"
+          },
+          "location": {
+            "locator": "paragraph:1",
+            "original_byte_start": 0,
+            "original_byte_end": 24,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 24
+          },
+          "text": "quantum computing qubits",
+          "text_hash": "1dedfd4457d30ba23c895848f5501c8ef307febc8f9470fe1ee61881e5158b4a",
+          "encoding_key": "143ac54234171e351f27a6b4272da2e13729e53e214b69ee300b884037a7029c",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "multivector",
+        "index_ref": {
+          "key": "sha256/1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5",
+          "sha256": "1868847f6704946b2a610a8ad8ea790592ea78318aafbb77317b55aeba6d9af5"
+        },
+        "score": 0.43549982925677755,
+        "aggregation": "mean_maxsim",
+        "backend_token_score": 0.6351191997528076,
+        "rank": 4
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 4,
+      "total_tokens": 4
+    },
+    "cost": {
+      "backend_token_rows_observed": 84,
+      "candidate_chunks": 4,
+      "scored_matrix_value_bytes": 229376,
+      "exact_dot_products": 84,
+      "valid_query_tokens": 3,
+      "per_token_budget": 256
+    }
+  },
+  "backend": "milvus-lite-hnsw-ip",
+  "model": "BAAI/bge-m3@5617a9f61b02",
+  "dimensions": 1024,
+  "note": "Actual DC/BGE token matrices; four fixed chunks; not production relevance or Collector acceptance."
+}

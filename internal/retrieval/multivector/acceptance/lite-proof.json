@@ -1,0 +1,37 @@
+{
+  "engine": "milvus-lite",
+  "version": "3.2.1",
+  "source_commit": "43d1257774e629bc9f66873977ab7c320d5bf5a7",
+  "go_sdk": "2.6.2",
+  "fresh_build": "passed",
+  "process_restart_without_rebuild": "passed",
+  "changed_vector_rejected_on_load_and_search": "passed",
+  "query_path": "independent token-row HNSW/IP then complete MaxSim",
+  "index_files": [
+    {
+      "sha256": "42dfa15aa6fb7d7c1e4c66be833ef807a5c7bc28be9d97113595d812d326f810",
+      "type": "IndexHNSWFlat",
+      "rows": 7,
+      "dimensions": 2,
+      "layer0_neighbors": 32,
+      "efConstruction": 128
+    },
+    {
+      "sha256": "42dfa15aa6fb7d7c1e4c66be833ef807a5c7bc28be9d97113595d812d326f810",
+      "type": "IndexHNSWFlat",
+      "rows": 7,
+      "dimensions": 2,
+      "layer0_neighbors": 32,
+      "efConstruction": 128
+    },
+    {
+      "sha256": "6d8319c3fd443be338f7e0408bf249b29a7039855b9ea3e1346e79360b65af15",
+      "type": "IndexHNSWFlat",
+      "rows": 1,
+      "dimensions": 2,
+      "layer0_neighbors": 32,
+      "efConstruction": 128
+    }
+  ],
+  "scope": "Isolated seven-token synthetic fixture; no production scale or Collector acceptance."
+}
