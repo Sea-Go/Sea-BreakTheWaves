@@ -443,6 +443,10 @@ func TestRTWRealBGECancelNewRelease(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	indexes := make(map[string]corpus.Ref, len(manifest.Lanes))
+	for _, lane := range manifest.Lanes {
+		indexes[lane.Profile.Lane] = lane.Artifact
+	}
 	if _, err := rtw.AcceptBuild(ctx, ridethewind.AcceptBuildReq{BuildId: oldBuild.BuildId,
 		Generation: oldBuild.Generation, ManifestHash: oldBuild.ManifestHash,
 		AttemptId: oldAttempt.AttemptID, LeaseEpoch: 2, CancelVersion: oldAttempt.CancelVersion,
@@ -467,7 +471,11 @@ func TestRTWRealBGECancelNewRelease(t *testing.T) {
 		t.Fatalf("old DC attempt got terminal result: count=%d completed=%d err=%v", cancelledCount, completedOld, err)
 	}
 	report, err := json.Marshal(map[string]any{
-		"build_id": newBuild.BuildId, "old_build_id": oldBuild.BuildId,
+		"index_manifest": newLocal.Result, "indexes": indexes,
+		"chunk_count": manifest.ChunkCount, "api_index_settings": json.RawMessage(settingsRaw),
+		"new_source_revision_id": newSource.RevisionId,
+		"new_source_content_id":  newSource.EntityId,
+		"build_id":               newBuild.BuildId, "old_build_id": oldBuild.BuildId,
 		"old_release_id": oldRelease.ReleaseId, "first_new_build_id": firstNew.BuildId,
 		"new_release_id": newRelease.ReleaseId, "new_release_ordinal": newRelease.Ordinal,
 		"old_release_manifest_hash": oldRelease.ManifestHash,
