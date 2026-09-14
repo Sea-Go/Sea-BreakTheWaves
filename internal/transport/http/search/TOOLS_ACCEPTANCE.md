@@ -19,3 +19,9 @@ RTW `GetCurrentSearchSnapshot` 的空 `valid_revision_ids` 为 JSON `[]`，现�
 空证据跨仓子链已在 RTW 独立分支 `30a9083` 与 BTW 本独立树上验证：`GOFLAGS=-p=2 GOMAXPROCS=2 KNOWLEDGE_KEEP_EVIDENCE=1 KNOWLEDGE_REAL_USER_GATE=1 SEA_BTW_TOOLS_CONSUMER_ROOT=<BTW独立树> bash service/knowledge/scripts/acceptance.sh` 退出 0；`TestRealHTTPKnowledgeWorkflowWithUserCenter` 31.55s、普通工作流 12.52s 均通过。RTW 父测试断言真实签发请求原样进入 BTW、空证据在 PG 只提交一个子操作、没有 citation 行、同键 POST/GET 回放不重复执行，父搜索次数扣一次而读数/引文上界退款。首次未限制并行度时，真实 User Center 第二次注册 RPC 触发固定 2 秒超时，未到达 BTW；重试通过。日志在 `/tmp/sea-rtw-tools-btw-cross-retry-20260914.log`，保留的隔离 PG 证据目录为 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T/sea-knowledge-acceptance.WWKUe5`。有证据跨仓子链及父预算实际用量退款仍待 RTW 父测试运行验证。
 
 本消费者还未证明真实本地 exact 三路工件对某一已发布 chunk 的召回、生产 BGE/模型、详搜/中高智能、RTW 发布撤回并发竞争、WhaleHall Bun 父 Agent 多次搜索或 Collector 跨进程下钻。H02 Tools 整体为 `PARTIAL`，不能标记 `ACCEPTED`。
+
+## 有证据跨仓子链追加验收
+
+RTW集成树追加第二个独立BTW子进程夹具后，以`GOFLAGS=-p=2 GOMAXPROCS=2 KNOWLEDGE_KEEP_EVIDENCE=1 KNOWLEDGE_REAL_USER_GATE=1 SEA_BTW_TOOLS_CONSUMER_ROOT=/Users/edy/Sea/.codex-worktrees/sea-btw-runtime-content-20260914 bash service/knowledge/scripts/acceptance.sh`完整重跑，退出码0；真实User Center版和gRPC替身版工作流分别PASS（48.86秒、23.26秒），其余Knowledge/User Center race、vet也通过。首次联验在新增真实引用后只因旧总指标期望仍按原引用数失败；补计本次**一笔新引用**后通过，同键重投不增加提交。
+
+RTW父端只交给第二个BTW进程已发布chunk的`revision_id/chunk_id/quote_hash`。BTW先从RTW当前发布重读并核哈希，原生tRPC Graph/Runner执行固定候选，`RTWSearchCitationAdapter`再次读同版原文并在RTW PG接纳pack/收据；RTW父端核引用行、公开证据/收据、固定ID的POST/GET与跨主体拒读，父预算只收1次实际读及公开引文字数、未用预留退回。再通过RTW产品`evidence-reads`从其耐久pack重读，同键只扣一次。BTW子进程退出断言一次根Agent Span、一次SourceReader和一次CitationAcceptor。本次候选仍是验收指定的**真实已发布chunk**，没有由Tools正式三路local-exact索引召回；也未经过正式`cmd/api` socket或WhaleHall父Agent。故只把“签发→BTW有证据Graph→RTW耐久引用/预算/重读”子链标`INTEGRATED`，H02 Tools整体仍`PARTIAL`。
