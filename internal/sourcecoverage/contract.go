@@ -198,6 +198,56 @@ func BatchEvidenceJSONL(batches []BatchEvidence, through int64) ([]byte, string,
 	return out.Bytes(), hash(out.Bytes()), nil
 }
 
+// BatchHash reconstructs the DC eventing batch hash over its actual Item
+// shape. A publisher's read-window hash must be verified against the same
+// frozen EventSpec rows, rather than trusted because it looks like a digest.
+func BatchHash(rows []EventIndexRow) (string, error) {
+	if len(rows) == 0 || len(rows) > 128 {
+		return "", ErrInvalid
+	}
+	type item struct {
+		Offset    int64           `json:"offset"`
+		InputHash string          `json:"input_hash"`
+		Event     json.RawMessage `json:"event"`
+	}
+	items := make([]item, 0, len(rows))
+	var previous int64
+	for i, row := range rows {
+		offset, ok := positiveDecimal(row.Offset)
+		if !ok || !validRow(row) || i > 0 && offset != previous+1 {
+			return "", ErrInvalid
+		}
+		items = append(items, item{Offset: offset, InputHash: row.InputHash, Event: row.EventSpec})
+		previous = offset
+	}
+	encoded, err := canonical(items)
+	if err != nil {
+		return "", err
+	}
+	return hash(encoded), nil
+}
+
+// VerifyBatchEvidence checks every publishing read window against the exact
+// EventIndex rows. Consumers with different window sizes compare the complete
+// EventIndex root instead of demanding the same batch-evidence root.
+func VerifyBatchEvidence(producer string, full []EventIndexRow, batches []BatchEvidence) error {
+	if _, _, err := EventIndexJSONL(producer, int64(len(full)), full); err != nil {
+		return err
+	}
+	if _, _, err := BatchEvidenceJSONL(batches, int64(len(full))); err != nil {
+		return err
+	}
+	for _, batch := range batches {
+		from, _ := positiveDecimal(batch.FromOffset)
+		to, _ := positiveDecimal(batch.ToOffset)
+		computed, err := BatchHash(full[int(from-1):int(to)])
+		if err != nil || computed != batch.BatchHash {
+			return fmt.Errorf("%w: batch hash differs from event index", ErrInvalid)
+		}
+	}
+	return nil
+}
+
 func GlobalManifestHash(ref GlobalPrefixRef) (string, error) {
 	if ref.SchemaVersion != SchemaVersion || ref.Producer == "" || ref.Origin != "1" ||
 		ref.BindingPolicyID == "" || ref.WarehouseConsumer == "" || ref.WarehouseGeneration == "" ||

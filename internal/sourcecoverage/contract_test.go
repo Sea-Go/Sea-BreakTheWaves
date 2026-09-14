@@ -91,6 +91,26 @@ func TestBatchWindowsAndSelfHashes(t *testing.T) {
 		{FromOffset: "3", ToOffset: "3", BatchHash: strings.Repeat("b", 64)}}, 3); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("batch gap accepted: %v", err)
 	}
+	u1 := SubjectRef{"rtw.identity", "platform", "1001"}
+	u2 := SubjectRef{"rtw.identity", "platform", "1002"}
+	rows := []EventIndexRow{indexRow(1, u1), indexRow(2, u2), indexRow(3, u1)}
+	firstHash, err := BatchHash(rows[:2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondHash, err := BatchHash(rows[2:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	realBatches := []BatchEvidence{{FromOffset: "1", ToOffset: "2", BatchHash: firstHash},
+		{FromOffset: "3", ToOffset: "3", BatchHash: secondHash}}
+	if err := VerifyBatchEvidence("rtw.community.favorite", rows, realBatches); err != nil {
+		t.Fatalf("matching DC batches: %v", err)
+	}
+	realBatches[0].BatchHash = strings.Repeat("f", 64)
+	if err := VerifyBatchEvidence("rtw.community.favorite", rows, realBatches); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("formatted but wrong DC batch hash accepted: %v", err)
+	}
 	global := GlobalPrefixRef{SchemaVersion: SchemaVersion, Producer: "rtw.community.favorite", Origin: "1",
 		ThroughOffset: "3", BindingPolicyID: "rtw.favorite.authority.v1", WarehouseConsumer: "btw-warehouse-favorite",
 		WarehouseGeneration: "favorite-g1", EventIndexURL: "s3://test/full.jsonl", EventIndexSHA256: strings.Repeat("c", 64),
