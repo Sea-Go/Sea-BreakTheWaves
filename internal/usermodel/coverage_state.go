@@ -32,6 +32,25 @@ type CoveredState struct {
 // events. Latest Current.Active is deliberately not an input to this fold.
 func (s *Store) CoveredStateAt(ctx context.Context, subject SubjectRef,
 	prefix sourcecoverage.GlobalPrefixRef, cutoff time.Time) (CoveredState, error) {
+	if s == nil || s.db == nil {
+		return CoveredState{}, ErrCoverageUnverified
+	}
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return CoveredState{}, err
+	}
+	defer tx.Rollback(ctx)
+	state, err := s.coveredStateAtTx(ctx, tx, subject, prefix, cutoff)
+	if err != nil {
+		return CoveredState{}, err
+	}
+	return state, tx.Commit(ctx)
+}
+
+// coveredStateAtTx is shared by the read interface and v2 acceptance so a
+// baseline cannot validate one snapshot and persist against a different one.
+func (s *Store) coveredStateAtTx(ctx context.Context, tx pgx.Tx, subject SubjectRef,
+	prefix sourcecoverage.GlobalPrefixRef, cutoff time.Time) (CoveredState, error) {
 	if s == nil || s.db == nil || !subject.valid() || cutoff.IsZero() ||
 		prefix.SchemaVersion != sourcecoverage.SchemaVersion || prefix.Producer != favoriteCoverageProducer ||
 		prefix.BindingPolicyID != FavoriteCoveragePolicyID {
@@ -41,11 +60,6 @@ func (s *Store) CoveredStateAt(ctx context.Context, subject SubjectRef,
 	if err != nil || w <= 0 {
 		return CoveredState{}, ErrCoverageUnverified
 	}
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return CoveredState{}, err
-	}
-	defer tx.Rollback(ctx)
 	var prefixBody, subjectBody []byte
 	err = tx.QueryRow(ctx, `SELECT ref_body FROM usermodel_coverage_prefix WHERE manifest_sha256=$1`,
 		prefix.ManifestSHA256).Scan(&prefixBody)
@@ -203,5 +217,5 @@ func (s *Store) CoveredStateAt(ctx context.Context, subject SubjectRef,
 	}
 	tailRows.Close()
 	out.CurrentComplete = len(out.Tail) == 0 // known PG tail only; DC freshness is a separate H10 gate
-	return out, tx.Commit(ctx)
+	return out, nil
 }
