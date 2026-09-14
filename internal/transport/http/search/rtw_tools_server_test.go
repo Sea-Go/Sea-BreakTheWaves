@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/signal"
@@ -75,6 +76,7 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var searches, sourceReads, citationWrites atomic.Int32
+	witness := &toolWitnessRecorder{}
 	unwanted := errors.New("empty Tools search cannot touch source or citation acceptor")
 	cited := fixture.Candidate.ChunkID != ""
 	var indexed corpus.Chunk
@@ -143,7 +145,18 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		if !cited {
 			return searchdomain.CitationReceipt{}, unwanted
 		}
-		return citationAdapter.Accept(ctx, pack)
+		receipt, err := citationAdapter.Accept(ctx, pack)
+		if err != nil {
+			return receipt, err
+		}
+		if os.Getenv("SEA_BTW_TOOLS_MATRIX_WITNESS_DIR") != "" {
+			durable, err := client.GetSearchCitations(ctx, pack.SearchID)
+			if err != nil {
+				return searchdomain.CitationReceipt{}, err
+			}
+			witness.accepted(pack, receipt, durable)
+		}
+		return receipt, nil
 	})
 	delivery, err := searchdomain.NewDelivery(searcher, checker, source, accept,
 		searchdomain.EvidenceLimits{MaxReads: 8, MaxQuoteRunes: 8192})
@@ -154,10 +167,17 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver, err := NewSignedToolsScopeResolver([]byte(fixture.ScopeKey))
+	signedResolver, err := NewSignedToolsScopeResolver([]byte(fixture.ScopeKey))
 	if err != nil {
 		t.Fatal(err)
 	}
+	resolver := ToolsScopeFunc(func(ctx context.Context, request *http.Request, body ToolsRequest) (TrustedToolsScope, error) {
+		scope, err := signedResolver.ResolveTools(ctx, request, body)
+		if err == nil && cited && os.Getenv("SEA_BTW_TOOLS_MATRIX_WITNESS_DIR") != "" {
+			witness.scope(scope, body)
+		}
+		return scope, err
+	})
 	handler, err := NewToolsHandler(resolver, boundary, bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +207,14 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		}
 		if !nativeRoot {
 			t.Error("native Tool Graph root Agent span missing")
+		}
+		if cited {
+			if path, err := witness.write(os.Getenv("SEA_BTW_TOOLS_MATRIX_WITNESS_DIR"),
+				sourceReads.Load(), citationWrites.Load(), exporter.snapshot()); err != nil {
+				t.Errorf("write real RTW Tool matrix witness: %v", err)
+			} else if path != "" {
+				t.Logf("real RTW Tool matrix witness: %s", path)
+			}
 		}
 	}()
 	stop := make(chan os.Signal, 1)
