@@ -54,6 +54,19 @@ type FactWorkerConfig struct {
 	EventType     string
 	SchemaVersion int
 	BatchLimit    int
+	// Bindings is a fixed per-event-type allowlist. When set, the legacy
+	// EventType/SchemaVersion and constructor binder must be omitted.
+	Bindings []FactEventBinding
+}
+
+// FactEventBinding keeps transport type, schema, trusted source adapter and
+// domain action together. A binder must obtain SubjectRef from its source's
+// authoritative owner, never from the DC event payload alone.
+type FactEventBinding struct {
+	EventType     string
+	SchemaVersion int
+	Action        usermodel.Action
+	Binder        TrustedFactBinder
 }
 
 // FactWorker borrows the one process telemetry Bundle, DataCenter SDK,
@@ -62,7 +75,7 @@ type FactWorkerConfig struct {
 type FactWorker struct {
 	config   FactWorkerConfig
 	source   FactEventSource
-	binder   TrustedFactBinder
+	bindings map[string]FactEventBinding
 	graph    FactGraphCommitter
 	receipts CurrentFactReceiptReader
 	observed *telemetry.Bundle
@@ -71,12 +84,34 @@ type FactWorker struct {
 func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedFactBinder,
 	graph FactGraphCommitter, receipts CurrentFactReceiptReader, observed *telemetry.Bundle) (*FactWorker, error) {
 	if cfg.Consumer == "" || !factDeliveryToken.MatchString(cfg.Producer) ||
-		len("dc:event:")+len(cfg.Producer)+1+20 > 192 || cfg.EventType == "" || cfg.SchemaVersion < 1 ||
-		cfg.BatchLimit < 1 || cfg.BatchLimit > 128 || nilDependency(source) || nilDependency(binder) ||
+		len("dc:event:")+len(cfg.Producer)+1+20 > 192 ||
+		cfg.BatchLimit < 1 || cfg.BatchLimit > 128 || nilDependency(source) ||
 		nilDependency(graph) || nilDependency(receipts) || observed == nil || !observed.Installed() || observed.Closed() {
 		return nil, fmt.Errorf("fact worker dependencies and fixed source contract: %w", ErrFactDeliveryContract)
 	}
-	return &FactWorker{config: cfg, source: source, binder: binder, graph: graph, receipts: receipts, observed: observed}, nil
+	bindings := make(map[string]FactEventBinding, len(cfg.Bindings))
+	if len(cfg.Bindings) == 0 {
+		if !factDeliveryToken.MatchString(cfg.EventType) || cfg.SchemaVersion < 1 || nilDependency(binder) {
+			return nil, fmt.Errorf("legacy fact event binding: %w", ErrFactDeliveryContract)
+		}
+		bindings[cfg.EventType] = FactEventBinding{EventType: cfg.EventType, SchemaVersion: cfg.SchemaVersion, Binder: binder}
+	} else {
+		if cfg.EventType != "" || cfg.SchemaVersion != 0 || !nilDependency(binder) {
+			return nil, fmt.Errorf("ambiguous fact event bindings: %w", ErrFactDeliveryContract)
+		}
+		for _, binding := range cfg.Bindings {
+			if !factDeliveryToken.MatchString(binding.EventType) || binding.SchemaVersion < 1 ||
+				(binding.Action != usermodel.Assert && binding.Action != usermodel.Correct && binding.Action != usermodel.Retract) ||
+				nilDependency(binding.Binder) {
+				return nil, fmt.Errorf("invalid fact event binding: %w", ErrFactDeliveryContract)
+			}
+			if _, exists := bindings[binding.EventType]; exists {
+				return nil, fmt.Errorf("duplicate fact event binding: %w", ErrFactDeliveryContract)
+			}
+			bindings[binding.EventType] = binding
+		}
+	}
+	return &FactWorker{config: cfg, source: source, bindings: bindings, graph: graph, receipts: receipts, observed: observed}, nil
 }
 
 type FactDeliveryResult struct {
@@ -152,9 +187,10 @@ func (w *FactWorker) validateBatch(batch eventing.Batch) error {
 		return fmt.Errorf("DC fact batch scope or cursor: %w", ErrFactDeliveryContract)
 	}
 	for index, item := range batch.Events {
+		binding, allowed := w.eventBinding(item.Event.EventType)
 		if item.Offset != batch.FromOffset+int64(index) || !factDeliveryHash.MatchString(item.InputHash) ||
 			item.Event.Producer != batch.Producer || !factDeliveryToken.MatchString(item.Event.EventID) ||
-			item.Event.EventType != w.config.EventType || item.Event.SchemaVersion != w.config.SchemaVersion ||
+			!allowed || item.Event.SchemaVersion != binding.SchemaVersion ||
 			item.Event.OperationID == "" || item.Event.AggregateID == "" || item.Event.AggregateVersion < 1 {
 			return fmt.Errorf("DC fact event envelope at offset %d: %w", item.Offset, ErrFactDeliveryContract)
 		}
@@ -163,6 +199,11 @@ func (w *FactWorker) validateBatch(batch eventing.Batch) error {
 		}
 	}
 	return nil
+}
+
+func (w *FactWorker) eventBinding(eventType string) (FactEventBinding, bool) {
+	binding, ok := w.bindings[eventType]
+	return binding, ok
 }
 
 func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (receipt usermodel.FactGraphReceipt, resultErr error) {
@@ -191,9 +232,16 @@ func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (re
 	if err != nil {
 		return receipt, fmt.Errorf("DC event received time: %w", ErrFactDeliveryContract)
 	}
-	bound, err := w.binder.BindFact(ctx, item.Event)
+	binding, allowed := w.eventBinding(item.Event.EventType)
+	if !allowed || nilDependency(binding.Binder) {
+		return receipt, fmt.Errorf("missing trusted fact event binding: %w", ErrFactDeliveryContract)
+	}
+	bound, err := binding.Binder.BindFact(ctx, item.Event)
 	if err != nil {
 		return receipt, fmt.Errorf("bind RTW-issued fact subject and EventSpec: %w", err)
+	}
+	if binding.Action != "" && bound.Action != binding.Action {
+		return receipt, fmt.Errorf("trusted fact binder action differs from event type: %w", ErrFactDeliveryContract)
 	}
 	occurredAt, _ := time.Parse(time.RFC3339Nano, item.Event.OccurredAt)
 	bound.EventKey = usermodel.EventKey{Producer: w.config.Producer, EventID: item.Event.EventID}

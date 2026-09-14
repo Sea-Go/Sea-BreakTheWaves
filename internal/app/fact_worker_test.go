@@ -103,7 +103,8 @@ func (s *fixtureFactSource) AcknowledgeEvents(context.Context, string, eventing.
 
 func TestFactWorkerRejectsMalformedBatchBeforeCommit(t *testing.T) {
 	w := &FactWorker{config: FactWorkerConfig{Consumer: "btw-facts", Producer: "rtw.product",
-		EventType: "rtw.product.fact.v1", SchemaVersion: 1, BatchLimit: 2}}
+		EventType: "rtw.product.fact.v1", SchemaVersion: 1, BatchLimit: 2},
+		bindings: map[string]FactEventBinding{"rtw.product.fact.v1": {EventType: "rtw.product.fact.v1", SchemaVersion: 1}}}
 	base := eventing.Batch{Consumer: "btw-facts", Producer: "rtw.product", FromOffset: 1, ToOffset: 1,
 		BatchHash: strings.Repeat("a", 64), Events: []eventing.Item{{Offset: 1,
 			InputHash: strings.Repeat("b", 64), Event: eventing.Event{EventID: "e1", Producer: "rtw.product",
