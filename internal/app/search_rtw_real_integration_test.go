@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
@@ -13,7 +15,44 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
 	"go.opentelemetry.io/otel/trace"
+	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
+	"trpc.group/trpc-go/trpc-agent-go/model"
+	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
+	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
+
+type realRTWToolCaller struct {
+	calls   atomic.Int32
+	sawTool atomic.Bool
+	sawSpan atomic.Bool
+}
+
+func (*realRTWToolCaller) Info() model.Info { return model.Info{Name: "real-rtw-tool-caller-fixture"} }
+
+func (m *realRTWToolCaller) GenerateContent(ctx context.Context, q *model.Request) (<-chan *model.Response, error) {
+	if trace.SpanFromContext(ctx).SpanContext().IsValid() {
+		m.sawSpan.Store(true)
+	}
+	ch := make(chan *model.Response, 1)
+	if m.calls.Add(1) == 1 {
+		finish := "tool_calls"
+		msg := model.NewAssistantMessage("")
+		msg.ToolCalls = []model.ToolCall{{ID: "call-real-rtw-search", Type: "function",
+			Function: model.FunctionDefinitionParam{Name: "search_fast", Arguments: []byte(`{"query":"fixed citation","intelligence":"low"}`)}}}
+		ch <- &model.Response{Done: true, Choices: []model.Choice{{Message: msg, FinishReason: &finish}}}
+	} else {
+		for _, message := range q.Messages {
+			if message.Role == model.RoleTool && strings.Contains(message.Content, "citation_receipt") &&
+				strings.Contains(message.Content, "evidence_pack") {
+				m.sawTool.Store(true)
+			}
+		}
+		finish := "stop"
+		ch <- &model.Response{Done: true, Choices: []model.Choice{{Message: model.NewAssistantMessage("The caller received fixed evidence."), FinishReason: &finish}}}
+	}
+	close(ch)
+	return ch, nil
+}
 
 // Invoked only by RTW's isolated real-HTTP/PG acceptance test. It consumes
 // that process's fixed publication with the generated BTW provider client.
@@ -131,6 +170,59 @@ func TestRTWRealProviderCitationAdapter(t *testing.T) {
 		AnswerId: turn.Request.AnswerID, AuthorityId: subject.AuthorityID,
 		TenantId: subject.TenantID, SubjectId: "another-user", SessionId: turn.Request.SessionID}); err == nil {
 		t.Fatal("real RTW exposed the accepted answer to another subject")
+	}
+	toolsSession, err := searchdomain.NewToolSession(delivery, snapshot, "tool-real-provider",
+		searchdomain.ToolBudget{MaxSearchCalls: 1, MaxReadCalls: 3, MaxQuoteRunes: 1024}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchTools, err := toolsSession.Tools()
+	if err != nil || len(searchTools) != 3 {
+		t.Fatalf("typed search tools unavailable: %v", err)
+	}
+	toolValue, err := searchTools[0].(tool.CallableTool).Call(ctx, []byte(`{"query":"fixed citation","intelligence":"low"}`))
+	if err != nil {
+		t.Fatalf("real RTW rejected typed search_fast citation: %v", err)
+	}
+	toolResult, ok := toolValue.(searchdomain.SearchToolResult)
+	if !ok || len(toolResult.Search.Pack.Evidence) != 1 || toolResult.Search.Receipt.DurableRef == "" ||
+		toolResult.Search.Pack.SearchID == result.Pack.SearchID {
+		t.Fatalf("typed search_fast did not return a separate RTW receipt: %#v", toolValue)
+	}
+	readArgs, err := json.Marshal(searchdomain.ReadEvidenceInput{SearchID: toolResult.Search.Pack.SearchID,
+		EvidenceID: toolResult.Search.Pack.Evidence[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readValue, err := searchTools[2].(tool.CallableTool).Call(ctx, readArgs)
+	if err != nil || readValue.(searchdomain.ReadEvidenceResult).Evidence.Quote != fixture.Chunk.Text {
+		t.Fatalf("typed read_evidence failed real RTW reread: %#v %v", readValue, err)
+	}
+	agentSession, err := searchdomain.NewToolSession(delivery, snapshot, "agent-real-provider",
+		searchdomain.ToolBudget{MaxSearchCalls: 1, MaxReadCalls: 2, MaxQuoteRunes: 1024}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeTools, err := agentSession.Tools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := &realRTWToolCaller{}
+	agent := llmagent.New("search_caller_real_rtw", llmagent.WithModel(caller), llmagent.WithTools(nativeTools),
+		llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false}))
+	sessions := inmemory.NewSessionService()
+	runner, err := btwruntime.New("search_caller_real_rtw", agent, sessions, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runErr = runner.Run(ctx, btwruntime.Request{Subject: subject, SessionID: "real-rtw-tool-session",
+		RunID: "real-rtw-tool-run", Message: model.NewUserMessage("Find cited evidence")}, nil)
+	closeErr := runner.Close()
+	sessionErr := sessions.Close()
+	if runErr != nil || closeErr != nil || sessionErr != nil || caller.calls.Load() != 2 ||
+		!caller.sawTool.Load() || !caller.sawSpan.Load() {
+		t.Fatalf("framework caller did not consume RTW-backed Tool result: run=%v close=%v session=%v model calls=%d tool=%v span=%v",
+			runErr, closeErr, sessionErr, caller.calls.Load(), caller.sawTool.Load(), caller.sawSpan.Load())
 	}
 	traceID := trace.SpanFromContext(ctx).SpanContext().TraceID()
 	if !traceID.IsValid() || fixture.TraceIDPath == "" {
