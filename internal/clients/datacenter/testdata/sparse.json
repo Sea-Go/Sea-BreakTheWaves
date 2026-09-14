@@ -1,0 +1,73 @@
+{
+  "contract": {
+    "id": "sea-fixture-sparse@1",
+    "kind": "sparse",
+    "dimensions": 100003,
+    "tokenizer_id": "fixture-tokenizer@1",
+    "normalization": "none",
+    "metric": "dot",
+    "aggregation": "max",
+    "vocabulary_id": "fixture-vocabulary@1",
+    "max_nonzero": 3
+  },
+  "request": {
+    "model": "search-query-embedding",
+    "configuration_id": "00000000-0000-4000-8000-000000000001",
+    "output_contract": "sea.representation.sparse.v1",
+    "representation_contract_id": "sea-fixture-sparse@1",
+    "representation_space": "fixture-sparse-space@1",
+    "role": "query",
+    "input": [
+      {
+        "id": "a",
+        "text": "Sea"
+      },
+      {
+        "id": "b",
+        "text": "Whale"
+      }
+    ]
+  },
+  "response": {
+    "model": "fixture-physical-model",
+    "configuration_id": "00000000-0000-4000-8000-000000000001",
+    "output_contract": "sea.representation.sparse.v1",
+    "representation_contract_id": "sea-fixture-sparse@1",
+    "representation_space": "fixture-sparse-space@1",
+    "role": "query",
+    "tokenizer_id": "fixture-tokenizer@1",
+    "data": [
+      {
+        "id": "b",
+        "sparse": {
+          "indices": [
+            2,
+            100002
+          ],
+          "weights": [
+            0.4,
+            0.7
+          ]
+        }
+      },
+      {
+        "id": "a",
+        "sparse": {
+          "indices": [
+            2,
+            100002
+          ],
+          "weights": [
+            0.4,
+            0.7
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 4,
+      "total_tokens": 4
+    },
+    "vocabulary_id": "fixture-vocabulary@1"
+  }
+}

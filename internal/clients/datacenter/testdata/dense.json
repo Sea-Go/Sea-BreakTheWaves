@@ -1,0 +1,62 @@
+{
+  "contract": {
+    "id": "sea-fixture-dense@1",
+    "kind": "dense",
+    "dimensions": 2,
+    "tokenizer_id": "fixture-tokenizer@1",
+    "normalization": "none",
+    "metric": "dot",
+    "aggregation": "none"
+  },
+  "request": {
+    "model": "search-query-embedding",
+    "configuration_id": "00000000-0000-4000-8000-000000000001",
+    "output_contract": "sea.representation.dense.v1",
+    "representation_contract_id": "sea-fixture-dense@1",
+    "representation_space": "fixture-dense-space@1",
+    "role": "query",
+    "input": [
+      {
+        "id": "a",
+        "text": "Sea"
+      },
+      {
+        "id": "b",
+        "text": "Whale"
+      }
+    ]
+  },
+  "response": {
+    "model": "fixture-physical-model",
+    "configuration_id": "00000000-0000-4000-8000-000000000001",
+    "output_contract": "sea.representation.dense.v1",
+    "representation_contract_id": "sea-fixture-dense@1",
+    "representation_space": "fixture-dense-space@1",
+    "role": "query",
+    "tokenizer_id": "fixture-tokenizer@1",
+    "data": [
+      {
+        "id": "b",
+        "dense": {
+          "values": [
+            0.2,
+            0.8
+          ]
+        }
+      },
+      {
+        "id": "a",
+        "dense": {
+          "values": [
+            0.2,
+            0.8
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 4,
+      "total_tokens": 4
+    }
+  }
+}

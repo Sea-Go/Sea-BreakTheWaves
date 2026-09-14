@@ -1,0 +1,101 @@
+{
+  "contract": {
+    "id": "sea-fixture-token_matrix@1",
+    "kind": "token_matrix",
+    "dimensions": 2,
+    "tokenizer_id": "fixture-tokenizer@1",
+    "normalization": "none",
+    "metric": "maxsim",
+    "aggregation": "sum_maxsim",
+    "max_tokens": 8
+  },
+  "request": {
+    "model": "search-query-embedding",
+    "configuration_id": "00000000-0000-4000-8000-000000000001",
+    "output_contract": "sea.representation.token_matrix.v1",
+    "representation_contract_id": "sea-fixture-token_matrix@1",
+    "representation_space": "fixture-token_matrix-space@1",
+    "role": "query",
+    "input": [
+      {
+        "id": "a",
+        "text": "Sea"
+      },
+      {
+        "id": "b",
+        "text": "Whale"
+      }
+    ]
+  },
+  "response": {
+    "model": "fixture-physical-model",
+    "configuration_id": "00000000-0000-4000-8000-000000000001",
+    "output_contract": "sea.representation.token_matrix.v1",
+    "representation_contract_id": "sea-fixture-token_matrix@1",
+    "representation_space": "fixture-token_matrix-space@1",
+    "role": "query",
+    "tokenizer_id": "fixture-tokenizer@1",
+    "data": [
+      {
+        "id": "b",
+        "token_matrix": {
+          "shape": [
+            3,
+            2
+          ],
+          "values": [
+            [
+              0.2,
+              0.8
+            ],
+            [
+              0.4,
+              0.6
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "mask": [
+            true,
+            true,
+            false
+          ]
+        }
+      },
+      {
+        "id": "a",
+        "token_matrix": {
+          "shape": [
+            3,
+            2
+          ],
+          "values": [
+            [
+              0.2,
+              0.8
+            ],
+            [
+              0.4,
+              0.6
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "mask": [
+            true,
+            true,
+            false
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 4,
+      "total_tokens": 4
+    }
+  }
+}

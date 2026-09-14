@@ -1,0 +1,189 @@
+// Package datacenter consumes technical execution and model contracts.
+package datacenter
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/eventing"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/jobs"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/representation"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
+)
+
+type Client struct{ http *httpclient.Client }
+
+func New(config httpclient.Config) (*Client, error) {
+	c, e := httpclient.New(config)
+	if e != nil {
+		return nil, e
+	}
+	return &Client{c}, nil
+}
+
+var ErrNoWork = errors.New("DataCenter has no claimable work")
+
+func call[T any](ctx context.Context, c *Client, method, path string, query url.Values, input any, key string) (T, error) {
+	var value T
+	raw, status, err := c.http.Do(ctx, method, path, query, input, key)
+	if err != nil {
+		return value, err
+	}
+	if status == http.StatusNoContent {
+		return value, ErrNoWork
+	}
+	if err = httpclient.Decode(raw, &value); err != nil {
+		return value, err
+	}
+	return value, nil
+}
+func resource(prefix, id, suffix string) (string, error) {
+	s, e := httpclient.Segment(id)
+	if e != nil {
+		return "", e
+	}
+	return prefix + s + suffix, nil
+}
+func (c *Client) Represent(ctx context.Context, q representation.Request, contract representation.Contract, physicalModel string) (representation.Response, error) {
+	var result representation.Response
+	if err := q.Validate(); err != nil {
+		return result, err
+	}
+	if err := q.Match(contract, q.Space, q.ConfigurationID); err != nil {
+		return result, err
+	}
+	if physicalModel == "" {
+		return result, errors.New("fixed physical model is required")
+	}
+	raw, _, err := c.http.Do(ctx, http.MethodPost, "/v1/representations", nil, q, "")
+	if err != nil {
+		return result, err
+	}
+	if err = representation.Decode(raw, &result); err != nil {
+		return result, err
+	}
+	if err = result.Validate(q, contract, physicalModel); err != nil {
+		return result, fmt.Errorf("DataCenter representation contract: %w", err)
+	}
+	return result, nil
+}
+func (c *Client) PublishEvent(ctx context.Context, q eventing.Event) (eventing.Receipt, error) {
+	v, e := call[eventing.Receipt](ctx, c, http.MethodPost, "/v1/events", nil, q, q.EventID)
+	if e == nil && (v.EventID != q.EventID || v.Producer != q.Producer || v.TechnicalStatus != "accepted" || v.ReceiptID == "") {
+		e = errors.New("DataCenter event receipt mismatch")
+	}
+	return v, e
+}
+func (c *Client) EventReceipt(ctx context.Context, producer, id string) (eventing.Receipt, error) {
+	p, e := httpclient.Segment(producer)
+	if e != nil {
+		return eventing.Receipt{}, e
+	}
+	path, e := resource("/v1/events/"+p+"/", id, "")
+	if e != nil {
+		return eventing.Receipt{}, e
+	}
+	v, e := call[eventing.Receipt](ctx, c, http.MethodGet, path, nil, nil, "")
+	if e == nil && (v.EventID != id || v.Producer != producer || v.TechnicalStatus != "accepted" || v.ReceiptID == "") {
+		e = errors.New("DataCenter event receipt mismatch")
+	}
+	return v, e
+}
+func (c *Client) ReadEvents(ctx context.Context, consumer, producer string, limit int) (eventing.Batch, error) {
+	path, e := resource("/v1/event-consumers/", consumer, "/events")
+	if e != nil {
+		return eventing.Batch{}, e
+	}
+	v, e := call[eventing.Batch](ctx, c, http.MethodGet, path, url.Values{"producer": {producer}, "limit": {strconv.Itoa(limit)}}, nil, "")
+	if e == nil && (v.Consumer != consumer || v.Producer != producer) {
+		e = errors.New("DataCenter event batch scope mismatch")
+	}
+	return v, e
+}
+func (c *Client) AcknowledgeEvents(ctx context.Context, consumer string, q eventing.Acknowledge) (eventing.DeliveryReceipt, error) {
+	path, e := resource("/v1/event-consumers/", consumer, "/ack")
+	if e != nil {
+		return eventing.DeliveryReceipt{}, e
+	}
+	return call[eventing.DeliveryReceipt](ctx, c, http.MethodPost, path, nil, q, "")
+}
+func (c *Client) SourceWatermark(ctx context.Context, producer, aggregate string) (eventing.SourceWatermark, error) {
+	p, e := httpclient.Segment(producer)
+	if e != nil {
+		return eventing.SourceWatermark{}, e
+	}
+	path, e := resource("/v1/event-sources/"+p+"/aggregates/", aggregate, "")
+	if e != nil {
+		return eventing.SourceWatermark{}, e
+	}
+	return call[eventing.SourceWatermark](ctx, c, http.MethodGet, path, nil, nil, "")
+}
+func (c *Client) SubmitJob(ctx context.Context, q jobs.Submit) (jobs.SubmissionReceipt, error) {
+	v, e := call[jobs.SubmissionReceipt](ctx, c, http.MethodPost, "/v1/jobs", nil, q, q.OperationID)
+	if e == nil && (v.ID == "" || v.OperationID != q.OperationID || v.Producer != q.Producer || v.TechnicalStatus != "accepted") {
+		e = errors.New("DataCenter job receipt mismatch")
+	}
+	return v, e
+}
+func (c *Client) ClaimJob(ctx context.Context, q jobs.Claim) (jobs.Job, error) {
+	v, e := call[jobs.Job](ctx, c, http.MethodPost, "/v1/jobs/claim", nil, q, "")
+	if e == nil && (v.ID == "" || v.InputHash == "" || v.WorkerID != q.WorkerID || v.AttemptID == "" || v.LeaseEpoch <= 0 || v.LeaseExpiresAt == "" || v.Request.JobType != q.JobType || v.Request.ResourceProfile != q.ResourceProfile || v.State != "running") {
+		e = errors.New("DataCenter claim receipt mismatch")
+	}
+	return v, e
+}
+func (c *Client) GetJob(ctx context.Context, id string) (jobs.Job, error) {
+	path, e := resource("/v1/jobs/", id, "")
+	if e != nil {
+		return jobs.Job{}, e
+	}
+	v, e := call[jobs.Job](ctx, c, http.MethodGet, path, nil, nil, "")
+	if e == nil && v.ID != id {
+		e = errors.New("DataCenter job identity mismatch")
+	}
+	return v, e
+}
+func (c *Client) RenewJob(ctx context.Context, id string, q jobs.Renew) (jobs.Job, error) {
+	path, e := resource("/v1/jobs/", id, "/renew")
+	if e != nil {
+		return jobs.Job{}, e
+	}
+	v, e := call[jobs.Job](ctx, c, http.MethodPost, path, nil, q, "")
+	if e == nil && (v.ID != id || v.WorkerID != q.WorkerID || v.AttemptID != q.AttemptID || v.LeaseEpoch != q.LeaseEpoch || v.CancelVersion != q.CancelVersion) {
+		e = errors.New("DataCenter lease receipt mismatch")
+	}
+	return v, e
+}
+func (c *Client) CompleteJob(ctx context.Context, id string, q jobs.Complete) (jobs.CompletionReceipt, error) {
+	path, e := resource("/v1/jobs/", id, "/complete")
+	if e != nil {
+		return jobs.CompletionReceipt{}, e
+	}
+	v, e := call[jobs.CompletionReceipt](ctx, c, http.MethodPost, path, nil, q, "")
+	if e == nil && (v.JobID != id || v.AttemptID != q.AttemptID || v.LeaseEpoch != q.LeaseEpoch || v.CancelVersion != q.CancelVersion || v.TechnicalState != q.Result.State || v.ResultHash == "") {
+		e = errors.New("DataCenter completion receipt mismatch")
+	}
+	return v, e
+}
+func (c *Client) CancelJob(ctx context.Context, id string, q jobs.Cancel) (jobs.CancelReceipt, error) {
+	path, e := resource("/v1/jobs/", id, "/cancel")
+	if e != nil {
+		return jobs.CancelReceipt{}, e
+	}
+	return call[jobs.CancelReceipt](ctx, c, http.MethodPost, path, nil, q, "")
+}
+func (c *Client) AcknowledgeCancellation(ctx context.Context, id string, q jobs.Lease) (jobs.Job, error) {
+	path, e := resource("/v1/jobs/", id, "/cancel/ack")
+	if e != nil {
+		return jobs.Job{}, e
+	}
+	v, e := call[jobs.Job](ctx, c, http.MethodPost, path, nil, q, "")
+	if e == nil && (v.ID != id || v.WorkerID != q.WorkerID || v.AttemptID != q.AttemptID || v.LeaseEpoch != q.LeaseEpoch || v.CancelVersion != q.CancelVersion) {
+		e = errors.New("DataCenter lease receipt mismatch")
+	}
+	return v, e
+}
