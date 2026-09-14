@@ -5,13 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"testing"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/recommend"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/usermodel"
 	recommendmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/recommend"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,6 +76,9 @@ func TestRTWRealItemPoolHandoff(t *testing.T) {
 	if _, err := pool.Exec(ctx, recommendmigration.SQL); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, recommendmigration.PairSQL); err != nil {
+		t.Fatal(err)
+	}
 	client, err := ridethewind.New(httpclient.Config{BaseURL: fixture.RTWBase, Token: fixture.WorkerToken})
 	if err != nil {
 		t.Fatal(err)
@@ -107,5 +113,51 @@ func TestRTWRealItemPoolHandoff(t *testing.T) {
 	var rows int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM recommend_pool_releases WHERE pool_release_id=$1`, release.ID).Scan(&rows); err != nil || rows != 1 {
 		t.Fatalf("immutable RTW item release not committed once: %d %v", rows, err)
+	}
+	// Fixed artifact refs below are only a prebuild fixture. The content
+	// identities come from the real RTW release above; no fake DC probe exists.
+	pairRef := usermodel.PairRef{PairID: "pair-rtw-prebuild", SpaceID: "space-rtw-prebuild",
+		EncoderID: "user-encoder-prebuild", Kind: "fixed_baseline",
+		FeatureSpecVersion: "user-features-prebuild", FeatureSpecHash: artifacts.Hash([]byte("user-spec")),
+		Dimension: 2, Metric: "dot"}
+	proposalInput := recommend.PairProposal{ModuleID: release.Publication.ModuleID,
+		PoolReleaseID: release.ID, ItemFeatureHash: release.FeatureHash, Pair: pairRef,
+		UserEncoder: recommend.EncoderArtifact{EncoderID: pairRef.EncoderID,
+			Weights: artifacts.Reference([]byte("fixed-user-weights")), InputSpecHash: pairRef.FeatureSpecHash,
+			SpaceID: pairRef.SpaceID, Dimension: 2, Metric: "dot"},
+		ItemEncoder: recommend.EncoderArtifact{EncoderID: "item-encoder-prebuild",
+			Weights: artifacts.Reference([]byte("fixed-item-weights")), InputSpecHash: release.FeatureHash,
+			SpaceID: pairRef.SpaceID, Dimension: 2, Metric: "dot"},
+		CandidateManifest: artifacts.Reference([]byte("fixed-candidate-manifest")),
+		RankerKind:        "rule_freshness", PolicyVersion: "freshness-prebuild"}
+	pairs, err := recommend.NewPairStore(store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := pairs.RegisterProposal(ctx, proposalInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := make([]recommend.IndexedItem, len(release.Items))
+	for i, item := range release.Items {
+		covered[i] = recommend.IndexedItem{ItemID: item.ItemID, RevisionID: item.RevisionID,
+			ContentHash: item.ContentHash}
+	}
+	index, err := pairs.RegisterItemIndex(ctx, recommend.ItemIndexGeneration{ProposalID: proposal.ID,
+		PoolReleaseID: release.ID, PairID: pairRef.PairID, SpaceID: pairRef.SpaceID,
+		Dimension: 2, Metric: "dot", ItemEncoder: proposal.ItemEncoder,
+		Index:         artifacts.Reference([]byte("fixed-item-index")),
+		BuildManifest: artifacts.Reference([]byte("fixed-index-build-manifest")), Items: covered})
+	if err != nil || index.ID == "" {
+		t.Fatalf("real RTW item set did not enter immutable prebuild: %+v %v", index, err)
+	}
+	if _, err := pairs.Approve(ctx, proposal.ID, index.ID,
+		recommend.Approval{Ref: "no-real-dc-approval", Revision: 1}); !errors.Is(err, recommend.ErrPairPending) {
+		t.Fatalf("fixed prebuild without real probes was approved: %v", err)
+	}
+	plan, err := pairs.Plan(ctx, release.Publication.ModuleID,
+		usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "test-user"}, 1, nil)
+	if err != nil || plan.Status != "pending" || len(plan.Items) != 0 {
+		t.Fatalf("real RTW content plus fixture index fabricated a Slate: %+v %v", plan, err)
 	}
 }
