@@ -36,6 +36,7 @@ type config struct {
 	Indexes                          indexSettings
 	Policy                           searchdomain.Policy
 	MaxQuoteRunes                    int
+	RepresentationMaxInFlight        int
 }
 
 type indexSettings struct {
@@ -64,6 +65,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		"BTW_RTW_URL", "BTW_RTW_TOKEN", "BTW_DC_URL", "BTW_DC_TOKEN", "BTW_SEARCH_MODEL_URL",
 		"BTW_SEARCH_MODEL_KEY", "BTW_SEARCH_MODEL_NAME", "BTW_ARTIFACT_DIR", "BTW_SEARCH_INDEX_FILE",
 		"BTW_SEARCH_POLICY_FILE", "BTW_SEARCH_MAX_QUOTE_RUNES", "BTW_SEARCH_HTTP_TIMEOUT",
+		"BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT",
 		"BTW_OTLP_TRACES_URL", "BTW_SERVICE_VERSION", "BTW_ENVIRONMENT", "BTW_INSTANCE_ID"}
 	for _, key := range required {
 		if strings.TrimSpace(getenv(key)) == "" {
@@ -103,6 +105,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 	c.MaxQuoteRunes, err = strconv.Atoi(getenv("BTW_SEARCH_MAX_QUOTE_RUNES"))
 	if err != nil || c.MaxQuoteRunes < 1 || c.MaxQuoteRunes > 4096 {
 		return c, errors.New("BTW_SEARCH_MAX_QUOTE_RUNES must be 1..4096")
+	}
+	c.RepresentationMaxInFlight, err = strconv.Atoi(getenv("BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT"))
+	if err != nil || c.RepresentationMaxInFlight < 1 || c.RepresentationMaxInFlight > 32 {
+		return c, errors.New("BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT must be 1..32")
 	}
 	if err = readJSON(getenv("BTW_SEARCH_INDEX_FILE"), &c.Indexes); err != nil {
 		return c, fmt.Errorf("BTW_SEARCH_INDEX_FILE: %w", err)

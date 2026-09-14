@@ -11,6 +11,7 @@
 | `BTW_SEARCH_SCOPE_KEY` | 与 RTW 签发者相同的独立 HMAC 原始字节，至少 32 字节；不入库、不打印 |
 | `BTW_RTW_URL`, `BTW_RTW_TOKEN` | RTW Worker HTTP 与访问令牌，读取当前发布/原文并提交引用和答案 |
 | `BTW_DC_URL`, `BTW_DC_TOKEN` | DataCenter typed representation HTTP 与令牌 |
+| `BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT` | 本进程共享模型表示调用并发上限，显式设为 1–32；单并发 BGE-M3 Provider 使用 `1`，避免三路并发查询返回 429。多实例的全局容量仍由 DataCenter/部署调度保证 |
 | `BTW_SEARCH_MODEL_URL`, `BTW_SEARCH_MODEL_KEY`, `BTW_SEARCH_MODEL_NAME` | 真实 OpenAI 兼容模型 URL、令牌和固定模型名；建议 URL 指向 DC 网关的 `/v1` |
 | `BTW_ARTIFACT_DIR` | 已有本地内容寻址索引工件目录，与构建 worker 共享；本进程绝不构建/发布索引 |
 | `BTW_SEARCH_INDEX_FILE` | 与 `cmd/worker` 的三路 `indexSettings` 相同的严格 JSON：`dense`、`sparse`、`multivector`；document/query 配置需与已发布工件一致 |

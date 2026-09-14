@@ -124,19 +124,25 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return fmt.Errorf("construct DataCenter client: %w", err)
 	}
+	// Dense, sparse and ColBERT query encoding can start concurrently. Bound
+	// their shared physical provider to the explicitly configured capacity.
+	representations, err := datacenter.NewRepresentationGate(dc, cfg.RepresentationMaxInFlight)
+	if err != nil {
+		return fmt.Errorf("construct representation capacity gate: %w", err)
+	}
 	objects, err := artifacts.NewLocal(cfg.ArtifactDir)
 	if err != nil {
 		return fmt.Errorf("open local exact artifacts: %w", err)
 	}
-	denseLane, err := dense.New(objects, dc, cfg.Indexes.Dense)
+	denseLane, err := dense.New(objects, representations, cfg.Indexes.Dense)
 	if err != nil {
 		return fmt.Errorf("construct dense lane: %w", err)
 	}
-	sparseLane, err := sparse.New(objects, dc, cfg.Indexes.Sparse)
+	sparseLane, err := sparse.New(objects, representations, cfg.Indexes.Sparse)
 	if err != nil {
 		return fmt.Errorf("construct sparse lane: %w", err)
 	}
-	multiLane, err := multivector.New(objects, dc, cfg.Indexes.MultiVector)
+	multiLane, err := multivector.New(objects, representations, cfg.Indexes.MultiVector)
 	if err != nil {
 		return fmt.Errorf("construct multivector lane: %w", err)
 	}
@@ -210,7 +216,8 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	go func() { stopped <- metricsServer.Serve(metricsListener) }()
 	logger.InfoContext(ctx, "search API started", "event", "search.api.started", "outcome", "succeeded",
 		"api_addr", apiListener.Addr().String(), "metrics_addr", metricsListener.Addr().String(),
-		"backend", "local-exact", "supported_profile", "fast.low")
+		"backend", "local-exact", "supported_profile", "fast.low",
+		"representation_max_in_flight", cfg.RepresentationMaxInFlight)
 	select {
 	case <-ctx.Done():
 		return nil
