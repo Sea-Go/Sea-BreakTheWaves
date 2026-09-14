@@ -66,7 +66,7 @@ uv run --no-project --python 3.12 \
 
 ## 观测与剩余门禁
 
-采用 `Sea-Docs/文档/开发运维/统一日志与可观测性标准.md` 的 **OBS-2026-09-14-r1**。当前 `observability_status=NOT_IMPLEMENTED`：缺少统一入口注入的阶段日志、真实 Trace/Span 传播和导出、模型/索引操作与失败指标、Collector/DC 下钻证据。返回 Usage/候选数、错误链和测试摘要不等于观测实现。
+本域原始 `acceptance.json` 固定在 **OBS-2026-09-14-r1** 时形成，作为历史数值证据保留，不追改工件。当前统一门禁已升级为 Sea-Docs 中的 **OBS-2026-09-14-r3**：BTW 必须在实际业务入口中同时证明 tRPC-Agent-Go 原生 Agent/Graph/Tool/Model Span 与应用阶段、结构日志、指标和 Collector/DC 下钻，不能以公共 Bundle 或另一业务路径代验。本 Sparse 包的 `observability_status=NOT_IMPLEMENTED`：尚缺该路径的 build/encode/project/load/search/probe 阶段日志与真实 Trace/Span、操作/失败指标和 Collector 回查。返回 Usage/候选数、错误链和测试摘要不等于观测实现。
 
 本域新增 Go 路径没有直接打印作为生产日志；验收脚本 JSON 是测试握手，不作为 OBS 证据。待仓库统一 telemetry 接口接入后，本域仍须记录 build/encode/project/load/search/probe 的开始/终态，以及空召回、取消、词表/工件/后端分数错配和恢复成本。不能推给 WS09 最后补看板。
 
