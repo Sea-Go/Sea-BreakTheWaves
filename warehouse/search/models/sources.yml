@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: search_qrels
+    schema: "{{ var('landing_schema') }}"
+    tables:
+      - name: qrel_history
+        description: Append-only, source-hashed search judgment revisions.
