@@ -1,0 +1,22 @@
+{
+  "benchmark_revision":"recommendation-fixture-v1",
+  "dataset_revision":"attribution-fixture-v1",
+  "dataset_hash":"fixture-attribution-v1",
+  "source_kind":"synthetic_fixture",
+  "attribution_revision":"rules-v1",
+  "evaluation_cutoff":"2026-09-14T00:00:00Z",
+  "split_plan":{"revision":"split-fixture-v1","train_end":"2026-09-09T00:00:00Z","validation_end":"2026-09-11T00:00:00Z","test_end":"2026-09-13T00:00:00Z","embargo_seconds":3600},
+  "k":2,
+  "eligible_item_ids":["a","b","c","d","e"],
+  "cases":[
+    {"identity":{"case_id":"r1","subject_ref":{"authority_id":"rtw.identity","tenant_id":"platform","subject_id":"u1"},"session_id":"s1","query_family":"feed1","query_family_scope":"subject","split":"test","requested_at":"2026-09-12T00:00:00Z","feature_available_at":"2026-09-11T00:00:00Z"},"items":[
+      {"item_id":"a","score":0.9,"served":true,"impression_id":"i1","visible":true,"label_state":"mature_positive","label_source":"click","label_available_at":"2026-09-13T00:00:00Z","window_matured_at":"2026-09-13T00:00:00Z","attribution_revision":"rules-v1"},
+      {"item_id":"b","score":0.1,"served":true,"impression_id":"i2","visible":true,"label_state":"mature_negative","label_source":"matured_no_positive","label_available_at":"2026-09-13T00:00:00Z","window_matured_at":"2026-09-13T00:00:00Z","attribution_revision":"rules-v1"},
+      {"item_id":"e","score":0.8,"served":true,"visible":false}
+    ]},
+    {"identity":{"case_id":"r2","subject_ref":{"authority_id":"rtw.identity","tenant_id":"platform","subject_id":"u2"},"session_id":"s2","query_family":"feed2","query_family_scope":"subject","split":"test","requested_at":"2026-09-12T00:00:00Z","feature_available_at":"2026-09-11T00:00:00Z"},"items":[
+      {"item_id":"c","score":0.4,"served":true,"impression_id":"i3","visible":true,"label_state":"mature_negative","label_source":"explicit_negative","label_available_at":"2026-09-13T00:00:00Z","window_matured_at":"2026-09-13T00:00:00Z","attribution_revision":"rules-v1"},
+      {"item_id":"d","score":0.3,"served":true,"impression_id":"i4","visible":true,"label_state":"mature_positive","label_source":"click","label_available_at":"2026-09-13T00:00:00Z","window_matured_at":"2026-09-13T00:00:00Z","attribution_revision":"rules-v1"}
+    ]}
+  ]
+}
