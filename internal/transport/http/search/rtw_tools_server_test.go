@@ -23,9 +23,9 @@ import (
 )
 
 // TestRTWRealToolsSearchServer is a process-isolated BTW consumer for RTW's
-// real User Center/PG Tool child test. Its empty fixture proves signed routing,
-// native Graph execution and absence of reader/citation effects; it does not
-// prove a populated local-exact index or a production search profile.
+// real User Center/PG Tool child test. An optional candidate names a genuinely
+// published RTW chunk to exercise same-revision source and citation acceptance.
+// Candidate selection is injected; this is not local-exact three-lane recall.
 func TestRTWRealToolsSearchServer(t *testing.T) {
 	fixturePath := os.Getenv("SEA_RTW_TOOLS_SERVER_FIXTURE")
 	if fixturePath == "" {
@@ -41,6 +41,11 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		ScopeKey    string `json:"scope_key"`
 		ReadyPath   string `json:"ready_path"`
 		ModuleID    string `json:"module_id"`
+		Candidate   struct {
+			RevisionID string `json:"revision_id"`
+			ChunkID    string `json:"chunk_id"`
+			QuoteHash  string `json:"quote_hash"`
+		} `json:"candidate"`
 	}
 	raw, err := os.ReadFile(fixturePath)
 	if err != nil || json.Unmarshal(raw, &fixture) != nil || fixture.RTWBase == "" ||
@@ -71,27 +76,74 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 	}
 	var searches, sourceReads, citationWrites atomic.Int32
 	unwanted := errors.New("empty Tools search cannot touch source or citation acceptor")
+	cited := fixture.Candidate.ChunkID != ""
+	var indexed corpus.Chunk
+	var citationAdapter *app.RTWSearchCitationAdapter
+	if cited {
+		if fixture.Candidate.RevisionID == "" || fixture.Candidate.QuoteHash == "" {
+			t.Fatal("incomplete published Tool candidate identity")
+		}
+		original, err := client.ReadSearchSource(context.Background(), ridethewind.ReadSearchSourceReq{
+			ModuleId: published.ModuleID, ReleaseId: published.ReleaseID, Generation: published.Generation,
+			PublicationRevision: published.PublicationRevision, RevisionId: fixture.Candidate.RevisionID,
+			ChunkId: fixture.Candidate.ChunkID})
+		if err != nil || original.TextHash != fixture.Candidate.QuoteHash {
+			t.Fatalf("Tool candidate is not RTW's published same-revision source: %+v %v", original, err)
+		}
+		indexed = productIndexedChunk(original)
+		citationAdapter, err = app.NewRTWSearchCitationAdapter(client)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	searcher := searchdomain.ExecuteFunc(func(_ context.Context, request searchdomain.Request) (searchdomain.Result, error) {
 		searches.Add(1)
 		if !reflect.DeepEqual(request.Snapshot, published) || request.Depth != searchdomain.Fast ||
 			request.Intelligence != searchdomain.Low {
 			return searchdomain.Result{}, errors.New("signed Tools scope differs from RTW publication or fast/low")
 		}
+		if cited {
+			key := searchdomain.Key{SourceKind: indexed.SourceKind, ContentID: indexed.ContentID,
+				RevisionID: indexed.RevisionID, ChunkID: indexed.ID}
+			hit := searchdomain.LaneHit{Lane: searchdomain.Dense, Index: published.Indexes[searchdomain.Dense],
+				Rank: 1, RawScore: 1}
+			return searchdomain.Result{Status: "complete", StopReason: "batch_complete",
+				Profile: searchdomain.Profile{RequestedDepth: request.Depth, EffectiveDepth: request.Depth,
+					RequestedIntelligence: request.Intelligence, EffectiveIntelligence: request.Intelligence,
+					PolicyVersion: "rtw-published-tools-candidate-v1"}, Snapshot: request.Snapshot,
+				Candidates: []searchdomain.Candidate{{Key: key, Chunk: indexed, RRFScore: 1.0 / 61,
+					Sources: []searchdomain.LaneHit{hit}}},
+				Verified: []searchdomain.VerifiedCandidate{{Key: key, Chunk: indexed, RRFScore: 1.0 / 61,
+					Sources: []searchdomain.LaneHit{hit}}}, UsedSubqueries: 1}, nil
+		}
 		return searchdomain.Result{Status: "empty", StopReason: "no_evidence",
 			Profile: searchdomain.Profile{RequestedDepth: request.Depth, EffectiveDepth: request.Depth,
 				RequestedIntelligence: request.Intelligence, EffectiveIntelligence: request.Intelligence,
 				PolicyVersion: "rtw-real-tools-empty-v1"}, Snapshot: request.Snapshot, UsedSubqueries: 1}, nil
 	})
-	checker := searchdomain.CheckFunc(func(context.Context, searchdomain.Snapshot, corpus.Chunk) (bool, error) {
-		return false, unwanted
+	checker := searchdomain.CheckFunc(func(ctx context.Context, fixed searchdomain.Snapshot, candidate corpus.Chunk) (bool, error) {
+		if !cited {
+			return false, unwanted
+		}
+		current, err := provider.Current(ctx, fixed.ModuleID)
+		if err != nil {
+			return false, err
+		}
+		return reflect.DeepEqual(current, fixed) && candidate.RevisionID == indexed.RevisionID, nil
 	})
-	source := searchdomain.SourceReadFunc(func(context.Context, searchdomain.Snapshot, searchdomain.VerifiedCandidate) (corpus.Chunk, error) {
+	source := searchdomain.SourceReadFunc(func(ctx context.Context, fixed searchdomain.Snapshot, candidate searchdomain.VerifiedCandidate) (corpus.Chunk, error) {
 		sourceReads.Add(1)
-		return corpus.Chunk{}, unwanted
+		if !cited {
+			return corpus.Chunk{}, unwanted
+		}
+		return citationAdapter.Read(ctx, fixed, candidate)
 	})
-	accept := searchdomain.AcceptFunc(func(context.Context, searchdomain.EvidencePack) (searchdomain.CitationReceipt, error) {
+	accept := searchdomain.AcceptFunc(func(ctx context.Context, pack searchdomain.EvidencePack) (searchdomain.CitationReceipt, error) {
 		citationWrites.Add(1)
-		return searchdomain.CitationReceipt{}, unwanted
+		if !cited {
+			return searchdomain.CitationReceipt{}, unwanted
+		}
+		return citationAdapter.Accept(ctx, pack)
 	})
 	delivery, err := searchdomain.NewDelivery(searcher, checker, source, accept,
 		searchdomain.EvidenceLimits{MaxReads: 8, MaxQuoteRunes: 8192})
@@ -122,9 +174,10 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		if err := bundle.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
-		if searches.Load() != 1 || sourceReads.Load() != 0 || citationWrites.Load() != 0 {
-			t.Errorf("real Tools empty run crossed dependency contract: searches=%d source=%d citations=%d",
-				searches.Load(), sourceReads.Load(), citationWrites.Load())
+		if searches.Load() != 1 || (!cited && (sourceReads.Load() != 0 || citationWrites.Load() != 0)) ||
+			(cited && (sourceReads.Load() != 1 || citationWrites.Load() != 1)) {
+			t.Errorf("real Tools run crossed dependency contract: cited=%t searches=%d source=%d citations=%d",
+				cited, searches.Load(), sourceReads.Load(), citationWrites.Load())
 		}
 		var nativeRoot bool
 		for _, span := range exporter.snapshot() {
