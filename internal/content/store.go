@@ -295,7 +295,7 @@ func guardWrite(ctx context.Context, tx pgx.Tx, id string) error {
 	return nil
 }
 
-func (s *Store) RecordChunks(ctx context.Context, fence Fence, ref corpus.Ref) error {
+func (s *Store) recordChunks(ctx context.Context, fence Fence, ref corpus.Ref) error {
 	if !validRef(ref) {
 		return ErrInvalid
 	}

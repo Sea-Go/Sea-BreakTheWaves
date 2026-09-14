@@ -20,13 +20,14 @@ type LaneVerifier interface {
 }
 
 type Reconciler struct {
+	source    RevisionSource
 	objects   artifacts.Store
 	store     *Store
 	verifiers map[string]LaneVerifier
 }
 
-func NewReconciler(objects artifacts.Store, store *Store, verifiers map[string]LaneVerifier) (*Reconciler, error) {
-	if objects == nil || store == nil {
+func NewReconciler(source RevisionSource, objects artifacts.Store, store *Store, verifiers map[string]LaneVerifier) (*Reconciler, error) {
+	if source == nil || objects == nil || store == nil {
 		return nil, ErrInvalid
 	}
 	copy := map[string]LaneVerifier{}
@@ -36,7 +37,7 @@ func NewReconciler(objects artifacts.Store, store *Store, verifiers map[string]L
 		}
 		copy[lane] = verifiers[lane]
 	}
-	return &Reconciler{objects: objects, store: store, verifiers: copy}, nil
+	return &Reconciler{source: source, objects: objects, store: store, verifiers: copy}, nil
 }
 
 func (r *Reconciler) load(ctx context.Context, ref corpus.Ref, value any) error {
@@ -95,6 +96,27 @@ func (r *Reconciler) Ready(ctx context.Context, fence Fence) (corpus.Ref, error)
 	}
 	if definition != profileDefinition(chunks.Profile, chunks.ChunkSize, chunks.Overlap, chunks.ParserVersion, chunks.ChunkerVersion) {
 		return corpus.Ref{}, fmt.Errorf("%w: chunk profile definition differs", ErrInvalid)
+	}
+	// Coverage is derived again from RTW's fixed revisions, not from a producer's
+	// self-reported count, IDs or coordinates in a submitted chunk manifest.
+	revisions, err := loadRevisions(ctx, r.source, release)
+	if err != nil {
+		return corpus.Ref{}, err
+	}
+	chunker, err := NewChunker(ChunkConfig{ID: chunks.Profile, Size: chunks.ChunkSize, Overlap: chunks.Overlap})
+	if err != nil {
+		return corpus.Ref{}, err
+	}
+	expected, err := chunker.Build(ctx, ChunkInput{ModuleID: b.ModuleID, ReleaseID: b.ReleaseID, InputManifestHash: b.InputHash, Revisions: revisions})
+	if err != nil {
+		return corpus.Ref{}, err
+	}
+	expectedBytes, err := json.Marshal(expected)
+	if err != nil {
+		return corpus.Ref{}, err
+	}
+	if artifacts.Reference(expectedBytes) != *b.Chunks {
+		return corpus.Ref{}, fmt.Errorf("%w: submitted chunks differ from fixed source and profile", ErrInvalid)
 	}
 	inputs := map[string]corpus.Input{}
 	for _, input := range chunks.Inputs {

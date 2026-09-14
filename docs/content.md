@@ -21,7 +21,7 @@
 
 `Store`保存内容领域的固定输入、当前DC fence、分块引用、各lane引用及Outbox。它不分配DC任务或私自创造执行权。并发重试只接受当前epoch；相同工件可重放，不同工件不能覆盖。取消版本和永久修订tombstone拒绝后续构建；旧失效事件不能回退状态。最终READY和Outbox同事务，最后SQL再次校验数据库时间，避免等待/Outbox写入拖过租约后提交。
 
-`Reconciler`从原始H03对象读取三个profile，核验每lane的generation、输入hash、ChunkManifest、完整逻辑chunk集合和实际分片hash。每一路必须注入其真实 `LaneVerifier`，完成数值/空间/shape检查及独立查询；没有默认通过实现。first/middle/last固定查询探针只证明可读就绪，不代替召回效果评测。只有三路验证通过才产生与RTW H06 v1同形的IndexManifest，并提交本地READY/Outbox。已接纳READY重放复用原工件，不重新运行模型或近似查询。
+`Reconciler`注入固定修订读取接口，从原始H03对象读取三个profile，重新获取权威原文并用已绑定分块规则重建预期ChunkManifest，要求其完整hash等于提交清单，再核验每lane的generation、输入hash、ChunkManifest、完整逻辑chunk集合和实际分片hash。每一路必须注入其真实 `LaneVerifier`，完成数值/空间/shape检查及独立查询；没有默认通过实现。first/middle/last固定查询探针只证明可读就绪，不代替召回效果评测。只有三路验证通过才产生与RTW H06 v1同形的IndexManifest，并提交本地READY/Outbox。已接纳READY重放复用原工件，不重新运行模型或近似查询。
 
 `internal/artifacts`仅承接RTW/BTW共享的`sha256/<hash>`不可变对象合同。检查过框架artifact.Service：其身份为session+filename+整数版本（允许latest），无法直接表达此跨服务hash引用；因此这里使用窄Store，不替代Runner的session artifact服务。当前只有开发Local适配，不作为生产S3实现。
 
@@ -32,3 +32,7 @@
 已通过：CRLF/中文/重复字符/overlap来源位置；输入排序与重放同hash；重复文本不丢修订；空/坏必需输入整批拒绝；16代并发fence；三路缺失、缺片、重复/外来ID、错空间、损坏对象、查询失败；取消、过期、乱序tombstone和新代不得复活；Outbox写入耗时导致过期时READY及Outbox全回滚；同profile偷偷变参拒绝。
 
 测试中的lane对象和verifier明确为合成结构替身，尚无真实dense/sparse/multivector实现，不能宣称三路算法READY或WS06-A全项完成。下一步仍需：真实lane数值后端、Wiki编制Agent、DC事件驱动worker与RTW结果/Outbox派送恢复、生产对象存储、领域失败/重试与跨lease重绑已准备结果。当前READY仅为内容领域记录，不会自动调用RTW发布接口或DC技术完成。
+
+## 独立审查修正
+
+5779b3a的独立审查复现：经公开RecordChunks登记自洽的伪清单，可把3块缩成1块、把位置改为paragraph:999或修改chunk ID后仍READY。正常Preparer生成正确，但对账不应信任另一生产者自报覆盖。现已收起RecordChunks登记入口，并在首次READY前用RTW固定ID的权威原文重新生成expected manifest，与提交hash精确比较；三个反例均拒绝，状态/Outbox不推进。真实PG16全content/artifacts race与vet复验通过。现有READY的丢收据重试继续复用已接纳工件，不重复近似查询。

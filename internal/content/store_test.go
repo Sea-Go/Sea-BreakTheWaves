@@ -74,7 +74,7 @@ func claimFixture(t *testing.T, s *Store) Fence {
 func recordFixture(t *testing.T, s *Store, f Fence) corpus.Ref {
 	t.Helper()
 	ctx := context.Background()
-	if err := s.RecordChunks(ctx, f, artifacts.Reference([]byte("chunks"))); err != nil {
+	if err := s.recordChunks(ctx, f, artifacts.Reference([]byte("chunks"))); err != nil {
 		t.Fatal(err)
 	}
 	for _, lane := range []string{"dense", "sparse", "multivector"} {
@@ -111,7 +111,7 @@ func TestPostgresExecutionFencingAndImmutableInput(t *testing.T) {
 	if b.LeaseEpoch != 16 {
 		t.Fatalf("latest epoch=%d", b.LeaseEpoch)
 	}
-	if err := s.RecordChunks(ctx, first, artifacts.Reference([]byte("old"))); !errors.Is(err, ErrConflict) {
+	if err := s.recordChunks(ctx, first, artifacts.Reference([]byte("old"))); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale accepted: %v", err)
 	}
 	changed := ledgerInput()
@@ -119,7 +119,7 @@ func TestPostgresExecutionFencingAndImmutableInput(t *testing.T) {
 	if _, err := s.Claim(ctx, changed, b.Fence); !errors.Is(err, ErrConflict) {
 		t.Fatalf("input mutation accepted: %v", err)
 	}
-	if err := s.RecordChunks(ctx, b.Fence, artifacts.Reference([]byte("current"))); err != nil {
+	if err := s.recordChunks(ctx, b.Fence, artifacts.Reference([]byte("current"))); err != nil {
 		t.Fatal(err)
 	}
 }

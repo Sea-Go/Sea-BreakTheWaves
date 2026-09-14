@@ -120,23 +120,9 @@ func (p *Preparer) Prepare(ctx context.Context, input BuildInput, fence Fence) (
 	if _, err := p.store.Claim(ctx, input, fence); err != nil {
 		return Prepared{}, err
 	}
-	revisions := make([]corpus.Revision, 0, len(ids))
-	for _, kind := range []string{"source", "wiki"} {
-		kindIDs := manifest.SourceRevisionIDs
-		if kind == "wiki" {
-			kindIDs = manifest.WikiRevisionIDs
-		}
-		for _, id := range kindIDs {
-			r, err := p.source.GetRevision(ctx, id)
-			if err != nil {
-				return Prepared{}, fmt.Errorf("read fixed revision %s: %w", id, err)
-			}
-			if r.RevisionId != id || r.ModuleId != input.ModuleID || r.Kind != kind {
-				return Prepared{}, fmt.Errorf("%w: revision identity differs", ErrInvalid)
-			}
-			revisions = append(revisions, corpus.Revision{RevisionID: r.RevisionId, ModuleID: r.ModuleId, EntityID: r.EntityId, Kind: r.Kind,
-				Title: r.Title, MediaType: r.MediaType, Object: corpus.Ref{Key: r.ObjectKey, SHA256: r.ContentHash}, Content: r.Content})
-		}
+	revisions, err := loadRevisions(ctx, p.source, manifest)
+	if err != nil {
+		return Prepared{}, err
 	}
 	chunks, err := p.chunker.Build(ctx, ChunkInput{ModuleID: input.ModuleID, ReleaseID: input.ReleaseID, InputManifestHash: input.InputHash, Revisions: revisions})
 	if err != nil {
@@ -150,7 +136,7 @@ func (p *Preparer) Prepare(ctx context.Context, input BuildInput, fence Fence) (
 	if err != nil {
 		return Prepared{}, fmt.Errorf("save fixed chunks: %w", err)
 	}
-	if err := p.store.RecordChunks(ctx, fence, ref); err != nil {
+	if err := p.store.recordChunks(ctx, fence, ref); err != nil {
 		return Prepared{}, err
 	}
 	build, err := p.store.Get(ctx, input.BuildID)
@@ -158,4 +144,26 @@ func (p *Preparer) Prepare(ctx context.Context, input BuildInput, fence Fence) (
 		return Prepared{}, err
 	}
 	return Prepared{Manifest: chunks, Ref: ref, Build: build}, nil
+}
+
+func loadRevisions(ctx context.Context, source RevisionSource, manifest ReleaseManifest) ([]corpus.Revision, error) {
+	revisions := make([]corpus.Revision, 0, len(manifest.SourceRevisionIDs)+len(manifest.WikiRevisionIDs))
+	for _, kind := range []string{"source", "wiki"} {
+		kindIDs := manifest.SourceRevisionIDs
+		if kind == "wiki" {
+			kindIDs = manifest.WikiRevisionIDs
+		}
+		for _, id := range kindIDs {
+			r, err := source.GetRevision(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("read fixed revision %s: %w", id, err)
+			}
+			if r.RevisionId != id || r.ModuleId != manifest.ModuleID || r.Kind != kind {
+				return nil, fmt.Errorf("%w: revision identity differs", ErrInvalid)
+			}
+			revisions = append(revisions, corpus.Revision{RevisionID: r.RevisionId, ModuleID: r.ModuleId, EntityID: r.EntityId, Kind: r.Kind,
+				Title: r.Title, MediaType: r.MediaType, Object: corpus.Ref{Key: r.ObjectKey, SHA256: r.ContentHash}, Content: r.Content})
+		}
+	}
+	return revisions, nil
 }

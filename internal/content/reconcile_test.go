@@ -31,7 +31,7 @@ func putJSON(t *testing.T, objects artifacts.Store, value any) corpus.Ref {
 
 // This fixture exercises real HTTP DTO consumption and PG state. Its content
 // and lane verifier are synthetic; numeric indexing is deliberately not claimed.
-func preparedFixture(t *testing.T) (*Store, *artifacts.Local, Prepared, Fence, []ridethewind.RetrievalProfile) {
+func preparedFixture(t *testing.T) (*Store, *artifacts.Local, Prepared, Fence, []ridethewind.RetrievalProfile, RevisionSource) {
 	t.Helper()
 	ctx := context.Background()
 	store := testStore(t)
@@ -95,7 +95,7 @@ func preparedFixture(t *testing.T) (*Store, *artifacts.Local, Prepared, Fence, [
 	if prepared.Build.State != "BUILDING" || prepared.Build.Result != nil {
 		t.Fatal("chunking incorrectly marked ready")
 	}
-	return store, objects, prepared, fence, profiles
+	return store, objects, prepared, fence, profiles, client
 }
 
 type fixtureLaneVerifier struct {
@@ -118,10 +118,35 @@ func (v fixtureLaneVerifier) VerifyAndProbe(_ context.Context, _ corpus.LaneInde
 }
 
 func TestReconcileFixedCoverageAndIndependentProbe(t *testing.T) {
-	for _, scenario := range []string{"valid", "missing_lane", "missing_chunk", "duplicate_chunk", "foreign_chunk", "wrong_space", "unreadable_shard", "probe_failed", "tombstone", "expired"} {
+	for _, scenario := range []string{"valid", "missing_lane", "missing_chunk", "duplicate_chunk", "foreign_chunk", "wrong_space", "unreadable_shard", "probe_failed", "tombstone", "expired", "truncated_manifest", "invented_location", "invented_identity"} {
 		t.Run(scenario, func(t *testing.T) {
-			store, objects, prepared, fence, profiles := preparedFixture(t)
+			store, objects, prepared, fence, profiles, source := preparedFixture(t)
 			ctx := context.Background()
+			if scenario == "truncated_manifest" || scenario == "invented_location" || scenario == "invented_identity" {
+				// Simulate a self-consistent corrupt producer artifact at the internal
+				// persistence boundary. Public callers can only register via Preparer.
+				store = testStore(t)
+				if err := store.bindProfile(ctx, ChunkConfig{ID: "paragraph-v1", Size: 16, Overlap: 2}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.Claim(ctx, prepared.Build.BuildInput, fence); err != nil {
+					t.Fatal(err)
+				}
+				switch scenario {
+				case "truncated_manifest":
+					prepared.Manifest.Chunks = prepared.Manifest.Chunks[:1]
+					prepared.Manifest.Inputs[0].ChunkCount = 1
+				case "invented_location":
+					prepared.Manifest.Chunks[0].Location.Locator = "paragraph:999"
+					prepared.Manifest.Chunks[0].Location.OriginalByteStart = 100000
+				case "invented_identity":
+					prepared.Manifest.Chunks[0].ID = "invented-id"
+				}
+				prepared.Ref = putJSON(t, objects, prepared.Manifest)
+				if err := store.recordChunks(ctx, fence, prepared.Ref); err != nil {
+					t.Fatal(err)
+				}
+			}
 			verifiers := map[string]LaneVerifier{}
 			calls := 0
 			for _, profile := range profiles {
@@ -165,7 +190,7 @@ func TestReconcileFixedCoverageAndIndependentProbe(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			reconciler, err := NewReconciler(objects, store, verifiers)
+			reconciler, err := NewReconciler(source, objects, store, verifiers)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -205,7 +230,7 @@ func TestReconcileFixedCoverageAndIndependentProbe(t *testing.T) {
 }
 
 func TestProfileDefinitionCannotChangeUnderSameID(t *testing.T) {
-	store, _, _, _, _ := preparedFixture(t)
+	store, _, _, _, _, _ := preparedFixture(t)
 	err := store.bindProfile(context.Background(), ChunkConfig{ID: "paragraph-v1", Size: 512, Overlap: 0})
 	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "new id") {
 		t.Fatalf("mutated profile accepted: %v", err)
@@ -213,7 +238,7 @@ func TestProfileDefinitionCannotChangeUnderSameID(t *testing.T) {
 }
 
 func TestNoDefaultReadyVerifier(t *testing.T) {
-	if _, err := NewReconciler(nil, nil, nil); !errors.Is(err, ErrInvalid) {
+	if _, err := NewReconciler(nil, nil, nil, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatal("missing verifier accepted")
 	}
 }
