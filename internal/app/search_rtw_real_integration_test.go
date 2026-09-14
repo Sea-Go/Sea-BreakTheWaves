@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
@@ -43,11 +44,19 @@ func TestRTWRealProviderCitationAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	snapshotProvider, err := NewRTWSearchSnapshotProvider(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := snapshotProvider.Current(context.Background(), fixture.Snapshot.ModuleID)
+	if err != nil || !reflect.DeepEqual(snapshot, fixture.Snapshot) {
+		t.Fatalf("real RTW active publication differs from fixed test state: %+v %v", snapshot, err)
+	}
 	indexed := fixture.Chunk
 	indexed.Text = ""
 	key := searchdomain.Key{SourceKind: indexed.SourceKind, ContentID: indexed.ContentID,
 		RevisionID: indexed.RevisionID, ChunkID: indexed.ID}
-	hit := searchdomain.LaneHit{Lane: searchdomain.Dense, Index: fixture.Snapshot.Indexes[searchdomain.Dense],
+	hit := searchdomain.LaneHit{Lane: searchdomain.Dense, Index: snapshot.Indexes[searchdomain.Dense],
 		Rank: 1, RawScore: 0.8}
 	searcher := searchdomain.ExecuteFunc(func(_ context.Context, request searchdomain.Request) (searchdomain.Result, error) {
 		return searchdomain.Result{Status: "complete", StopReason: "batch_complete", Snapshot: request.Snapshot,
@@ -71,7 +80,7 @@ func TestRTWRealProviderCitationAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := searchdomain.Request{Query: "fixed citation", Depth: searchdomain.Fast,
-		Intelligence: searchdomain.Low, Snapshot: fixture.Snapshot}
+		Intelligence: searchdomain.Low, Snapshot: snapshot}
 	result, runErr := delivery.Search(ctx, "search-btw-real-provider", request)
 	if runErr != nil {
 		stage.End(ctx, "failed", "CROSS_REPO_CITATION_FAILED", runErr)

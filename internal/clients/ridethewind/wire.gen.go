@@ -245,6 +245,15 @@ type SearchCitationReference struct {
 	State      string           `json:"state"`
 }
 
+type SearchSnapshot struct {
+	ModuleId            string                    `json:"module_id"`
+	ReleaseId           string                    `json:"release_id"`
+	Generation          int64                     `json:"generation"`
+	PublicationRevision string                    `json:"publication_revision"`
+	Indexes             map[string]CitationObject `json:"indexes"`
+	ValidRevisionIds    []string                  `json:"valid_revision_ids"`
+}
+
 type SourceRef struct {
 	RevisionId string `json:"revision_id"`
 	Locator    string `json:"locator"`

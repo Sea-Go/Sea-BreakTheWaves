@@ -8,7 +8,7 @@ def read(rel):return subprocess.check_output(['git','-C',str(root),'show',revisi
 source = pathlib.Path('service/knowledge/api/internal/types/types.go')
 raw = read(source).decode()
 wanted = {'Revision','SourceRef','Release','RetrievalProfile','Build','Compile','ClaimBuildReq','AcceptBuildReq','ClaimCompileReq','AcceptCompileReq',
-          'CitationLocation','CitationObject','CitationChunk','ReadSearchSourceReq','AcceptSearchCitationsReq',
+          'CitationLocation','CitationObject','CitationChunk','SearchSnapshot','ReadSearchSourceReq','AcceptSearchCitationsReq',
           'SearchCitationReceipt','SearchCitationReference','SearchCitationRecord',
           'AcceptedSubjectRef','CommitAcceptedAnswerReq','AcceptedAnswer','AcceptedAnswersPage',
           'GetAcceptedAnswerReq','ListAcceptedAnswersReq'}

@@ -1,8 +1,8 @@
 {
   "repository": "Sea-RideTheWind",
-  "revision": "365cb86cd6fb628a841063f015c160e0fb8e3b33",
+  "revision": "7519ecc97395eee671a063b48616a58082cf5799",
   "sources": {
-    "api/knowledge.api": "a26cd9411360029e6b2447d86dc6960193e573da40ab9d5209f100ccf1d627db",
-    "service/knowledge/api/internal/types/types.go": "2bc4238e54828cdfd3557cf6aedab23992026bbf825b2b3a413555c9641b8e4a"
+    "api/knowledge.api": "0454a3a114f211a14e26df80e675bc0b21ca1ad7560d2b55a711760ac8a12c39",
+    "service/knowledge/api/internal/types/types.go": "2f32dce8fb864a222b5d273b41d0d4f7e5bdd316d450c80590d56065a37a3609"
   }
 }

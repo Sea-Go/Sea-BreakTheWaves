@@ -91,6 +91,19 @@ func (c *Client) GetCompile(ctx context.Context, id string) (Compile, error) {
 	return v, e
 }
 
+// GetCurrentSearchSnapshot reads only RTW's active manual publication. No
+// caller-supplied release, generation or index reference enters the request.
+func (c *Client) GetCurrentSearchSnapshot(ctx context.Context, moduleID string) (SearchSnapshot, error) {
+	v, err := request[SearchSnapshot](ctx, c, http.MethodGet, "modules", moduleID, "/search-snapshot", nil)
+	if err != nil {
+		return SearchSnapshot{}, err
+	}
+	if v.ModuleId != moduleID || v.ReleaseId == "" || v.Generation < 1 || v.PublicationRevision == "" || len(v.Indexes) != 3 {
+		return SearchSnapshot{}, errors.New("RTW current search snapshot identity or lanes mismatch")
+	}
+	return v, nil
+}
+
 func (c *Client) ReadSearchSource(ctx context.Context, q ReadSearchSourceReq) (CitationChunk, error) {
 	chunk, err := post[CitationChunk](ctx, c, "search-sources/read", "", q)
 	if err != nil {
