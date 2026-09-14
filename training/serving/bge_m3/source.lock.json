@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "implementation": "FlagEmbedding",
+  "version": "1.3.5",
+  "distribution_url": "https://files.pythonhosted.org/packages/36/5f/a5e20bb601f83f4abd491e0aec2b991d23f54fefa135b64e4203b3cb59d6/FlagEmbedding-1.3.5.tar.gz",
+  "distribution_sha256": "a0714cb8dd03f38e74b84530684c47ad8e0442ab1f4cbb7b0bcd4017dafb9f9c",
+  "license": "MIT",
+  "sources": {
+    "FlagEmbedding/inference/embedder/encoder_only/m3.py": "394241d068354210c82fc89d4540b481becd09f62bf0c902df7019a8a5d4bbc5",
+    "FlagEmbedding/finetune/embedder/encoder_only/m3/modeling.py": "d5253116898f91f5a74a4fa96a6aba5b6469091823ea10089056f14f2f2bb335",
+    "FlagEmbedding/finetune/embedder/encoder_only/m3/runner.py": "412461cdb1e4189b9adfb9cf225beb788f59b42afedf00183de60e45654f879e",
+    "LICENSE": "587a673933425dbc36ec61268d3b954051b2d3ef3c9b322ede357976055ffdd5"
+  },
+  "official_documentation": [
+    "https://huggingface.co/BAAI/bge-m3/blob/5617a9f61b028005a4858fdac845db406aefb181/README.md",
+    "https://github.com/FlagOpen/FlagEmbedding/blob/fd1a2bdf69488ffebe0327999d4400d8c8058a0b/research/BGE_M3/README.md"
+  ],
+  "datacenter_contract_revision": "4f5abf571482a697b4175bcc87d15ed4ab6c6ee4",
+  "datacenter_representation_contract_sha256": "287362b38293ed0937bd9df0ef5bc691cf661226de8e8b3c0b70b43917c5a72e"
+}
