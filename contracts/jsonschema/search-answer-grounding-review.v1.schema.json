@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sea-go.dev/contracts/search-answer-grounding-review.v1.schema.json",
+  "title": "Signed human answer-grounding review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload", "signature"],
+  "properties": {
+    "payload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "case_sha256", "policy_revision", "data_kind",
+        "reviewer_authority", "reviewer_id", "reviewed_at", "coverage_complete", "claims"],
+      "properties": {
+        "schema_version": {"const": "sea.search.answer-grounding-review.v1"},
+        "case_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "policy_revision": {"const": "sea.search.answer-grounding-human-review.v1"},
+        "data_kind": {"enum": ["human_admin", "synthetic_fixture"]},
+        "reviewer_authority": {"type": "string", "minLength": 1},
+        "reviewer_id": {"type": "string", "minLength": 1},
+        "reviewed_at": {"type": "string", "format": "date-time"},
+        "coverage_complete": {"type": "boolean"},
+        "claims": {"type": "array", "minItems": 1, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["start_byte", "end_byte", "text", "evidence_ids", "label", "reason"],
+          "properties": {
+            "start_byte": {"type": "integer", "minimum": 0},
+            "end_byte": {"type": "integer", "minimum": 1},
+            "text": {"type": "string", "minLength": 1},
+            "evidence_ids": {"type": "array", "minItems": 1, "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}},
+            "label": {"enum": ["supported", "unsupported", "uncertain"]},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        }}
+      }
+    },
+    "signature": {"type": "string", "pattern": "^[a-f0-9]{128}$"}
+  }
+}
