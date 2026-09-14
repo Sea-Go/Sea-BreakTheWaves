@@ -5,4 +5,11 @@ package content
 import _ "embed"
 
 //go:embed 001_builds.sql
-var SQL string
+var buildsSQL string
+
+//go:embed 002_index_dispatch.sql
+var dispatchSQL string
+
+// SQL applies the versioned, repeatable content migrations in order. Existing
+// installations can run it again without dropping committed READY artifacts.
+var SQL = buildsSQL + "\n" + dispatchSQL
