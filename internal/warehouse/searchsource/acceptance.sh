@@ -20,6 +20,7 @@ trap cleanup EXIT
 started=1
 
 export SEARCH_QREL_SOURCE_TEST_DSN="postgres://sea_qrel_test@127.0.0.1:$pg_port/postgres?sslmode=disable"
+export SEARCH_QREL_SUBSTREAM_OUTPUT="$evidence/substream"
 cd "$repo_root"
 GOFLAGS='-mod=readonly -p=2' GOMAXPROCS=2 \
   go test -race -count=1 -v ./internal/warehouse/searchsource >"$evidence/go-test.log" 2>&1
