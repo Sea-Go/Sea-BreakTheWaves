@@ -8,7 +8,7 @@
 
 DC `cmd/server` 既有真实 BGE 测试启动 hash 锁定的官方 `BAAI/bge-m3@5617a9f61b02` CPU Provider，在隔离 PG 中注册三个不同的 typed embedding 配置/调用点，经原生身份、控制面和网关给出 1024 维 Dense、250002 词表学习型 Sparse、1024 维 token matrix（`mean_maxsim`）。它把**仅供测试的**网关地址、短期令牌和配置 ID 写入 0600 `runtime.json`，等待消费者完成，不将令牌写入 Git 或验收说明。
 
-RTW 的 opt-in HTTP/PG 测试用三个 DC profile 创建真实 release/build，固定同一 `build_id`、`generation` 和 release manifest hash。测试语料是一个来源段落 `Evidence` 与一个 Wiki 段落 `My interpretation`；两个 chunk 均携带 RTW 修订、对象 hash、locator、原文范围和正确的 encoding key。BTW 独立子进程从 RTW/BTW 共享的本地 SHA256 对象目录读取这一固定 chunk manifest，用真实 DC typed 客户端分别构建 Dense、Sparse、Multi-vector 工件，逐片执行三路自检，并输出含三路不可变 ref 的同代 index manifest。RTW 从自己的对象存储读回、校验每个 ref，然后按既有 `AcceptBuild` 变为 READY，并由管理员手动切换发布指针。
+RTW 的 opt-in HTTP/PG 测试用三个 DC profile 创建真实 release/build，固定同一 `build_id`、`generation` 和 release manifest hash。来源修订原文为 `Book A\n\nEvidence`；本测试固定选其第二段 `Evidence`，加上一个 Wiki 段落 `My interpretation` 建成两片段 manifest，**没有验证该来源第一段的索引覆盖**。两个入索引 chunk 均携带 RTW 修订、对象 hash、locator、原文范围和正确的 encoding key。BTW 独立子进程从 RTW/BTW 共享的本地 SHA256 对象目录读取这一固定 chunk manifest，用真实 DC typed 客户端分别构建 Dense、Sparse、Multi-vector 工件，逐片执行三路自检，并输出含三路不可变 ref 的同代 index manifest。RTW 从自己的对象存储读回、校验每个 ref，然后按既有 `AcceptBuild` 变为 READY，并由管理员手动切换发布指针。
 
 产品阶段 RTW 经真实 User Center 核定 UID，签发 `rtw.identity/platform/<UID>` 和固定发布快照；透明 HTTP 中继把原始 HMAC 范围送到 BTW。BTW 先验签，之后 `search.Service.Execute` 使用 RTW 发布的**实际三路 ref**及同一问题 `Evidence` 向三个本地 exact 索引查询。断言三路都执行、都有候选且排序首位为 RTW 来源 chunk，其融合候选保留三路 provenance；没有向搜索执行器注入候选。随后复核 RTW 当前有效修订、读取同版原文并取得耐久引用收据。固定测试模型只在收据存在后返回带真实 evidence ID 的 JSON；原生 tRPC-Agent-Go Graph/LLMAgent/Runner 提交产品轮次，RTW 从自身 PG 验证答案和引用后才返回 `succeeded`。
 
