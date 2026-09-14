@@ -1,0 +1,7 @@
+{
+  "milvus_lite": "2.5.1",
+  "binary_sha256": "cc2c3a13237f94bf0889a84fcee1d5e53c411bdd48d105ba7d11673e9682f6b9",
+  "owner": "Sparse isolated acceptance only",
+  "wheel_sha256": "a2e031088bf308afe5f8567850412d618cfb05a65238ed1a6117f60decccc95a",
+  "wheel_url": "https://files.pythonhosted.org/packages/9b/2e/746f5bb1d6facd1e73eb4af6dd5efda11125b0f29d7908a097485ca6cad9/milvus_lite-2.5.1-py3-none-macosx_11_0_arm64.whl"
+}

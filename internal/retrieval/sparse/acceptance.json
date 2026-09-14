@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-14",
+  "scope": "WS06-C functional and numeric evidence",
+  "status": "PARTIAL",
+  "observability_status": "NOT_IMPLEMENTED",
+  "observability_standard": "OBS-2026-09-14-r1",
+  "sdk": "github.com/milvus-io/milvus/client/v2@v2.6.2",
+  "engine": "milvus-lite 2.5.1 native macOS ARM64",
+  "engine_binary_sha256": "cc2c3a13237f94bf0889a84fcee1d5e53c411bdd48d105ba7d11673e9682f6b9",
+  "index_type": "SPARSE_INVERTED_INDEX",
+  "metric": "IP",
+  "drop_ratio_build": 0,
+  "drop_ratio_search": 0,
+  "actual_model": "BAAI/bge-m3@5617a9f61b02",
+  "vocabulary_id": "bge-m3-xlmr-vocabulary@5617a9f61b02",
+  "dimensions": 250002,
+  "encoded_chunks": 4,
+  "original_encoding_tokens": 32,
+  "projection_resume_tokens": 0,
+  "candidates": [
+    {
+      "chunk_id": "b",
+      "exact_score": 0.11008256103705527,
+      "backend_score": 0.11008255928754807
+    },
+    {
+      "chunk_id": "d",
+      "exact_score": 0.10491808320027785,
+      "backend_score": 0.10491808503866196
+    },
+    {
+      "chunk_id": "a",
+      "exact_score": 0.09892055752682749,
+      "backend_score": 0.0989205613732338
+    }
+  ],
+  "artifact": {
+    "key": "sha256/1dbffaa5c1668382eba385eecb8c2adf9390a98cf6c645db42ae32ee802601dd",
+    "sha256": "1dbffaa5c1668382eba385eecb8c2adf9390a98cf6c645db42ae32ee802601dd"
+  },
+  "collection": "sea_sparse_bge_20260914044735_af550d1c3f5eb422c259a0ec90385e3bfd875140cf9adc2afec942ca7fb0b7c1",
+  "native_reference_scores": [
+    8,
+    4,
+    2
+  ],
+  "query_double_scores": [
+    16,
+    8,
+    4
+  ],
+  "document_weights_linear": true,
+  "restart_without_build_or_encode": true,
+  "no_overlap_empty": true,
+  "empty_validity_no_model_call": true,
+  "corrupt_values_rejected_on_load_and_search": true,
+  "evidence": {
+    "sea-sparse-real-dc-test.log": "0df0478ac23a046eaa22c115c9488549d404dab7200502c3a8a7ffc2197bdbf1",
+    "sea-sparse-final-native.log": "ca4bc9d847415b0c187454a7c7b5b49a9c1875d90f883d31c33d889c55c9e008",
+    "sea-sparse-restore.log": "4900e2349beadd515318950d43d2ffdf53ecac6f564de86468372264bc1a14c8",
+    "sea-sparse-root-regression.log": "e395df6516edefee94c341db39db3a6ba081e664bf4217e67e60006e829578a9"
+  },
+  "limitations": [
+    "observability standard has not been implemented",
+    "standalone Milvus deployment not exercised",
+    "not a relevance benchmark or full search acceptance"
+  ],
+  "processes": "task native runtime stopped after final verification; DC/BGE owner separately confirmed cleanup"
+}
