@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.error
 import urllib.request
@@ -63,10 +64,13 @@ def main() -> None:
         raise RuntimeError("isolated PostgreSQL source database must be postgres")
     def dsn(database: str) -> str:
         return urllib.parse.urlunsplit(parsed._replace(path="/" + database))
-    for database in ("coverage_real_model", "coverage_two_dc", "coverage_two_model"):
+    for database in ("coverage_real_model", "coverage_two_dc", "coverage_two_model",
+                     "coverage_multi_dc", "coverage_multi_model"):
         subprocess.run([str(Path(args.postgres_bin) / "psql"), "-X", "-q", "-d", args.pg_dsn,
                         "-c", f"CREATE DATABASE {database}"], check=True, capture_output=True)
-    ch_proc = s3_proc = two_dc_proc = None
+    ch_proc = s3_proc = two_dc_proc = multi_dc_proc = multi_rtw_proc = None
+    multi_rtw_log = None
+    multi_release = output / "multi-rtw-release"
     try:
         ch_proc, endpoint = start_clickhouse(runtime / "clickhouse", output / "clickhouse")
         s3_proc, prefix = start_s3(runtime / "weed", output / "seaweed")
@@ -115,15 +119,85 @@ def main() -> None:
                    COVERAGE_JOIN_TWO_ODS_OUTPUT=str(output / "two-ods.jsonl"))
         go_test(output / "two-combined-test.log", env, "TestCombinedTwoSubjectsPublisherVerifierH10")
 
+        multi_port = free_port()
+        multi_url = f"http://127.0.0.1:{multi_port}"
+        multi_dc_env = os.environ.copy()
+        multi_dc_env["DATABASE_URL"] = dsn("coverage_multi_dc")
+        multi_dc_log = (output / "multi-dc.log").open("wb")
+        try:
+            multi_dc_proc = subprocess.Popen([str(dc_binary), "-listen", f"127.0.0.1:{multi_port}", "-migrate"],
+                                             env=multi_dc_env, stdout=multi_dc_log, stderr=subprocess.STDOUT)
+        finally:
+            multi_dc_log.close()
+        for _ in range(100):
+            if multi_dc_proc.poll() is not None:
+                raise RuntimeError("real multi-user DC exited; inspect multi-dc.log")
+            try:
+                request = urllib.request.Request(multi_url + "/v1/events/rtw.community.favorite/readiness",
+                                                 headers={"Authorization": "Bearer " + ready["dc_token"]})
+                urllib.request.urlopen(request, timeout=1).close()
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    break
+            except (OSError, TimeoutError):
+                pass
+            time.sleep(0.2)
+        else:
+            raise RuntimeError("real multi-user DC did not become ready")
+        multi_ready_path = output / "multi-rtw-ready.json"
+        multi_rtw_env = os.environ.copy()
+        multi_rtw_env.update(FAVORITE_DC_URL=multi_url, FAVORITE_DC_TOKEN=ready["dc_token"],
+                             FAVORITE_TWO_READY_FILE=str(multi_ready_path), FAVORITE_TWO_RELEASE_FILE=str(multi_release),
+                             GOFLAGS="-p=2", GOMAXPROCS="2")
+        multi_rtw_log = (output / "multi-rtw-test.log").open("wb")
+        multi_rtw_proc = subprocess.Popen(["go", "test", "-mod=readonly", "-race", "-count=1", "-v",
+                                           "-run", "^TestFavoriteDeliveryTwoUsersSharedAuthorityFixture$",
+                                           "./service/favorite/rpc/internal/model"],
+                                          cwd=os.environ["SEA_RTW_FAVORITE_ROOT"], env=multi_rtw_env,
+                                          stdout=multi_rtw_log, stderr=subprocess.STDOUT)
+        for _ in range(900):
+            if multi_ready_path.exists():
+                break
+            if multi_rtw_proc.poll() is not None:
+                raise RuntimeError("real multi-user RTW source exited; inspect multi-rtw-test.log")
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("real multi-user RTW source did not become ready")
+        multi_ready = json.loads(multi_ready_path.read_text())
+        if multi_ready.get("event_ids") != ["favorite.9007199254741993.v1",
+                                             "favorite.9007199254742993.v1",
+                                             "favorite.9007199254741993.v2"] or \
+           [item.get("offset") for item in multi_ready.get("receipts", [])] != [1, 2, 3]:
+            raise RuntimeError("real multi-user RTW/DC handoff differs")
+        multi_env = env.copy()
+        multi_env.update(COVERAGE_JOIN_TWO_WAREHOUSE_DSN=dsn("coverage_multi_dc"),
+                         COVERAGE_JOIN_TWO_MODEL_DSN=dsn("coverage_multi_model"),
+                         COVERAGE_JOIN_TWO_DC_URL=multi_url,
+                         COVERAGE_JOIN_TWO_AUTHORITY_URL=multi_ready["authority_url"],
+                         COVERAGE_JOIN_TWO_AUTHORITY_TOKEN=multi_ready["authority_token"],
+                         COVERAGE_JOIN_TWO_REAL_RTW="1", COVERAGE_JOIN_S3_PREFIX=prefix + "/multi",
+                         COVERAGE_JOIN_TWO_REPORT=str(output / "multi-joined-ref.json"),
+                         COVERAGE_JOIN_TWO_ODS_OUTPUT=str(output / "multi-ods.jsonl"))
+        go_test(output / "multi-combined-test.log", multi_env, "TestCombinedTwoSubjectsPublisherVerifierH10")
+        multi_release.touch()
+        if multi_rtw_proc.wait(timeout=30) != 0:
+            raise RuntimeError("real multi-user RTW source failed; inspect multi-rtw-test.log")
+        multi_rtw_log.close()
+        multi_rtw_log = None
+
         ch = ClickHouse(endpoint)
         real_dwd = build_dwd(ch, endpoint, prefix, runtime, output, "real",
                              [("1001", "assert", 1), ("1001", "retract", 2)])
         two_dwd = build_dwd(ch, endpoint, prefix, runtime, output, "two",
                             [("1001", "assert", 1), ("1002", "assert", 2), ("1001", "retract", 3)])
+        multi_dwd = build_dwd(ch, endpoint, prefix, runtime, output, "multi",
+                              [("1001", "assert", 1), ("1002", "assert", 2), ("1001", "retract", 3)])
         real_report = json.loads((output / "real-joined-ref.json").read_text())
         two_report = json.loads((output / "two-joined-ref.json").read_text())
+        multi_report = json.loads((output / "multi-joined-ref.json").read_text())
         preserve_ref_artifacts(output, "real", {k: v for k, v in real_report.items() if k.startswith(("G", "U"))})
         preserve_ref_artifacts(output, "two", {k: v for k, v in two_report.items() if k.startswith(("G", "U"))})
+        preserve_ref_artifacts(output, "multi", {k: v for k, v in multi_report.items() if k.startswith(("G", "U"))})
         preserve_candidate(output, "real", real_report, prefix, {
             "candidate_w1_sha256": "combined_real_candidate_w1",
             "candidate_w1_after_retract_sha256": "combined_real_candidate_w1_after_retract",
@@ -134,16 +208,42 @@ def main() -> None:
             "candidate_u1_w3_sha256": "combined_two_candidate_u1_w3",
             "candidate_u2_w3_sha256": "combined_two_candidate_u2_w3",
             "candidate_u3_w3_sha256": "combined_two_candidate_u3_w3"})
+        preserve_candidate(output, "multi", multi_report, prefix + "/multi", {
+            "candidate_w1_sha256": "combined_two_candidate_w1",
+            "candidate_w1_after_tail_sha256": "combined_two_candidate_w1_after_tail",
+            "candidate_u1_w3_sha256": "combined_two_candidate_u1_w3",
+            "candidate_u2_w3_sha256": "combined_two_candidate_u2_w3",
+            "candidate_u3_w3_sha256": "combined_two_candidate_u3_w3"})
         if [two_report[key]["event_count"] for key in ("U1W3", "U2W3", "U3W3")] != [2, 1, 0]:
             raise AssertionError("two-subject publisher refs changed")
+        if [multi_report[key]["event_count"] for key in ("U1W3", "U2W3", "U3W3")] != [2, 1, 0]:
+            raise AssertionError("real RTW multi-user publisher refs changed")
         result = {"status": "passed", "activation": "default_off", "accept_v2": "not_called",
                   "real": {"evidence_level": "L2_same_run_real_RTW_DC_PG_CH_S3", "global_W": [1, 2], **real_dwd},
                   "two": {"evidence_level": "L2_same_run_fixture_RTW_authority_real_DC_PG_CH_S3",
                           "global_W": [1, 3], "u1_offsets": [1, 3], "u2_offsets": [2], "u3_offsets": [], **two_dwd},
+                  "multi": {"evidence_level": "L2_same_run_real_RTW_DC_PG_CH_S3",
+                            "global_W": [1, 3], "u1_offsets": [1, 3], "u2_offsets": [2], "u3_offsets": [], **multi_dwd},
                   "model_or_recommendation_effect": None, "exposure_or_label": None}
         (output / "report.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
         print(json.dumps(result, sort_keys=True, indent=2), flush=True)
     finally:
+        if multi_rtw_proc is not None:
+            multi_release.touch(exist_ok=True)
+            try:
+                multi_rtw_proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                multi_rtw_proc.terminate()
+                multi_rtw_proc.wait(timeout=10)
+        if multi_rtw_log is not None:
+            multi_rtw_log.close()
+        if multi_dc_proc is not None:
+            multi_dc_proc.terminate()
+            try:
+                multi_dc_proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                multi_dc_proc.kill()
+                multi_dc_proc.wait(timeout=10)
         if two_dc_proc is not None:
             two_dc_proc.terminate()
             try:

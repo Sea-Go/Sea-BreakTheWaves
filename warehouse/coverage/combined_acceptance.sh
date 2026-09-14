@@ -115,6 +115,7 @@ bundles = {}
 for label, fields in {
     "real": ("w1_after_retract", "w2"),
     "two": ("u1_w1_after_tail", "u1_w3", "u2_w3", "u3_empty_w3"),
+    "multi": ("u1_w1_after_tail", "u1_w3", "u2_w3", "u3_empty_w3"),
 }.items():
     report = json.loads((root / f"{label}-joined-ref.json").read_text())
     receipts = report.get("accepted_v2", {})
@@ -129,7 +130,8 @@ for label, fields in {
             raise RuntimeError(f"{label} missing same-run v2 historical snapshot: {field}")
     accepted[label] = {field: receipts[field] for field in fields}
     snapshots[label] = {field: report["snapshot_v2"][field]["snapshot_id"] for field in fields}
-    expected_vectors = {"real": {"w2": 0}, "two": {"u1_w3": 0, "u2_w3": 1, "u3_empty_w3": 0}}[label]
+    expected_vectors = {"real": {"w2": 0}, "two": {"u1_w3": 0, "u2_w3": 1, "u3_empty_w3": 0},
+                        "multi": {"u1_w3": 0, "u2_w3": 1, "u3_empty_w3": 0}}[label]
     if report.get("bundle_v2", {}).get(fields[0]) != "pending_tail":
         raise RuntimeError(f"{label} W1 with accepted tail became a current bundle")
     for field, vector in expected_vectors.items():
@@ -150,5 +152,5 @@ fact_rtw_pid=""
 (cd "$fact_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go vet ./warehouse/coverage ./internal/usermodel ./internal/warehouse/featurebaseline)
 (cd "$fact_root" && go mod verify)
 (cd "$fact_root" && git diff --check)
-rg '^--- PASS:|^PASS$|^ok[[:space:]]' "$fact_tmp/rtw-test.log" "$fact_tmp/cross-domain/real-combined-test.log" "$fact_tmp/cross-domain/two-combined-test.log" || true
+rg '^--- PASS:|^PASS$|^ok[[:space:]]' "$fact_tmp/rtw-test.log" "$fact_tmp/cross-domain/real-combined-test.log" "$fact_tmp/cross-domain/two-combined-test.log" "$fact_tmp/cross-domain/multi-rtw-test.log" "$fact_tmp/cross-domain/multi-combined-test.log" || true
 printf 'Final combined report: %s\n' "$fact_tmp/cross-domain/report.json"

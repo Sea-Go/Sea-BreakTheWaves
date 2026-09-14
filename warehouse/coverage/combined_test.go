@@ -506,32 +506,51 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	authority := &fakeAuthority{records: map[string]fakeAuthorityRecord{}}
+	realRTW := os.Getenv("COVERAGE_JOIN_TWO_REAL_RTW") == "1"
+	var authority *fakeAuthority
+	authorityURL, authorityToken := os.Getenv("COVERAGE_JOIN_TWO_AUTHORITY_URL"), os.Getenv("COVERAGE_JOIN_TWO_AUTHORITY_TOKEN")
 	dc, err := datacenter.New(httpclient.Config{BaseURL: os.Getenv(keys[2]), Token: os.Getenv(keys[3])})
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
-	for i, spec := range []struct{ id, folder, user, target, operation string }{
-		{"9007199254741993", "9007199254741991", "1001", "article-u1", "assert"},
-		{"9007199254742993", "9007199254742991", "1002", "article-u2", "assert"},
-		{"9007199254741993", "9007199254741991", "1001", "article-u1", "retract"},
-	} {
-		event := fixtureEvent(spec.id, spec.folder, spec.user, spec.target, spec.operation, at.Add(time.Duration(i)*time.Second))
-		receipt, err := dc.PublishEvent(ctx, event)
-		if err != nil || receipt.Offset != int64(i+1) {
-			t.Fatalf("real DC fixture publish: %+v %v", receipt, err)
+	if realRTW {
+		if authorityURL == "" || authorityToken == "" {
+			t.Fatal("real RTW two-user source requires its authority URL and token")
 		}
-		predecessor := ""
-		if spec.operation == "retract" {
-			predecessor = "favorite." + spec.id + ".v1"
+		batch, err := dc.ReadEvents(ctx, "btw-coverage-combined-fact", producer, 10)
+		if err != nil || len(batch.Events) != 3 || batch.FromOffset != 1 {
+			t.Fatalf("real RTW two-user DC source differs: %+v %v", batch, err)
 		}
-		authority.records[event.EventID] = fakeAuthorityRecord{Event: event, Receipt: receipt, Subject: sourceSubject(spec.user), Predecessor: predecessor}
+		for i, want := range []string{"favorite.9007199254741993.v1", "favorite.9007199254742993.v1", "favorite.9007199254741993.v2"} {
+			if batch.Events[i].Offset != int64(i+1) || batch.Events[i].Event.EventID != want {
+				t.Fatalf("real RTW two-user order differs at %d: %+v", i, batch.Events[i])
+			}
+		}
+	} else {
+		authority = &fakeAuthority{records: map[string]fakeAuthorityRecord{}}
+		at := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+		for i, spec := range []struct{ id, folder, user, target, operation string }{
+			{"9007199254741993", "9007199254741991", "1001", "article-u1", "assert"},
+			{"9007199254742993", "9007199254742991", "1002", "article-u2", "assert"},
+			{"9007199254741993", "9007199254741991", "1001", "article-u1", "retract"},
+		} {
+			event := fixtureEvent(spec.id, spec.folder, spec.user, spec.target, spec.operation, at.Add(time.Duration(i)*time.Second))
+			receipt, err := dc.PublishEvent(ctx, event)
+			if err != nil || receipt.Offset != int64(i+1) {
+				t.Fatalf("real DC fixture publish: %+v %v", receipt, err)
+			}
+			predecessor := ""
+			if spec.operation == "retract" {
+				predecessor = "favorite." + spec.id + ".v1"
+			}
+			authority.records[event.EventID] = fakeAuthorityRecord{Event: event, Receipt: receipt, Subject: sourceSubject(spec.user), Predecessor: predecessor}
+		}
+		server := httptest.NewServer(http.HandlerFunc(authority.handler))
+		defer server.Close()
+		authorityURL, authorityToken = server.URL, "coverage-combined-fixture-authority-token"
 	}
-	server := httptest.NewServer(http.HandlerFunc(authority.handler))
-	defer server.Close()
-	g := joinedEnv(t, os.Getenv(keys[0]), os.Getenv(keys[1]), os.Getenv(keys[2]), os.Getenv(keys[3]), server.URL,
-		"coverage-combined-fixture-authority-token", os.Getenv(keys[4]))
+	g := joinedEnv(t, os.Getenv(keys[0]), os.Getenv(keys[1]), os.Getenv(keys[2]), os.Getenv(keys[3]), authorityURL,
+		authorityToken, os.Getenv(keys[4]))
 	u1, u2, u3 := sourceSubject("1001"), sourceSubject("1002"), sourceSubject("1003")
 	if got, err := g.consumer.RunOnce(ctx); err != nil || got.AcknowledgedOffset != 1 {
 		t.Fatalf("publisher W1: %+v %v", got, err)
@@ -609,15 +628,17 @@ func TestCombinedTwoSubjectsPublisherVerifierH10(t *testing.T) {
 	if _, err := g.verifier.VerifyPrefix(ctx, p3.Ref, dropped, b3); !errors.Is(err, usermodel.ErrCoverageConflict) {
 		t.Fatalf("missing index row accepted: %v", err)
 	}
-	authority.mu.Lock()
-	authority.wrongSubject = true
-	authority.mu.Unlock()
-	if _, err := g.verifier.VerifyPrefix(ctx, p3.Ref, i3, b3); !errors.Is(err, usermodel.ErrCoverageConflict) {
-		t.Fatalf("wrong RTW subject accepted: %v", err)
+	if authority != nil {
+		authority.mu.Lock()
+		authority.wrongSubject = true
+		authority.mu.Unlock()
+		if _, err := g.verifier.VerifyPrefix(ctx, p3.Ref, i3, b3); !errors.Is(err, usermodel.ErrCoverageConflict) {
+			t.Fatalf("wrong RTW subject accepted: %v", err)
+		}
+		authority.mu.Lock()
+		authority.wrongSubject = false
+		authority.mu.Unlock()
 	}
-	authority.mu.Lock()
-	authority.wrongSubject = false
-	authority.mu.Unlock()
 	if _, err := g.verifier.VerifyPrefix(ctx, p3.Ref, i3, b3); !errors.Is(err, usermodel.ErrCoveragePending) {
 		t.Fatalf("offset2 absent PG fact accepted: %v", err)
 	}
