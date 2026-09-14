@@ -60,7 +60,7 @@ func testEnv(t *testing.T) map[string]string {
 	}
 	return map[string]string{
 		"BTW_SEARCH_MODE": "local-exact", "BTW_SEARCH_API_ADDR": freeAddr(t), "BTW_SEARCH_METRICS_ADDR": freeAddr(t),
-		"BTW_SEARCH_SCOPE_KEY": strings.Repeat("k", 32), "BTW_RTW_URL": "http://127.0.0.1:1",
+		"BTW_SEARCH_SCOPE_KEY": strings.Repeat("k", 32), "BTW_SEARCH_TOOLS_SCOPE_KEY": strings.Repeat("t", 32), "BTW_RTW_URL": "http://127.0.0.1:1",
 		"BTW_RTW_TOKEN": "test-rtw-token", "BTW_DC_URL": "http://127.0.0.1:1", "BTW_DC_TOKEN": "test-dc-token",
 		"BTW_SEARCH_MODEL_URL": "http://127.0.0.1:1/v1", "BTW_SEARCH_MODEL_KEY": "test-model-key",
 		"BTW_SEARCH_MODEL_NAME": "test-model", "BTW_ARTIFACT_DIR": filepath.Join(dir, "artifacts"),
@@ -96,7 +96,7 @@ func TestSearchAPIConfigRejectsIncompleteAndUnsafeModes(t *testing.T) {
 	}
 	for _, tc := range []struct{ key, value string }{
 		{"BTW_SEARCH_MODE", ""}, {"BTW_SEARCH_MODE", "milvus"},
-		{"BTW_SEARCH_SCOPE_KEY", "short"}, {"BTW_SEARCH_API_ADDR", "0.0.0.0:8080"},
+		{"BTW_SEARCH_SCOPE_KEY", "short"}, {"BTW_SEARCH_TOOLS_SCOPE_KEY", "short"}, {"BTW_SEARCH_API_ADDR", "0.0.0.0:8080"},
 		{"BTW_SEARCH_MODEL_KEY", ""}, {"BTW_SEARCH_POLICY_FILE", ""},
 		{"BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT", "0"},
 		{"BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT", "33"},
@@ -164,6 +164,22 @@ func TestSearchAPIRealSocketRejectsUnsignedRequestBeforeDependencies(t *testing.
 	_ = response.Body.Close()
 	if err != nil || response.StatusCode != http.StatusForbidden || !bytes.Contains(body, []byte("SEARCH_SCOPE_DENIED")) {
 		t.Fatalf("unsigned request = %d %s %v", response.StatusCode, body, err)
+	}
+	toolsRequest, err := http.NewRequest(http.MethodPost, "http://"+cfg.APIAddr+"/v1/search/tools/search",
+		strings.NewReader(`{"module_id":"module","query":"test","depth":"fast","intelligence":"low","search_id":"search_test","limits":{"read_calls":1,"quote_runes":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolsRequest.Header.Set("Content-Type", "application/json")
+	toolsResponse, err := client.Do(toolsRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolsBody, err := io.ReadAll(toolsResponse.Body)
+	_ = toolsResponse.Body.Close()
+	if err != nil || toolsResponse.StatusCode != http.StatusForbidden ||
+		!bytes.Contains(toolsBody, []byte("SEARCH_SCOPE_DENIED")) {
+		t.Fatalf("unsigned Tools request = %d %s %v", toolsResponse.StatusCode, toolsBody, err)
 	}
 	metrics, err := client.Get("http://" + cfg.MetricsAddr + "/metrics")
 	if err != nil {
