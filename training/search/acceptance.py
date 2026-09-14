@@ -286,7 +286,8 @@ def main() -> None:
     result = run(Path(args.runtime).resolve(), Path(args.output).resolve(),
                  model_directory=Path(args.three_lane_model_directory).resolve()
                  if args.three_lane_model_directory else None,
-                 bge_python=Path(args.bge_python).resolve() if args.bge_python else None)
+                 # Resolving the venv executable symlink would bypass its packages.
+                 bge_python=Path(args.bge_python).absolute() if args.bge_python else None)
     print(json.dumps(result, sort_keys=True, ensure_ascii=False, allow_nan=False))
 
 
