@@ -307,7 +307,9 @@ func TestHTTPHandlerFrameworkRootAndPublicProjection(t *testing.T) {
 		httpSpan.SpanContext().TraceID() != agentSpan.SpanContext().TraceID() {
 		t.Fatalf("HTTP→application→Runtime→framework Agent ancestry missing: %v", spans)
 	}
-	if !strings.Contains(logs.String(), `"event":"search.http.summary.finished"`) {
+	if !strings.Contains(logs.String(), `"event":"search.http.summary.finished"`) ||
+		!strings.Contains(logs.String(), `"search_id":"`+scope.SearchID+`"`) ||
+		!strings.Contains(logs.String(), `"publication_revision":"`+scope.Snapshot.PublicationRevision+`"`) {
 		t.Fatal("unified application JSON terminal missing")
 	}
 }
