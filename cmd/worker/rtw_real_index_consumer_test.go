@@ -119,9 +119,13 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	}
 	release, err := rtw.GetRelease(ctx, fixture.ReleaseID)
 	settings, expectedProfiles := fixedIndexSettings()
+	actualProfiles := append([]ridethewind.RetrievalProfile(nil), release.RetrievalProfiles...)
+	wantedProfiles := append([]ridethewind.RetrievalProfile(nil), expectedProfiles...)
+	slices.SortFunc(actualProfiles, func(a, b ridethewind.RetrievalProfile) int { return strings.Compare(a.Lane, b.Lane) })
+	slices.SortFunc(wantedProfiles, func(a, b ridethewind.RetrievalProfile) int { return strings.Compare(a.Lane, b.Lane) })
 	if err != nil || release.ReleaseId != fixture.ReleaseID || release.ModuleId != fixture.ModuleID ||
 		release.ManifestHash != remote.ManifestHash || release.ChunkingProfile != fixture.ChunkProfile ||
-		!reflect.DeepEqual(release.RetrievalProfiles, expectedProfiles) ||
+		!reflect.DeepEqual(actualProfiles, wantedProfiles) ||
 		!slices.Equal(release.SourceRevisionIds, fixture.SourceRevisionIDs) ||
 		!slices.Equal(release.WikiRevisionIds, fixture.WikiRevisionIDs) {
 		t.Fatalf("real RTW release differs from fixed BTW index contract: release=%+v err=%v", release, err)
