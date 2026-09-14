@@ -148,6 +148,42 @@ func (s *Store) featureOntology(ctx context.Context, subject SubjectRef, spec Fe
 	return nil, nil
 }
 
+// futureAcceptedChangeAt invalidates a frozen feature snapshot when an
+// already-accepted event first enters its business/availability window. This
+// includes future corrections and withdrawals, not just currently active
+// assertions. Outbox.created_at is only an eligibility field, not a commit
+// timestamp; the state-version lock still guards concurrent publication.
+func (s *Store) futureAcceptedChangeAt(ctx context.Context, subject SubjectRef, asOf, availableAt time.Time) (*time.Time, error) {
+	var next *time.Time
+	err := s.db.QueryRow(ctx, `SELECT min(GREATEST(e.occurred_at,e.observed_at,o.created_at))
+		FROM usermodel_events e JOIN usermodel_outbox o ON
+			o.authority_id=e.authority_id AND o.tenant_id=e.tenant_id AND o.subject_id=e.subject_id
+			AND o.producer=e.producer AND o.event_id=e.event_id AND o.state_version=e.accepted_version
+			AND o.event_type='usermodel.fact.accepted'
+		WHERE e.authority_id=$1 AND e.tenant_id=$2 AND e.subject_id=$3 AND e.status='accepted'
+			AND (e.occurred_at>$4 OR e.observed_at>$5 OR o.created_at>$5)`,
+		subject.AuthorityID, subject.TenantID, subject.SubjectID, asOf.UTC(), availableAt.UTC()).Scan(&next)
+	if err != nil {
+		return nil, err
+	}
+	if next != nil {
+		at := next.UTC()
+		return &at, nil
+	}
+	return nil, nil
+}
+
+func (s *Store) setFutureFeatureChange(ctx context.Context, snapshot *FeatureSnapshot) error {
+	next, err := s.futureAcceptedChangeAt(ctx, snapshot.Subject, snapshot.AsOf, snapshot.AvailableAt)
+	if err != nil {
+		return err
+	}
+	if next != nil && (snapshot.NextChangeAt == nil || next.Before(*snapshot.NextChangeAt)) {
+		snapshot.NextChangeAt = next
+	}
+	return nil
+}
+
 func (s *Store) activeFeatureBaseline(ctx context.Context, subject SubjectRef) (*FeatureBaseline, error) {
 	var body []byte
 	err := s.db.QueryRow(ctx, `SELECT b.baseline_body FROM usermodel_feature_heads h
@@ -319,6 +355,9 @@ func (s *Store) AcceptFeatureBaseline(ctx context.Context, input FeatureBaseline
 	if err != nil {
 		return FeatureReceipt{}, FeatureSnapshot{}, err
 	}
+	if err := s.setFutureFeatureChange(ctx, &snapshot); err != nil {
+		return FeatureReceipt{}, FeatureSnapshot{}, err
+	}
 	if err := freezeFeatureSnapshot(&snapshot); err != nil {
 		return FeatureReceipt{}, FeatureSnapshot{}, err
 	}
@@ -430,6 +469,9 @@ func (s *Store) RefreshFeatureSnapshot(ctx context.Context, subject SubjectRef, 
 		return FeatureSnapshot{}, err
 	}
 	snapshot.Subject = subject
+	if err := s.setFutureFeatureChange(ctx, &snapshot); err != nil {
+		return FeatureSnapshot{}, err
+	}
 	if err := freezeFeatureSnapshot(&snapshot); err != nil {
 		return FeatureSnapshot{}, err
 	}
