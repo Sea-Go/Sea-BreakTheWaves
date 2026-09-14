@@ -66,7 +66,7 @@ func (a *HTTPAuthority) ReadJudgmentEvent(ctx context.Context, eventID string) (
 	if err := decoder.Decode(&receipt); err != nil {
 		return nil, "", fmt.Errorf("%w: invalid RTW judgment authority receipt", ErrContract)
 	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) || receipt.Code != 0 ||
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) || receipt.Code != http.StatusOK ||
 		receipt.Data.EventID != eventID || receipt.Data.EventJSON == "" ||
 		!shaPattern.MatchString(receipt.Data.EventSHA256) {
 		return nil, "", ErrContract

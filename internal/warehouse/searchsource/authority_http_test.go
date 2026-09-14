@@ -20,7 +20,7 @@ func TestHTTPAuthorityReadsOnlyMatchingRTWFrozenEvent(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		fmt.Fprintf(w, `{"code":0,"data":{"event_id":%q,"event_json":%q,"event_sha256":%q}}`,
+		fmt.Fprintf(w, `{"code":200,"data":{"event_id":%q,"event_json":%q,"event_sha256":%q}}`,
 			event.EventID, string(raw), sha)
 	}))
 	defer server.Close()
@@ -34,6 +34,22 @@ func TestHTTPAuthorityReadsOnlyMatchingRTWFrozenEvent(t *testing.T) {
 	}
 	if _, _, err := authority.ReadJudgmentEvent(context.Background(), "../other"); !errors.Is(err, ErrContract) {
 		t.Fatalf("unsafe event ID accepted: %v", err)
+	}
+}
+
+func TestHTTPAuthorityRejectsUnsuccessfulRTWEnvelope(t *testing.T) {
+	event, raw, sha, _ := fixtureEvent(t, fixtureJudgment())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"code":0,"data":{"event_id":%q,"event_json":%q,"event_sha256":%q}}`,
+			event.EventID, string(raw), sha)
+	}))
+	defer server.Close()
+	authority, err := NewHTTPAuthority(server.URL, "fixture-worker-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := authority.ReadJudgmentEvent(context.Background(), event.EventID); !errors.Is(err, ErrContract) {
+		t.Fatalf("unsuccessful RTW envelope was accepted: %v", err)
 	}
 }
 
