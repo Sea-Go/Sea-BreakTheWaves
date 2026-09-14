@@ -1,6 +1,6 @@
 # WS06-A 同代三路索引协调器验收
 
-状态：**PARTIAL**。本次只交付 `internal/content` 的确定性 `IndexCoordinator` 和隔离 PostgreSQL 契约测试；未交付真实三路模型/检索引擎在同一代的集成运行、`content.build.v1` 的 DC 技术作业 worker/GraphAgent/Runner 装配、RTW `AcceptBuild` 回执与人工发布链。因此 **H06、WS06-A 整体及 OBS-r2 仍未通过**。
+状态：**PARTIAL**。本次只交付 `internal/content` 的确定性 `IndexCoordinator` 和隔离 PostgreSQL 契约测试；未交付真实三路模型/检索引擎在同一代的集成运行、`content.build.v1` 的 DC 技术作业 worker/GraphAgent/Runner 装配、RTW `AcceptBuild` 回执与人工发布链。因此 **H06、WS06-A 整体及 OBS-r3 仍未通过**。
 
 ## 输入、提交点与恢复
 
@@ -19,12 +19,12 @@
 | --- | --- | --- |
 | `GOFLAGS='-run=TestIndexCoordinator' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | 三路 READY/重放、局部失败重试、投影 ResumeIndex、旧 lease/new epoch、伪造 generation、独立 probe 失败、未知/冲突 resume、缺失 indexer |
 | `GOFLAGS='-skip=TestPrepareGraph' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | content 非 Graph 用例与 artifacts 全部用例，包括真实 PG ledger/reconcile |
-| `bash scripts/test-content.sh` | **失败，整包 race 不通过** | 已有 Graph 取消测试后，下一用例初始化全局 metric provider 时出现竞态，见下方 |
+| `bash scripts/test-content.sh` | 原独立分支失败；集成修复后完整通过 | 含Graph正常/错误/取消、同代协调器、PG ledger/reconcile和artifacts的完整race+vet |
 
-整包 race 栈定位：写方为 tRPC-Agent-Go v1.8.1 `telemetry/metric/metric.go:225` 的 `initInvokeAgentMetrics`，经 `InitMeterProvider` → 本仓 `internal/telemetry/framework.go:41` 的 `Bundle.InstallGlobals` → `internal/content/telemetry_test.go:31` 的测试初始化；并发读方是此前 `TestPrepareGraphCancellationReachesPreparer` 触发的框架 Graph goroutine，位于 `agent/graphagent/graph_agent.go:213` → `internal/telemetry/metric_invoke_agent.go:154`。这是**本次整包验收的未解决失败**，没有跨 W1 修改既有 Graph/测试生命周期代码。局部 race 通过不能抵消该失败。
+原整包race栈一：写方为tRPC-Agent-Go v1.8.1 `telemetry/metric/metric.go:225`的`initInvokeAgentMetrics`，经本仓`Bundle.InstallGlobals`于后续PG测试才初始化；此前取消Graph goroutine仍在读框架Meter。集成分支将一次性装配提前到content测试进程`TestMain`、任何Runner协程之前，消除该时序。之后完整脚本揭露栈二：原始Runner修补error Event的`Response.Choices`时，GraphAgent原生Trace仍读取同一个Event。Graph组件测试现在与正式项目Runtime使用相同公开`Plugin.OnEvent → Event.Clone`所有权规则；不改框架缓存、不中止错误测试。定向错误测试race连跑10次、完整隔离PG16脚本及根模块全包race通过。**这只验证项目适配路径**，不代表锁定框架裸Runner的错误Event竞态已在上游修复；正式worker也必须使用项目Runtime及同样插件。
 
 ## 下一次交接与最终验收
 
 1. 在 worker 装配真实 `dense.Service`、`sparse.Service`、`multivector.Service`、同一内容寻址存储与当前 DC/RTW fence；用 tRPC-Agent-Go v1.8.1 GraphAgent/Runner 消费完整运行事件及错误，提交技术 job 回执时只声明其自身阶段。
 2. 运行真实 DC BGE-M3 与三套独立索引后端，在一个固定 Release/Generation 上回读 `IndexManifest`，核对三路 Profile/Artifact/Probe/coverage；再走 RTW `AcceptBuild`，确认本地 READY、RTW 接纳与人工发布指针各自独立。
-3. 修复既有 Graph 取消/全局 metrics 初始化 race 后重跑**完整** `bash scripts/test-content.sh`；再跑真实 Collector 下钻、成本、容量、回滚与异常注入。未完成前维持 PARTIAL。
+3. 正式worker仅经已安装Bundle与项目Runtime执行，再跑真实Collector下钻、成本、容量、回滚与异常注入；裸Runner框架上游错误竞态继续跟踪。未完成前维持PARTIAL。

@@ -14,4 +14,4 @@
 
 验证命令：`go test -mod=readonly -race -count=1 ./internal/search`、`go vet ./internal/search`、`go test -mod=readonly -race -count=1 ./...`、`go vet ./...`、`go mod verify`、`git diff --check` 均通过。
 
-结论：单根框架编排和原生观测为 **组件 LOCAL_VERIFIED**；搜索正式 API/worker、真实 DC 模型与三路同代索引、真实 RTW/Collector→DC 下钻、12 组合 H07、失败后的耐久引用恢复未验，WS06-E/F 与 OBS-r3 路径最终状态仍 **PARTIAL / NOT_VERIFIED**。正式入口需借用同一已安装 Bundle、Session 与 `RootSummarizer`，按权威发布指针取得固定 Snapshot，走实际 DC/RTW 客户端，并确保公开会话历史不能在最终引用校验前泄露模型原始事件，再验证公开协议终态和跨服务 Trace。
+结论：单根框架编排和原生观测为 **组件 LOCAL_VERIFIED**；搜索正式 API/worker、真实 DC 模型与三路同代索引、真实 RTW/Collector→DC 下钻、12 组合 H07、失败后的耐久引用恢复未验，WS06-E/F 与 OBS-r3 路径最终状态仍 **PARTIAL / NOT_VERIFIED**。正式入口需借用同一已安装 Bundle、Session 与 `RootSummarizer`，按权威发布指针取得固定 Snapshot，走实际 DC/RTW 客户端，再验证公开协议终态和跨服务 Trace。**框架Session另有未验边界**：本方法对外只交付通过校验的答案，但Graph State和LLMAgent中间事件可能在最终引用拒收前由Runner写入Session；目前没有检查失败答案是否会被下一轮读入或由会话历史接口曝光。正式会话复用/公开历史接入前须做真实Session读取反例与受控投影，不能把方法返回为空等同于Session里没有原始答案。

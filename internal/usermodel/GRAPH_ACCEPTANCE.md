@@ -21,10 +21,10 @@
 | 首次接受与重投 | 首次版本 1、同主体事件键的 Outbox 版本 1；重投仍为版本 1，`replay=true`。**LOCAL_VERIFIED** |
 | 待前驱、冲突、Outbox 回滚、取消 | 待前驱没有接受版本或新增 accepted Outbox；异 hash 和故意删除 Outbox 表均无 Graph ACK；Outbox 故障无事实写入；预取消无事实写入。**LOCAL_VERIFIED** |
 | 框架原生链路 | 同一真实 Trace 内有 `trusted_adapter → runtime.run → invoke_agent usermodel_fact → workflow execute_graph usermodel_fact → workflow execute_function_node commit_fact → usermodel.fact.append`；Agent/Graph/节点 Span 的 instrumentation scope 为 `trpc.agent.go`。**LOCAL_VERIFIED** |
-| 统一观测 | 成功事实 JSON 日志带同一 Trace ID；冲突日志为领域 `rejected/FACT_CONFLICT`；`/metrics` 同时含 bounded 应用与原生框架系列，并排除请求/主体 ID 维度。Runtime sink 失败会触发内部取消，现有 Runtime stage 因而记为 `cancelled`，详见下节。**局部 LOCAL_VERIFIED / Runtime 分类待修** |
+| 统一观测 | 成功事实 JSON 日志带同一 Trace ID；冲突日志为领域 `rejected/FACT_CONFLICT`；`/metrics` 同时含 bounded 应用与原生框架系列，并排除请求/主体 ID 维度。集成Runtime修复后，Sink拒收触发内部取消但本次终态保留`failed/RUN_SINK_FAILED`。**局部 LOCAL_VERIFIED** |
 
 ## 锁定框架的错误事件竞争
 
 首次用节点原生 `return error` 测试失败路径时，`-race` 在 `trpc-agent-go v1.8.1` 的 `runner.ensureErrorEventContent` 写 `Event.Response.Choices` 与 `graphagent.runWithBarrier` 调用 `internal/telemetry.TraceAfterInvokeAgent` 读同一 Event 之间报数据竞争。模块版本来自当前根 `go.mod`/`go list -m all`，两处调用点在该版本模块缓存的 `runner/runner.go` 与 `agent/graphagent/graph_agent.go`；本分支不修改框架或 go.mod。
 
-为保留框架原生 Trace 且避免此路径，节点把 `Store.Append` 的业务拒绝与存储故障转换为**仅含稳定 `error_code` 的 Graph 结果状态**，不返回接受收据；Runtime sink 识别它、拒绝整次运行并返回 Go error。权威 Store stage 记录精确错误与拒绝/失败结果。当前 `internal/runtime.Runtime.Run` 在 sink error 后取消自身 Context；其 `runtimeObservation` 优先匹配 `context.Canceled`，故 Runtime stage 把冲突/Outbox 故障记为 `cancelled`，虽然实际原因在领域 stage 中是 `rejected/FACT_CONFLICT` 或 `failed/STORE_ERROR`。框架原生 Graph 节点 Span 在这种受控失败下也可能标 `OK`，不能仅看它或 Runtime stage 判断业务结果。应由 Runtime 所有者修正根因优先级，框架修复/升级后重新验证原生错误路径。真实调用返回无 ACK；取消沿 Context 传播。
+为保留框架原生 Trace 且避免此路径，节点把 `Store.Append` 的业务拒绝与存储故障转换为**仅含稳定 `error_code` 的 Graph 结果状态**，不返回接受收据；Runtime sink 识别它、拒绝整次运行并返回 Go error。权威 Store stage 记录精确错误与拒绝/失败结果。集成提交`8a754cb`已修正项目Runtime内部取消的错误分类：冲突/Outbox故障的Runtime终态为`failed/RUN_SINK_FAILED`，而主动取消仍为`cancelled`；集成分支隔离PG16脚本已实际重跑，14项测试含原生Span/指标和Runtime JSON终态均通过。框架原生 Graph 节点 Span 在这种受控失败下仍可能标 `OK`，不能只看原生Graph Span判断业务结果；框架修复/升级后应重新验证原生错误路径。真实调用返回无 ACK；取消沿 Context 传播。
