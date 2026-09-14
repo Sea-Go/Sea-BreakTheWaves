@@ -82,10 +82,27 @@ func TestItemCFOnlyMatureAttributedPositivesAndNormalizedTopK(t *testing.T) {
 	if err != nil || replayed.ID != artifact.ID {
 		t.Fatalf("fixed ItemCF input did not reproduce: %+v %v", replayed, err)
 	}
+	changedWatermark := matureFunc(func(ctx context.Context, r PoolRelease) (MatureBatch, error) {
+		batch, err := matureFixture(rows).ReadMature(ctx, r)
+		batch.Watermark = batch.Watermark.Add(24 * time.Hour)
+		return batch, err
+	})
+	newArtifact, err := ComputeItemCF(context.Background(), release, changedWatermark, 1)
+	if err != nil || newArtifact.ID == artifact.ID {
+		t.Fatalf("different DWS cutoff reused an ItemCF artifact ID: %s %s %v", artifact.ID, newArtifact.ID, err)
+	}
 }
 
 func TestItemCFDistinguishesMissingMatureRowsAndObservedNegative(t *testing.T) {
 	release := itemCFPool(t)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ComputeItemCF(cancelled, release, matureFunc(func(context.Context, PoolRelease) (MatureBatch, error) {
+		t.Fatal("cancelled ItemCF entered DWS source")
+		return MatureBatch{}, nil
+	}), 2); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled ItemCF did not stop: %v", err)
+	}
 	empty, err := ComputeItemCF(context.Background(), release, matureFixture(nil), 2)
 	if err != nil || empty.BehaviorState != "no_mature_rows" || len(empty.Items) != 0 || empty.ObservedNegative != 0 {
 		t.Fatalf("no mature rows became a negative: %+v %v", empty, err)
