@@ -345,10 +345,11 @@ func (s *Service) Execute(ctx context.Context, r Request) (Result, error) {
 			out.StopReason = "budget_exhausted"
 			break
 		}
-		queries, err := s.planner.Plan(ctx, PlanInput{r.Query, profile.EffectiveDepth, profile.EffectiveIntelligence, round, remaining, append([]VerifiedCandidate(nil), out.Verified...)})
+		queries, err := s.planner.Plan(ctx, PlanInput{r.Query, profile.EffectiveDepth, profile.EffectiveIntelligence, round, remaining, cloneVerified(out.Verified)})
 		if err != nil {
 			return out, fmt.Errorf("plan search: %w", err)
 		}
+		queries = append([]string(nil), queries...)
 		if len(queries) == 0 {
 			out.StopReason = "no_new_query"
 			break
@@ -475,6 +476,15 @@ func (s *Service) Execute(ctx context.Context, r Request) (Result, error) {
 		out.Status = "complete"
 	}
 	return out, nil
+}
+func cloneVerified(in []VerifiedCandidate) []VerifiedCandidate {
+	out := make([]VerifiedCandidate, len(in))
+	for i, v := range in {
+		out[i] = v
+		out[i].Sources = append([]LaneHit(nil), v.Sources...)
+		out[i].Subqueries = append([]string(nil), v.Subqueries...)
+	}
+	return out
 }
 func mergeStatuses(total, round []LaneStatus) {
 	for _, st := range round {
