@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -149,6 +150,11 @@ func TestSignedScopeHTTPRejectsBeforeSourceAndAgent(t *testing.T) {
 		{"wrong audience", public, []string{malformed(func(p signedScope) signedScope { p.Audience = "other"; return p })}},
 		{"missing subject", public, []string{malformed(func(p signedScope) signedScope { p.Subject.SubjectID = ""; return p })}},
 		{"future issued", public, []string{malformed(func(p signedScope) signedScope { p.IssuedAtUnix += 31; return p })}},
+		{"ancient issued overflow", public, []string{malformed(func(p signedScope) signedScope {
+			p.IssuedAtUnix = math.MinInt64
+			p.ExpiresAtUnix = math.MaxInt64
+			return p
+		})}},
 		{"expired", public, []string{malformed(func(p signedScope) signedScope { p.ExpiresAtUnix = fixedNow.Unix(); return p })}},
 		{"ttl too long", public, []string{malformed(func(p signedScope) signedScope { p.ExpiresAtUnix += 181; return p })}},
 		{"wrong module", public, []string{malformed(func(p signedScope) signedScope { p.Snapshot.ModuleID = "another"; return p })}},

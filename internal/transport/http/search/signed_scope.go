@@ -94,6 +94,7 @@ func (s *SignedScopeResolver) ResolveSearch(_ context.Context, r *http.Request, 
 	}
 	now := s.now().Unix()
 	if payload.Audience != searchScopeAudience || payload.IssuedAtUnix > now+maxScopeClockSkewSeconds ||
+		payload.IssuedAtUnix < now-maxScopeTTLSeconds ||
 		payload.ExpiresAtUnix <= now || payload.ExpiresAtUnix <= payload.IssuedAtUnix ||
 		payload.ExpiresAtUnix-payload.IssuedAtUnix > maxScopeTTLSeconds {
 		return TrustedScope{}, ErrScopeDenied
