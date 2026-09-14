@@ -41,6 +41,7 @@ type realRTWIndexFixture struct {
 	WorkerToken       string   `json:"worker_token"`
 	DCJobURL          string   `json:"dc_job_url"`
 	DCJobToken        string   `json:"dc_job_token"`
+	BGERuntimeFile    string   `json:"bge_runtime_file"`
 	ObjectsDir        string   `json:"objects_dir"`
 	BuildID           string   `json:"build_id"`
 	ReleaseID         string   `json:"release_id"`
@@ -110,7 +111,14 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	if dsn == "" {
 		t.Fatal("run through cmd/worker/acceptance.sh for disposable BTW PG16")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	deadline := 90 * time.Second
+	if fixture.BGERuntimeFile != "" {
+		deadline = 20 * time.Minute
+		if fixture.DCJobURL == "" {
+			t.Fatal("live BGE index requires the actual DC technical job platform")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	rtw, err := ridethewind.New(httpclient.Config{BaseURL: fixture.BaseURL, Token: fixture.WorkerToken,
 		HTTPClient: &http.Client{Timeout: 15 * time.Second}})
@@ -128,6 +136,19 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	}
 	release, err := rtw.GetRelease(ctx, fixture.ReleaseID)
 	settings, expectedProfiles := fixedIndexSettings()
+	if fixture.BGERuntimeFile != "" {
+		settings = readLiveBGERuntime(t, fixture.BGERuntimeFile).indexSettings()
+		expectedProfiles = []ridethewind.RetrievalProfile{
+			{Lane: "dense", Encoder: settings.Dense.Document.PhysicalModel, Tokenizer: settings.Dense.Contract.TokenizerID,
+				Space: settings.Dense.Space, Dimensions: settings.Dense.Contract.Dimensions},
+			{Lane: "sparse", Encoder: settings.Sparse.Document.PhysicalModel, Tokenizer: settings.Sparse.Contract.TokenizerID,
+				Space: settings.Sparse.Space, Dimensions: settings.Sparse.Contract.Dimensions},
+			{Lane: "multivector", Encoder: settings.MultiVector.Document.PhysicalModel,
+				Tokenizer: settings.MultiVector.Contract.TokenizerID, Space: settings.MultiVector.Space,
+				Dimensions: settings.MultiVector.Contract.Dimensions, Mask: "valid",
+				Aggregation: settings.MultiVector.Contract.Aggregation},
+		}
+	}
 	actualProfiles := append([]ridethewind.RetrievalProfile(nil), release.RetrievalProfiles...)
 	wantedProfiles := append([]ridethewind.RetrievalProfile(nil), expectedProfiles...)
 	slices.SortFunc(actualProfiles, func(a, b ridethewind.RetrievalProfile) int { return strings.Compare(a.Lane, b.Lane) })
@@ -166,7 +187,11 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	attemptID := fmt.Sprintf("btw-real-index-%d", time.Now().UnixNano())
-	expires := time.Now().UTC().Add(75 * time.Second).Truncate(time.Microsecond)
+	leaseDuration := 75 * time.Second
+	if fixture.BGERuntimeFile != "" {
+		leaseDuration = 15 * time.Minute
+	}
+	expires := time.Now().UTC().Add(leaseDuration).Truncate(time.Microsecond)
 	// Preparation used an earlier technical job/fence. The index DC job starts
 	// its own epoch at one; RTW must allocate build epoch two independently.
 	prepareFence := content.Fence{BuildID: remote.BuildId, AttemptID: "prepare-" + attemptID, LeaseEpoch: 1,
@@ -214,7 +239,7 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 		t.Fatalf("prepare real RTW revisions into BTW chunk ledger: chunks=%d err=%v", len(prepared.Manifest.Chunks), err)
 	}
 	if len(prepared.Manifest.Chunks) > 2 {
-		t.Fatalf("real RTW fixture requires at most two chunks for the fixed 2D exact-probe contract, got %d", len(prepared.Manifest.Chunks))
+		t.Fatalf("real RTW fixture requires at most two chunks for bounded exact-probe acceptance, got %d", len(prepared.Manifest.Chunks))
 	}
 	worker, state := newRealRTWIndexWorker(t, ctx, fixture, settings, rtw, objects, store, bundle, fence)
 	worked, err := worker.RunOnce(ctx)
@@ -355,6 +380,10 @@ func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWInd
 	settings indexSettings, rtw *ridethewind.Client, objects artifacts.Store, store *content.Store,
 	bundle *telemetry.Bundle, fence content.Fence) (*app.IndexWorker, *realRTWDCState) {
 	t.Helper()
+	var bge liveBGERuntime
+	if fixture.BGERuntimeFile != "" {
+		bge = readLiveBGERuntime(t, fixture.BGERuntimeFile)
+	}
 	input := app.IndexJobInput{BuildID: fixture.BuildID, ReleaseID: fixture.ReleaseID,
 		Generation: 1, InputManifestHash: ""}
 	build, err := rtw.GetBuild(ctx, fixture.BuildID)
@@ -381,6 +410,9 @@ func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWInd
 		}
 		submission := state.job.Request
 		submission.Deadline = time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339Nano)
+		if fixture.BGERuntimeFile != "" {
+			submission.Deadline = time.Now().UTC().Add(18 * time.Minute).Format(time.RFC3339Nano)
+		}
 		receipt, err := platform.SubmitJob(ctx, submission)
 		if err != nil || receipt.ID == "" {
 			t.Fatalf("submit actual DC index job: %+v %v", receipt, err)
@@ -469,6 +501,33 @@ func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWInd
 				CancelVersion: fence.CancelVersion, TechnicalState: "succeeded",
 				ResultHash: artifacts.Hash([]byte("real-rtw-index-dc-ack"))})
 		case "POST /v1/representations":
+			if fixture.BGERuntimeFile != "" {
+				forwarded, err := http.NewRequestWithContext(r.Context(), r.Method,
+					bge.Endpoint+r.URL.RequestURI(), io.LimitReader(r.Body, 8<<20))
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				forwarded.Header = r.Header.Clone()
+				forwarded.Header.Set("Authorization", "Bearer "+bge.AccessToken)
+				response, err := (&http.Client{Timeout: 3 * time.Minute}).Do(forwarded)
+				if err != nil {
+					t.Errorf("actual DC BGE gateway call failed: %v", err)
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				defer response.Body.Close()
+				w.Header().Set("Content-Type", response.Header.Get("Content-Type"))
+				w.WriteHeader(response.StatusCode)
+				if _, err := io.Copy(w, io.LimitReader(response.Body, 8<<20)); err != nil {
+					t.Errorf("copy actual DC BGE gateway response: %v", err)
+				}
+				state.mu.Lock()
+				state.representationCalls++
+				state.mu.Unlock()
+				return
+			}
 			var request representation.Request
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || r.Header.Get("Idempotency-Key") == "" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -512,8 +571,12 @@ func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWInd
 		}
 	}))
 	t.Cleanup(server.Close)
+	requestTimeout := 10 * time.Second
+	if fixture.BGERuntimeFile != "" {
+		requestTimeout = 4 * time.Minute
+	}
 	dc, err := datacenter.New(httpclient.Config{BaseURL: server.URL, Token: "fixture-dc-token",
-		HTTPClient: &http.Client{Timeout: 10 * time.Second}})
+		HTTPClient: &http.Client{Timeout: requestTimeout}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,8 +595,12 @@ func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWInd
 			t.Error(err)
 		}
 	})
+	leaseSeconds := 45
+	if fixture.BGERuntimeFile != "" {
+		leaseSeconds = 900
+	}
 	worker, err := app.NewIndexWorker(app.IndexWorkerConfig{WorkerID: state.job.WorkerID,
-		ResourceProfile: "cpu", LeaseSeconds: 45}, dc, rtw, runner, store, objects, bundle)
+		ResourceProfile: "cpu", LeaseSeconds: leaseSeconds}, dc, rtw, runner, store, objects, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
