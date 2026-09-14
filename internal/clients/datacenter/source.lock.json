@@ -1,8 +1,8 @@
 {
   "repository": "Sea-DataCenter",
-  "revision": "317ce623904dc153ef36ad96a8a437fabb09a9f3",
+  "revision": "4f5abf571482a697b4175bcc87d15ed4ab6c6ee4",
   "sources": {
-    "contracts/representation/representation.go": "8ca91af55564960a3f1a633e8ede401249658e976f1ddf48265aa66869c7ddf1",
+    "contracts/representation/representation.go": "287362b38293ed0937bd9df0ef5bc691cf661226de8e8b3c0b70b43917c5a72e",
     "contracts/eventing/events.go": "426895ca1be0245d70f81f0fb15098ef32262196476ce4c6e057bbd9f993aaed",
     "contracts/jobs/jobs.go": "27ef9bfdbe4d2fa80a04b61a5b2a404c09aa92cc8a271d960989c0d8e234638f"
   }

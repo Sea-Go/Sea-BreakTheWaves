@@ -17,7 +17,7 @@ import (
 )
 
 func TestRepresentAuthorityFixtures(t *testing.T) {
-	for _, name := range []string{"dense", "sparse", "token_matrix"} {
+	for _, name := range []string{"dense", "sparse", "token_matrix", "token_matrix_mean"} {
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join("testdata", name+".json"))
 			if err != nil {

@@ -94,3 +94,5 @@ bash internal/runtime/acceptance.sh
 - RTW 首个公开引用前的持久收据、产品 SSE 恢复接口、首引到完整流的跨服务 trace。
 - 多实例运行取消、任意中断点继续执行与业务副作用对账；当前证明的是完成一轮后 PostgreSQL 历史跨进程延续。
 - 实际三路索引构建与 READY、答案资源、产品发布及生产部署。这些仍由各领域推进，不能从本 SDK 或会话验收外推。
+
+H05兼容更新：提供者4f5abf5显式增加mean_maxsim；SDK已从此提交重生，新增mean fixture也经过真实HTTP消费者测试。旧sum_maxsim不换算，contract/space保持独立。此前r4跨进程平台验收仍是原固定提交的历史证据，新增数学枚举按受影响的表示消费范围复验。

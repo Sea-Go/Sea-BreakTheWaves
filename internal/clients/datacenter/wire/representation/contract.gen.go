@@ -31,6 +31,10 @@ func IsOutputContract(value string) bool {
 
 // Contract is immutable for an output contract and representation space.
 // Dimensions is the vector width, or the full sparse feature space size.
+// Token matrix aggregation is explicit: sum_maxsim sums each valid query token
+// maximum dot product over valid document tokens; mean_maxsim divides that sum
+// by the number of valid query tokens. Masked rows participate in neither term.
+// These definitions are not interchangeable within an immutable contract/space.
 type Contract struct {
 	ID            string `json:"id"`
 	Kind          Kind   `json:"kind"`
@@ -64,7 +68,7 @@ func (c Contract) Validate() error {
 			return errors.New("invalid sparse contract")
 		}
 	case TokenMatrix:
-		if c.Dimensions > 65536 || c.Metric != "maxsim" || c.Aggregation != "sum_maxsim" || c.MaxTokens < 1 || c.MaxTokens > 8192 || c.MaxNonzero != 0 || c.VocabularyID != "" || int64(c.MaxTokens)*int64(c.Dimensions) > 8*1024*1024 {
+		if c.Dimensions > 65536 || c.Metric != "maxsim" || (c.Aggregation != "sum_maxsim" && c.Aggregation != "mean_maxsim") || c.MaxTokens < 1 || c.MaxTokens > 8192 || c.MaxNonzero != 0 || c.VocabularyID != "" || int64(c.MaxTokens)*int64(c.Dimensions) > 8*1024*1024 {
 			return errors.New("invalid token matrix contract")
 		}
 	default:
