@@ -5,9 +5,9 @@
 ## 已落实的契约
 
 - `SubjectRef` 必须含 `authority_id、tenant_id、subject_id`，每张主体表和查询都使用完整三元组。`producer` 由上游接入适配器绑定，不能让模型或客户端自选。`EventKey = (producer,event_id)` 在主体内唯一；对规范化类型载荷计算 SHA-256。同键同 hash 回最初收据，同键异 hash 拒绝，来源位置冲突也拒绝。
-- `Event` 必须带来源证据引用及 hash、发生/观察时间、来源分区与可选正序列。`assert/correct/retract` 是明确的状态动作；修正/撤回引用同主体前驱事件。未到前驱保留 `pending_dependency`，前驱到达后自动提升，可用 `ReconcilePending` 有界恢复。旧事件的 `event_body` 不更新；当前有效事实放在可重建 `usermodel_active_facts`。
+- `Event` 必须带来源证据引用及 hash、发生/观察时间、来源分区与可选正序列。`assert/correct/retract` 是明确的状态动作；修正/撤回引用同主体前驱事件。未到前驱保留 `pending_dependency`，前驱到达后自动提升，可用 `ReconcilePending` 有界恢复；会闭合依赖环的迟到前驱直接拒收，不产生假接受版本。旧事件的 `event_body` 不更新；当前有效事实放在可重建 `usermodel_active_facts`。
 - `ParkUnmapped` 只保存有来源范围的待映射信封，不生成 UserFact、用户状态版本或训练样本。`BindUnmapped` 要求 RTW 已验证的完整主体；同一外部主体别名不能跨事件绑定到两个主体。最初待映射收据重投保持不变。
-- 阅读、真实展示及产品行为是不同的 `SemanticKind`。阅读不能自带 `impression_id` 冒充展示；`LinkImpression` 只有在同主体、同内容和请求、真实展示证据已接纳且仍有效时才建立关联。展示撤回会在同一事务中失效已有归因；未归因阅读可保留为事实，不能进入需要真实曝光的训练口径。
+- 阅读、真实展示及产品行为是不同的 `SemanticKind`。阅读不能自带 `impression_id` 冒充展示；同主体同时有效的展示 ID 唯一。`LinkImpression` 仅给真实阅读/产品行为建立关联，要求同主体、同内容、非空且相同的请求 ID、展示实际发生时间不晚于行为，以及已接纳且仍有效的展示证据；乱序到达可以回补，但未来发生的展示不能解释过去行为。展示撤回会在同一事务中失效已有归因；未归因阅读可保留为事实，不能进入需要真实曝光的训练口径。
 - 每个已接纳事实或归因变化在**同一 PG 事务**更新当前状态版本/投影并写 `usermodel_outbox`。`Current` 在 repeatable-read 快照下交付 `projection_version`、活跃事实、逐来源连续水位与待关联数；`HistoryAfter` 以 `(occurred_at,producer,event_id)` 游标遍历不可变历史及证据；`OutboxAfter` 按主体版本交付 B/C/WS07 的来源引用。`unattributed_reading_or_action` 是“尚无展示归因”的数量，含可能无需展示的直接访问，不能自动算成坏数据或曝光。
 
 水位从位置 1 开始确认连续性。若真实来源起点并非 1，当前结果会保持缺口而**不会**声称完整；与 DC 交换来源起点/分区合同后，再增加受版本约束的起点登记。序列缺失事件可接纳，但不能由事件时间推导完整来源水位。跨来源重放选择当前可用最早时间的来源头，同来源先守住序列；特征团队必须固定截止点和来源水位，不能把当前投影当成历史窗口明细。
