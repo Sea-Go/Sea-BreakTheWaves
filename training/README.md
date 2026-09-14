@@ -1,6 +1,6 @@
 # 冻结数仓数据的训练侧消费
 
-此目录是 WS09-A / H10.b 的首个实际消费者。使用 Python 3.12，依赖由 `uv.lock` 固定。
+此目录是 WS09-A / H10.b 的首个实际消费者，当前接纳manifest v2及推荐22列v1行契约。旧manifest v1缺少可验证DIM二元组，仅保留归档，不能被此消费者标为通过。使用 Python 3.12，依赖由 `uv.lock` 固定。
 SQL清洗、事件Join和成熟标签计算由 `warehouse/` 提供，本程序不重新实现上游SQL。
 
 ```sh
@@ -33,3 +33,5 @@ with open_dataset("manifest.json", expected_manifest_sha256=expected_hash) as da
 
 验证等级：单元测试使用明确合成Parquet；真实CH/dbt/S3交接由两端独立联验另记，
 它也不能替代真实客户端采集、DC调度、成熟业务数据或模型效果验收。
+
+2026-09-14提交前复验：39项测试通过；从固定run14导出恢复到临时SeaweedFS后，经Arrow S3接口独立接纳4/6/7行，清单hash与生产者记录一致。原run14服务已停止，因此本次消费者复验明确使用相同字节的恢复副本。见 `acceptance/2026-09-14-s3-consumer.json`。

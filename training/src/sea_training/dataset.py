@@ -74,7 +74,7 @@ def _json(payload: bytes) -> dict:
 
 def _validate_manifest(manifest: dict, schema_dir: Path) -> None:
     try:
-        schema = json.loads((schema_dir / "training-dataset-manifest.v1.schema.json").read_text())
+        schema = json.loads((schema_dir / "training-dataset-manifest.v2.schema.json").read_text())
         expected = json.loads((schema_dir / "recommend-engagement.columns.v1.json").read_text())
     except (OSError, ValueError) as exc:
         raise DatasetError("dataset schemas unavailable or invalid") from exc
@@ -105,7 +105,8 @@ def _validate_manifest(manifest: dict, schema_dir: Path) -> None:
     batches = [b["batch_id"] for b in source["batches"]]
     if len(batches) != len(set(batches)):
         raise DatasetError("duplicate source batch")
-    if len(source["dim_revisions"]) != len(set(source["dim_revisions"])):
+    dim_keys = [(d["item_id"], d["content_revision"]) for d in source["dim_revisions"]]
+    if len(dim_keys) != len(set(dim_keys)):
         raise DatasetError("duplicate dimension revision")
     if manifest["data_kind"] == "observed" and manifest["label"]["source"] == "synthetic":
         raise DatasetError("observed data cannot have synthetic labels")
@@ -181,6 +182,7 @@ def _rows(snapshot: DatasetSnapshot) -> dict:
     splits = {s["name"]: (utc(s["start"]), utc(s["end"])) for s in manifest["splits"]}
     maturity = utc(manifest["label"]["maturity_watermark"])
     window = timedelta(seconds=manifest["label"]["window_seconds"])
+    dim_keys = {(d["item_id"], d["content_revision"]) for d in manifest["source"]["dim_revisions"]}
     stats = {name: {"rows": 0, "positive": 0, "negative": 0} for name in splits}
     # Exact cross-shard identity checks use disk, not an unbounded Python ID set.
     with sqlite3.connect(snapshot.directory.parent / "validation.sqlite") as keys:
@@ -229,6 +231,8 @@ def _rows(snapshot: DatasetSnapshot) -> dict:
                             raise DatasetError("future feature in historical request")
                         if observed_end != impression + window or observed_end > maturity or observed_end > end:
                             raise DatasetError("label is immature or crosses the split boundary")
+                        if (row["item_id"], row["content_revision"]) not in dim_keys:
+                            raise DatasetError("row content revision absent from fixed DIM set")
                         if row["feature_contract_id"] != manifest["feature_contract_id"]:
                             raise DatasetError("row feature contract mismatch")
                         label = row["label"]

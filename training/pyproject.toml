@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sea-training"
-version = "0.1.0"
+version = "0.2.0"
 description = "Immutable Sea warehouse dataset consumer"
 requires-python = ">=3.12,<3.13"
 dependencies = ["pyarrow>=21,<26", "jsonschema>=4.23,<5"]

@@ -1,6 +1,6 @@
 # Sea 算法数据契约
 
-`jsonschema/training-dataset-manifest.v1.schema.json` 是 H10.b 的唯一 manifest schema；
+`jsonschema/training-dataset-manifest.v2.schema.json` 是当前 H10.b manifest schema；v1保留为历史归档，当前消费者明确拒绝v1（缺少可验证DIM覆盖语义）。
 `recommend-engagement.columns.v1.json` 固定首个推荐互动样本的22列、顺序、Arrow类型与缺失规则。
 消费者实现位于 `training/`，warehouse 只生成实例，不维护第二份 schema。
 
@@ -22,3 +22,5 @@
 记录不含真实供应商凭据，S3连接由调用方注入文件系统。
 
 数据集通过验证只证明本契约和输入文件满足断言，不证明用户效果、全部源覆盖或模型质量。
+
+manifest v2 将 source.dim_revisions 固定为 item_id/content_revision 结构化二元组，必须覆盖每条样本，禁止冒号拼接与无关引用。行契约及22列仍为v1。升级要重新导出新清单，旧清单/文件不可原地覆盖。

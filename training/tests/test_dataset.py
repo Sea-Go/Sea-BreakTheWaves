@@ -60,15 +60,15 @@ def make_dataset(directory, rows=None):
                        "end": iso(BASE + timedelta(days=day + 1))})
     watermark = iso(BASE + timedelta(days=4))
     manifest = {
-        "schema_version": "sea.training-dataset.v1", "row_contract": "sea.recommend-engagement.v1",
+        "schema_version": "sea.training-dataset.v2", "row_contract": "sea.recommend-engagement.v1",
         "dataset_id": "dataset-fixture-v1", "revision": 1, "parent_revision": None,
         "domain": "recommend", "data_kind": "synthetic", "created_at": watermark,
         "feature_contract_id": "engagement-features.v1", "columns": columns,
         "source": {"warehouse_run_id": "warehouse-fixture", "project_revision": "fixture-code-r1",
-                   "generation": "g1", "ingest_cutoff": watermark,
+                   "generation": "g1", "ingest_cutoff": watermark, "recipe_sha256": "d" * 64,
                    "batches": [{"batch_id": "source-b1", "sha256": "a" * 64}],
                    "watermarks": [{"source": "product", "partition": "0", "position": 7, "event_time": watermark}],
-                   "dim_revisions": ["dim-content-r1"], "dbt_manifest_sha256": "b" * 64,
+                   "dim_revisions": [{"item_id": item, "content_revision": revision} for item, revision in sorted({(r["item_id"], r["content_revision"]) for r in rows})], "dbt_manifest_sha256": "b" * 64,
                    "dbt_run_results_sha256": "c" * 64},
         "label": {"target": "effective_read", "rule_version": "fixture-read-30m.v1",
                   "window_seconds": 1800, "window_anchor": "impression_time", "maturity_watermark": watermark, "source": "synthetic"},
@@ -100,7 +100,7 @@ def test_accepts_all_shards_and_preserves_verified_bytes(tmp_path):
 
 
 @pytest.mark.parametrize("mutation,expected", [
-    (lambda m: m.update(schema_version="sea.training-dataset.v2"), "invalid manifest"),
+    (lambda m: m.update(schema_version="sea.training-dataset.v3"), "invalid manifest"),
     (lambda m: m.update(row_count=7), "row totals"),
     (lambda m: m["files"][0].update(path="../train.parquet"), "normalized relative"),
     (lambda m: m["files"][0].update(sha256="d" * 64), "hash mismatch"),
@@ -239,4 +239,38 @@ def test_missing_schema_is_a_structured_rejection(tmp_path):
     path, _ = make_dataset(tmp_path)
     with pytest.raises(DatasetError, match="schemas unavailable"):
         with open_dataset(path, schema_dir=tmp_path / "absent"):
+            pass
+
+
+@pytest.mark.parametrize("revisions", [[], [{"item_id": "unrelated", "content_revision": "content-r1"}],
+                                        [{"item_id": "item-1", "content_revision": "wrong"}]])
+def test_manifest_dim_set_must_cover_each_sample(tmp_path, revisions):
+    path, manifest = make_dataset(tmp_path, [sample(1)])
+    manifest["source"]["dim_revisions"] = revisions
+    update(path, manifest)
+    with pytest.raises(DatasetError, match="absent from fixed DIM"):
+        with open_dataset(path):
+            pass
+
+
+def test_dimension_references_are_structured_not_delimiter_keys(tmp_path):
+    rows = [sample(1, item_id="a:b", content_revision="c"),
+            sample(2, item_id="a", content_revision="b:c")]
+    path, manifest = make_dataset(tmp_path, rows)
+    with open_dataset(path) as dataset:
+        assert dataset.report["validated_rows"] == 2
+    manifest["source"]["dim_revisions"] = [{"item_id": "a:b", "content_revision": "c"}]
+    update(path, manifest)
+    with pytest.raises(DatasetError, match="absent from fixed DIM"):
+        with open_dataset(path):
+            pass
+
+
+def test_manifest_v1_requires_explicit_producer_upgrade(tmp_path):
+    path, manifest = make_dataset(tmp_path)
+    manifest["schema_version"] = "sea.training-dataset.v1"
+    manifest["source"]["dim_revisions"] = ["ambiguous:legacy"]
+    update(path, manifest)
+    with pytest.raises(DatasetError, match="invalid manifest"):
+        with open_dataset(path):
             pass
