@@ -112,6 +112,12 @@ type SearchResult struct {
 	Retrieval Result          `json:"retrieval"`
 	Pack      EvidencePack    `json:"evidence_pack"`
 	Receipt   CitationReceipt `json:"citation_receipt"`
+	Usage     EvidenceUsage   `json:"evidence_usage"`
+}
+
+type EvidenceUsage struct {
+	SourceReadAttempts int `json:"source_read_attempts"`
+	QuoteRunes         int `json:"quote_runes"`
 }
 
 // Search reads exact source revisions and obtains the durable RTW citation
@@ -182,7 +188,7 @@ func (d *Delivery) Search(ctx context.Context, searchID string, request Request)
 		return SearchResult{Retrieval: retrieval}, err
 	}
 	if len(pack.Evidence) == 0 {
-		return SearchResult{Retrieval: retrieval, Pack: pack}, nil
+		return SearchResult{Retrieval: retrieval, Pack: pack, Usage: EvidenceUsage{reads, runes}}, nil
 	}
 	packHash := pack.Hash()
 	receipt, err := d.accept.Accept(ctx, cloneEvidencePack(pack))
@@ -192,7 +198,7 @@ func (d *Delivery) Search(ctx context.Context, searchID string, request Request)
 	if receipt.SearchID != searchID || receipt.PackHash != packHash || receipt.DurableRef == "" {
 		return SearchResult{Retrieval: retrieval}, ErrReceipt
 	}
-	return SearchResult{Retrieval: retrieval, Pack: pack, Receipt: receipt}, nil
+	return SearchResult{Retrieval: retrieval, Pack: pack, Receipt: receipt, Usage: EvidenceUsage{reads, runes}}, nil
 }
 
 func validateRetrieval(expected Snapshot, request Request, result Result) error {
