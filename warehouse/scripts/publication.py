@@ -1,11 +1,12 @@
 """Single-host execution fence. DC lease/store integration remains a separate adapter."""
 import contextlib
 import fcntl
-import hashlib
 import json
 import os
 import re
 from pathlib import Path
+
+from receipt import input_digest, validate_binding, validate_export
 
 
 class PublicationError(RuntimeError):
@@ -47,20 +48,33 @@ class LocalPublication:
         finally:
             os.close(descriptor)
 
-    def claim(self, target, attempt, input_digest):
-        if not re.fullmatch(r'[a-f0-9]{64}', input_digest):
-            raise ValueError('logical input digest must be SHA-256')
+    def claim(self, target, attempt, binding):
+        validate_binding(binding)
+        checked_name(binding['output_namespace'])
+        digest = input_digest(binding)
         with self.locked(target):
             state = self.state(target)
             if state['manifest']:
                 raise PublicationError('immutable generation already published')
-            if state.get('input_digest', input_digest) != input_digest:
-                raise PublicationError('different logical inputs require a new generation')
+            if state.get('input_digest', digest) != digest:
+                raise PublicationError('different inputs, code, or recipe require a new generation')
             if state['cancelled']:
                 raise PublicationError('cancelled generation requires explicit new generation')
-            state.update(epoch=state['epoch'] + 1, attempt=checked_name(attempt), input_digest=input_digest)
+            used_namespaces = state.get('used_namespaces', [])
+            if binding['output_namespace'] in used_namespaces:
+                raise PublicationError('each attempt requires a fresh output namespace')
+            state.update(epoch=state['epoch'] + 1, attempt=checked_name(attempt),
+                         input_digest=digest, binding=json.loads(json.dumps(binding)),
+                         used_namespaces=used_namespaces + [binding['output_namespace']])
             self.save(target, state)
             return state['epoch']
+
+    def execution(self, target, attempt, epoch):
+        state = self.state(target)
+        if state['cancelled'] or state['epoch'] != epoch or state.get('attempt') != attempt:
+            raise PublicationError('stale or cancelled execution')
+        return dict(target=target, attempt=attempt, epoch=epoch,
+                    input_digest=state['input_digest'], binding=state['binding'])
 
     def cancel(self, target):
         with self.locked(target):
@@ -77,9 +91,11 @@ class LocalPublication:
                 raise PublicationError('stale or cancelled execution cannot publish')
             if state['manifest']:
                 raise PublicationError('immutable generation already published')
-            path = Path(manifest).resolve(strict=True)
-            if not path.is_file():
-                raise PublicationError('manifest file missing')
-            state['manifest'] = str(path)
-            state['manifest_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            execution = self.execution(target, attempt, epoch)
+            try:
+                manifest_hash = validate_export(manifest, execution)
+            except Exception as error:
+                raise PublicationError(f'invalid export: {error}') from error
+            state['manifest'] = str(Path(manifest).resolve(strict=True))
+            state['manifest_sha256'] = manifest_hash
             self.save(target, state)

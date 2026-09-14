@@ -1,4 +1,4 @@
-select concat(request_id, ':', impression_id, ':effective_read') as sample_id,
+select lower(hex(SHA256(toJSONString(tuple(authority_id, tenant_id, subject_id, request_id, impression_id, 'effective_read'))))) as sample_id,
        request_id, impression_id, authority_id, tenant_id, subject_id, item_id, content_revision,
        assumeNotNull(request_time) as request_time,
        impression_time, assumeNotNull(feature_cutoff) as feature_cutoff,

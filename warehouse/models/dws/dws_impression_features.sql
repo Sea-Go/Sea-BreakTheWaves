@@ -25,14 +25,14 @@ select i.impression_id as impression_id, i.request_id as request_id,
          'eligible'
        ) as qualification
 from {{ ref('dwd_impressions') }} i
-left join {{ ref('dwd_requests') }} r on i.request_id = r.request_id
+left join {{ ref('dwd_requests') }} r on i.request_id = r.request_id and {{ subject_equals('i', 'r') }}
 left join {{ ref('dwd_candidates') }} c
-  on i.request_id = c.request_id and i.candidate_id = c.candidate_id
+  on {{ subject_equals('i', 'c') }} and i.request_id = c.request_id and i.candidate_id = c.candidate_id
  and i.item_id = c.item_id and i.content_revision = c.content_revision
  and i.stage_invocation_id = c.stage_invocation_id and i.attempt = c.attempt
  and c.stage = 'served'
 left join {{ ref('dwd_feature_snapshots') }} f
-  on r.feature_snapshot_ref = f.feature_snapshot_ref
+  on {{ subject_equals('r', 'f') }} and r.feature_snapshot_ref = f.feature_snapshot_ref
  and r.feature_contract_id = f.feature_contract_id
 left join {{ ref('dim_content_history') }} d
   on i.item_id = d.item_id and i.content_revision = d.content_revision

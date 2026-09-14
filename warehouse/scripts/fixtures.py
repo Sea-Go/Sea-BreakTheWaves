@@ -82,3 +82,42 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('directory')
     write(parser.parse_args().directory)
+
+
+def write_scope_cases(root):
+    """Colliding local IDs across subjects and invalid candidate identity."""
+    base = make_events()
+    chain = [e for e in base if e['event_id'] in ('feature-1', 'request-1', 'candidate-1', 'impression-1', 'read-1')]
+    cases = []
+    # Same local request/impression/feature/event IDs in another tenant are legitimate.
+    for original in chain:
+        if original['event_type'] != 'behavior':
+            cases.append(dict(original, batch_id='scope_cases', tenant_id='other-tenant'))
+    for label, request, impression in [('a', 'r:part', 'one'), ('b', 'r', 'part:one')]:
+        for original in chain:
+            value = dict(original, batch_id='scope_cases', event_id=f'collision-{label}-{original["event_id"]}',
+                         subject_id='collision-user')
+            if value['request_id']:
+                value['request_id'] = request
+            if value['impression_id']:
+                value['impression_id'] = impression
+            if value['feature_snapshot_ref']:
+                value['feature_snapshot_ref'] = 'collision-feature-' + label
+            cases.append(value)
+    for original in chain:
+        value = dict(original, batch_id='scope_cases', event_id='wrong-candidate-' + original['event_id'])
+        if value['request_id']:
+            value['request_id'] = 'wrong-candidate-request'
+        if value['impression_id']:
+            value['impression_id'] = 'wrong-candidate-impression'
+        if value['feature_snapshot_ref']:
+            value['feature_snapshot_ref'] = 'wrong-candidate-feature'
+        if value['event_type'] == 'candidate':
+            value['tenant_id'] = 'wrong-tenant'
+        cases.append(value)
+    for number, event in enumerate(cases, 100):
+        event['source_sequence'] = number
+        canonical = {k:v for k,v in event.items() if k not in ('batch_id','payload_hash')}
+        event['payload_hash'] = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+    path = Path(root) / 'scope_cases.jsonl'
+    path.write_text(''.join(json.dumps(event, sort_keys=True) + '\n' for event in cases))

@@ -10,12 +10,18 @@ import pyarrow.parquet as pq
 
 from engine import PROJECT, digest
 from publication import checked_name
+from receipt import canonical_digest, verify_build_receipt
 
 
 def export(ch, namespace, parameters, build_output, destination, contract_dir, project_revision, s3_prefix=None):
     checked_name(namespace)
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=False)
+    build_receipt = json.loads((Path(build_output) / 'build_receipt.json').read_text())
+    execution = build_receipt['execution']
+    verify_build_receipt(build_output, execution)
+    if execution['binding']['recipe'] != parameters or execution['binding']['output_namespace'] != namespace:
+        raise ValueError('export differs from completed build execution')
     contracts = Path(contract_dir)
     columns = json.loads((contracts / 'recommend-engagement.columns.v1.json').read_text())
     # Select schema-owned names in schema order. ClickHouse writes the Parquet bytes.
@@ -56,31 +62,33 @@ def export(ch, namespace, parameters, build_output, destination, contract_dir, p
     for batch in parameters['source_batches']:
         source_events.extend(json.loads(line) for line in (PROJECT / f'fixtures/{batch}.jsonl').read_text().splitlines())
     manifest = dict(
-        schema_version='sea.training-dataset.v1', row_contract='sea.recommend-engagement.v1', dataset_id='recommendation-interaction-fixture',
+        schema_version='sea.training-dataset.v2', row_contract='sea.recommend-engagement.v1', dataset_id='recommendation-interaction-fixture',
         revision=revision, parent_revision=None if revision == 1 else revision-1,
         domain='recommend', data_kind='synthetic',
         created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         feature_contract_id='recommendation-engagement-fixture-v1', columns=columns,
-        source=dict(warehouse_run_id=namespace, project_revision=project_revision, generation=namespace,
+        source=dict(warehouse_run_id=namespace, project_revision=project_revision, recipe_sha256=canonical_digest(parameters), generation=namespace,
                     ingest_cutoff=parameters['observed_until'],
                     batches=[dict(batch_id=batch, sha256=digest(PROJECT / f'fixtures/{batch}.jsonl'))
                              for batch in parameters['source_batches']],
                     watermarks=[dict(source='synthetic-fixture', partition='fixture-0',
                                      position=max(event['source_sequence'] for event in source_events),
                                      event_time=parameters['event_watermark'])],
-                    dim_revisions=[row['revision'] for row in ch.rows(
-                        f"SELECT concat(item_id, ':', content_revision) AS revision FROM {namespace}.dim_content_history ORDER BY revision")],
+                    dim_revisions=ch.rows(f'SELECT item_id, content_revision FROM {namespace}.dim_content_history ORDER BY item_id, content_revision'),
                     dbt_manifest_sha256=digest(Path(build_output) / 'target/manifest.json'),
                     dbt_run_results_sha256=digest(Path(build_output) / 'target/run_results.json')),
         label=dict(target='effective_read', window_anchor='impression_time', rule_version='effective-read-fixture-v1', window_seconds=1800,
                    maturity_watermark=parameters['event_watermark'], source='synthetic'),
         splits=[dict(name=name, **bounds) for name, bounds in parameters['splits'].items()],
         files=files, row_count=sum(file['rows'] for file in files), transform_refs=[])
-    schema = json.loads((contracts / 'training-dataset-manifest.v1.schema.json').read_text())
+    schema = json.loads((contracts / 'training-dataset-manifest.v2.schema.json').read_text())
     jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(manifest)
     # Structural schema alone is not consumer acceptance. Reader verifies per-row semantics.
     path = destination / 'manifest.json'
     path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
+    receipt = dict(execution=execution, build_output=str(Path(build_output).resolve()),
+                   manifest_sha256=digest(path), files=files)
+    (destination / 'export_receipt.json').write_text(json.dumps(receipt, sort_keys=True, indent=2) + '\n')
     if s3_prefix:
         with urllib.request.urlopen(urllib.request.Request(f'{s3_prefix}/{namespace}/manifest.json', data=path.read_bytes(), method='PUT'), timeout=30) as response:
             response.read()

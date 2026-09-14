@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from publication import checked_name
+from receipt import validate_binding, write_build_receipt
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -68,7 +69,12 @@ class ClickHouse:
             self.query(f"INSERT INTO {database}.event_history SETTINGS date_time_input_format='best_effort' FORMAT JSONEachRow", payload)
 
 
-def build(dbt, endpoint, namespace, parameters, output):
+def build(dbt, endpoint, namespace, parameters, output, execution=None):
+    if execution is not None:
+        binding = execution['binding']
+        validate_binding(binding)
+        if binding['recipe'] != parameters or binding['output_namespace'] != namespace:
+            raise ValueError('build inputs differ from claimed execution')
     checked_name(namespace)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -92,4 +98,6 @@ def build(dbt, endpoint, namespace, parameters, output):
             result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=180)
     if result.returncode:
         raise RuntimeError(f'dbt failed ({result.returncode}); inspect {output}/dbt.log')
+    if execution is not None:
+        write_build_receipt(output, execution)
     return json.loads((output / 'target/run_results.json').read_text())

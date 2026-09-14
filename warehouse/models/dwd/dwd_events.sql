@@ -2,7 +2,7 @@
 select * except (delivery_number)
 from (
   select *, row_number() over (
-    partition by event_id order by available_at, batch_id, payload_hash
+    partition by domain, authority_id, tenant_id, subject_id, event_id order by available_at, batch_id, payload_hash
   ) as delivery_number
   from {{ ref('ods_events') }}
 )
