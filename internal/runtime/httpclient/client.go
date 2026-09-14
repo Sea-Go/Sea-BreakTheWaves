@@ -12,6 +12,9 @@ import (
 	"net/url"
 	"strings"
 	"unicode"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type Config struct {
@@ -93,6 +96,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	if idempotency != "" {
 		req.Header.Set("Idempotency-Key", idempotency)
 	}

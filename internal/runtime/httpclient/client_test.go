@@ -9,6 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestTransportBoundaries(t *testing.T) {
@@ -62,5 +67,36 @@ func TestTransportBoundaries(t *testing.T) {
 		if _, err := Segment(id); err == nil {
 			t.Fatalf("accepted path %q", id)
 		}
+	}
+}
+
+func TestDoPropagatesRealTraceContext(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	ctx, span := provider.Tracer("test").Start(context.Background(), "client-operation")
+	defer span.End()
+	parent := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		parent <- req.Header.Get("traceparent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	client, err := New(Config{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = client.Do(ctx, "GET", "/fixed", nil, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	actualParent := <-parent
+	carrier := propagation.MapCarrier{"traceparent": actualParent}
+	extracted := propagation.TraceContext{}.Extract(context.Background(), carrier)
+	got := trace.SpanContextFromContext(extracted)
+	if !got.IsValid() || got.TraceID() != span.SpanContext().TraceID() || got.SpanID() != span.SpanContext().SpanID() {
+		t.Fatalf("outbound traceparent=%q did not carry live span", actualParent)
 	}
 }
