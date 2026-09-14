@@ -145,6 +145,25 @@ func TestFeatureSpecMissingOOVAndWindow(t *testing.T) {
 	}
 }
 
+func TestPostgresFutureAcceptedFactExpiresCurrentFeatureSnapshot(t *testing.T) {
+	s := featureTestStore(t)
+	ctx := context.Background()
+	future := time.Now().UTC().Add(15 * time.Minute).Truncate(time.Microsecond)
+	e := featureFixture("future-accepted", 1, future)
+	requireAppend(t, s, e)
+	now := time.Now().UTC()
+	snapshot, err := s.RefreshFeatureSnapshot(ctx, e.Subject, featureSpecFixture(), now, now)
+	if err != nil || featureValue(snapshot, "reading_count").Value != "0" || !featureValue(snapshot, "reading_count").Missing {
+		t.Fatalf("future fact leaked into current feature: %+v %v", snapshot, err)
+	}
+	if snapshot.NextChangeAt == nil || !snapshot.NextChangeAt.Equal(future) {
+		t.Fatalf("future fact did not schedule invalidation: %+v", snapshot.NextChangeAt)
+	}
+	if ready, err := s.ReadyFeatureSnapshot(ctx, e.Subject); err != nil || ready.ID != snapshot.ID {
+		t.Fatalf("current snapshot not readable before change: %+v %v", ready, err)
+	}
+}
+
 func TestPostgresFeatureBaselineTailWithdrawalAdvanceAndRestart(t *testing.T) {
 	s := featureTestStore(t)
 	ctx := context.Background()
