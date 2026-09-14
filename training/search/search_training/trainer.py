@@ -12,8 +12,15 @@ from pathlib import Path
 import random
 import re
 import tempfile
+from typing import TYPE_CHECKING
 
 from .dataset import Snapshot
+
+if TYPE_CHECKING:
+    from .authoritative import AuthoritativePairs
+
+
+FIXTURE_PAIR_POLICY = "sea.search.experimental-qrel-pairs.v0"
 
 
 FEATURE_VERSION = "lexical-pairwise-v0"
@@ -145,7 +152,7 @@ def _summary(rows: tuple[dict, ...], weights: list[float], idf: dict[str, float]
             "pair_accuracy": sum(delta > 0 for delta in deltas) / len(rows)}
 
 
-def train(snapshot: Snapshot, config: TrainConfig, checkpoint_path: str | Path, *,
+def train(snapshot: Snapshot | AuthoritativePairs, config: TrainConfig, checkpoint_path: str | Path, *,
           resume: bool = False, max_steps: int | None = None, candidate_path: str | Path | None = None) -> dict:
     """Train or resume; max_steps is a total update count, useful for interruption tests."""
     config.validate()
@@ -154,9 +161,17 @@ def train(snapshot: Snapshot, config: TrainConfig, checkpoint_path: str | Path, 
     checkpoint = Path(checkpoint_path)
     idf = _fit_idf(snapshot.rows["train"])
     config_dict = asdict(config)
+    pair_policy = getattr(snapshot, "pair_policy_id", FIXTURE_PAIR_POLICY)
+    computed_pair_hash = sha256(_canonical({"manifest_sha256": snapshot.manifest_sha256,
+                                            "pair_policy_id": pair_policy, "rows": snapshot.rows})).hexdigest()
+    pair_hash = getattr(snapshot, "pair_snapshot_sha256", computed_pair_hash)
+    if pair_hash != computed_pair_hash:
+        raise TrainError("pair snapshot hash differs from training rows")
+    data_kind = snapshot.manifest["data_kind"]
+    authoritative = pair_policy != FIXTURE_PAIR_POLICY
     if resume:
         state = _load(checkpoint)
-        if state.get("contract") != FEATURE_VERSION or state.get("dataset_id") != snapshot.manifest["dataset_id"] or state.get("revision") != snapshot.manifest["revision"] or state.get("manifest_sha256") != snapshot.manifest_sha256 or state.get("config") != config_dict or state.get("idf") != idf:
+        if state.get("contract") != FEATURE_VERSION or state.get("dataset_id") != snapshot.manifest["dataset_id"] or state.get("revision") != snapshot.manifest["revision"] or state.get("manifest_sha256") != snapshot.manifest_sha256 or state.get("pair_policy_id") != pair_policy or state.get("pair_snapshot_sha256") != pair_hash or state.get("data_kind") != data_kind or state.get("config") != config_dict or state.get("idf") != idf:
             raise TrainError("checkpoint input/config/feature mismatch")
         try:
             rng = random.Random()
@@ -180,7 +195,8 @@ def train(snapshot: Snapshot, config: TrainConfig, checkpoint_path: str | Path, 
         rng.shuffle(order)
         state = {"contract": FEATURE_VERSION, "dataset_id": snapshot.manifest["dataset_id"],
                  "revision": snapshot.manifest["revision"], "manifest_sha256": snapshot.manifest_sha256,
-                 "data_kind": snapshot.manifest["data_kind"], "config": config_dict, "idf": idf,
+                 "pair_policy_id": pair_policy, "pair_snapshot_sha256": pair_hash,
+                 "data_kind": data_kind, "config": config_dict, "idf": idf,
                  "weights": [0.0] * len(FEATURES), "m": [0.0] * len(FEATURES),
                  "v": [0.0] * len(FEATURES), "rng_state": rng.getstate(),
                  "order": order, "epoch": 0, "cursor": 0, "step": 0, "loss_trace": []}
@@ -209,22 +225,37 @@ def train(snapshot: Snapshot, config: TrainConfig, checkpoint_path: str | Path, 
         state["rng_state"] = rng.getstate()
         _save(checkpoint, state)
     complete = state["epoch"] == config.epochs
-    report = {"status": "COMPLETED_FIXTURE" if complete else "INTERRUPTED", "experimental": True,
+    complete_status = "COMPLETED_FIXTURE" if not authoritative else (
+        "COMPLETED_CANDIDATE_SYNTHETIC" if data_kind == "synthetic" else "COMPLETED_CANDIDATE_OBSERVED")
+    report = {"status": complete_status if complete else "INTERRUPTED", "experimental": True,
               "data_kind": snapshot.manifest["data_kind"], "dataset_id": snapshot.manifest["dataset_id"],
-              "manifest_sha256": snapshot.manifest_sha256, "feature_version": FEATURE_VERSION,
-              "loss": "pairwise_logistic", "negative_policy": "explicit judged qrel grade 0 only",
-              "mask": "positive and negative judged, pair_mask=true", "seed": config.seed,
+              "manifest_sha256": snapshot.manifest_sha256, "pair_policy_id": pair_policy,
+              "pair_snapshot_sha256": pair_hash, "feature_version": FEATURE_VERSION,
+              "loss": "pairwise_logistic", "loss_interpretation": "optimization_diagnostic_only",
+              "model_quality": None,
+              "negative_policy": ("same-query graded judged high 2/3 > low 0/1" if authoritative else
+                                  "explicit judged qrel grade 0 only"),
+              "mask": ("higher and lower judged, pair_mask=true" if authoritative else
+                       "positive and negative judged, pair_mask=true"), "seed": config.seed,
               "eligible_pairs": {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")},
-              "judged_positive": {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")},
-              "judged_negative": {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")},
               "step": state["step"], "epoch": state["epoch"], "cursor": state["cursor"],
               "train_initial": initial, "train_final": _summary(snapshot.rows["train"], state["weights"], idf),
               "validation": _summary(snapshot.rows["validation"], state["weights"], idf) if complete else None,
               "test": _summary(snapshot.rows["test"], state["weights"], idf) if complete else None,
               "loss_trace_sha256": sha256(_canonical(state["loss_trace"])).hexdigest()}
+    if authoritative:
+        report["judged_higher"] = {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")}
+        report["judged_lower"] = {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")}
+        report["reader_status"] = snapshot.reader_report["status"]
+        report["unpairable_queries"] = snapshot.unpairable_queries
+    else:
+        report["judged_positive"] = {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")}
+        report["judged_negative"] = {split: len(snapshot.rows[split]) for split in ("train", "validation", "test")}
     if candidate_path is not None and complete:
         candidate = {"status": "candidate_only", "active": False, "experimental": True,
+                     "data_kind": state["data_kind"], "model_quality": None,
                      "dataset_id": state["dataset_id"], "manifest_sha256": state["manifest_sha256"],
+                     "pair_policy_id": state["pair_policy_id"], "pair_snapshot_sha256": state["pair_snapshot_sha256"],
                      "feature_version": FEATURE_VERSION, "features": FEATURES, "idf": idf,
                      "weights": state["weights"], "config": config_dict,
                      "checkpoint_sha256": sha256(checkpoint.read_bytes()).hexdigest()}
