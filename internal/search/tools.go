@@ -120,8 +120,12 @@ func (s *ToolSession) search(ctx context.Context, depth Depth, in SearchToolInpu
 		if runErr != nil {
 			return runErr
 		}
+		// Once a completed result reports actual reads and delivered quote
+		// length, release the unused part of this call's reservation.
+		s.remaining.ReadCalls += limits.MaxReads - result.Usage.SourceReadAttempts
+		s.remaining.QuoteRunes += limits.MaxQuoteRunes - result.Usage.QuoteRunes
 		s.searches[id] = SearchResult{Retrieval: Result{Verified: cloneVerified(result.Retrieval.Verified)},
-			Pack: cloneEvidencePack(result.Pack), Receipt: result.Receipt}
+			Pack: cloneEvidencePack(result.Pack), Receipt: result.Receipt, Usage: result.Usage}
 		out = SearchToolResult{Search: result, Remaining: s.remaining}
 		return nil
 	})

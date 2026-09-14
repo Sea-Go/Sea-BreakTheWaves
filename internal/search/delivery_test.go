@@ -252,6 +252,26 @@ func TestTypedToolsShareSnapshotAndCumulativeBudget(t *testing.T) {
 	}
 }
 
+func TestToolReservationRefundsActualUsageForFollowupRead(t *testing.T) {
+	d := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(exactSource), AcceptFunc(accepted))
+	s, err := NewToolSession(d, snapshot(), "budget-refund", ToolBudget{MaxSearchCalls: 1, MaxReadCalls: 2, MaxQuoteRunes: 26}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.SearchFast(context.Background(), SearchToolInput{Query: "where", Intelligence: Low})
+	if err != nil || first.Search.Usage.SourceReadAttempts != 1 || first.Search.Usage.QuoteRunes != 13 || first.Remaining.ReadCalls != 1 || first.Remaining.QuoteRunes != 13 {
+		t.Fatalf("actual usage not returned: %+v %v", first, err)
+	}
+	read, err := s.ReadEvidence(context.Background(), ReadEvidenceInput{SearchID: first.Search.Pack.SearchID, EvidenceID: first.Search.Pack.Evidence[0].ID})
+	if err != nil || read.Remaining.ReadCalls != 0 || read.Remaining.QuoteRunes != 0 {
+		t.Fatalf("bounded follow-up read: %+v %v", read, err)
+	}
+	_, err = s.ReadEvidence(context.Background(), ReadEvidenceInput{SearchID: first.Search.Pack.SearchID, EvidenceID: first.Search.Pack.Evidence[0].ID})
+	if !errors.Is(err, ErrBudget) {
+		t.Fatalf("re-read minted budget: %v", err)
+	}
+}
+
 type searchSpanExporter struct {
 	mu    sync.Mutex
 	spans []sdktrace.ReadOnlySpan
