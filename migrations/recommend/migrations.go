@@ -5,3 +5,8 @@ import _ "embed"
 
 //go:embed 001_pools.sql
 var SQL string
+
+// PairSQL is applied after SQL, before pair proposal registration.
+//
+//go:embed 002_pairs.sql
+var PairSQL string
