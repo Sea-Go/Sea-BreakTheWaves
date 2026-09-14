@@ -116,7 +116,7 @@ func fixedSnapshot() searchdomain.Snapshot {
 		}}
 }
 
-func fixedDelivery(t *testing.T, accepted *atomic.Bool, snap searchdomain.Snapshot) *searchdomain.Delivery {
+func fixedDelivery(t *testing.T, accepted *atomic.Bool, snap searchdomain.Snapshot, sourceReads ...*atomic.Int32) *searchdomain.Delivery {
 	t.Helper()
 	quote := "citation text"
 	chunk := corpus.Chunk{ID: "chunk-1", SourceKind: "wiki", ContentID: "doc-1", RevisionID: "revision-1",
@@ -135,6 +135,9 @@ func fixedDelivery(t *testing.T, accepted *atomic.Bool, snap searchdomain.Snapsh
 			UsedSubqueries: 1}, nil
 	})
 	source := searchdomain.SourceReadFunc(func(_ context.Context, _ searchdomain.Snapshot, _ searchdomain.VerifiedCandidate) (corpus.Chunk, error) {
+		if len(sourceReads) != 0 {
+			sourceReads[0].Add(1)
+		}
 		read := chunk
 		read.Text = quote
 		return read, nil
@@ -193,9 +196,11 @@ func TestHTTPHandlerFrameworkRootAndPublicProjection(t *testing.T) {
 	var resolves atomic.Int32
 	scope := TrustedScope{Subject: btwruntime.SubjectRef{AuthorityID: "rtw.identity", TenantID: "tenant-a", SubjectID: "user-1"},
 		SessionID: "conversation-1", SearchID: "search-1", AnswerID: "answer-1", Snapshot: snapshot}
-	handler, err := NewHandler(ScopeFunc(func(_ context.Context, r *http.Request, module string) (TrustedScope, error) {
+	handler, err := NewHandler(ScopeFunc(func(_ context.Context, r *http.Request, request PublicRequest) (TrustedScope, error) {
 		resolves.Add(1)
-		if module != "module-1" || r.Header.Get("X-Fixture-Deny") == "true" {
+		if request.ModuleID != "module-1" || request.Query != "why" ||
+			request.Depth != searchdomain.Fast || request.Intelligence != searchdomain.Low ||
+			r.Header.Get("X-Fixture-Deny") == "true" {
 			return TrustedScope{}, ErrScopeDenied
 		}
 		resolved := scope
