@@ -1,0 +1,47 @@
+{
+  "contract": "sea.search.training-experiment-plan.v0",
+  "activation": "candidate_only",
+  "implemented": {
+    "text_pairwise_baseline": {
+      "feature_version": "lexical-pairwise-v0",
+      "objective": "weighted_pairwise_logistic",
+      "negative_source": "explicit_judged_qrel",
+      "query_group": "single_query_id_and_rewrite_family_per_split",
+      "optimizer": "adam",
+      "seed": "TrainConfig.seed",
+      "evaluation": "frozen_validation_and_test_pair_loss_accuracy"
+    }
+  },
+  "planned_independent_representations": {
+    "dense": {
+      "status": "NOT_IMPLEMENTED",
+      "space": "dense_query_document_pair_only",
+      "objective": "candidate_softmax",
+      "encoder_tokenizer_dimension_normalization": "require_versioned_encoder_artifact",
+      "score": "cosine",
+      "candidate_generation": "independent_full_corpus_dense_index",
+      "new_document_index_required": true,
+      "parameter_gate": "freeze_negative_pool_temperature_batch_size_dim_metric_and_encoder_before_experiment"
+    },
+    "sparse": {
+      "status": "NOT_IMPLEMENTED",
+      "space": "learned_token_weight_vocabulary_only",
+      "objective": "candidate_softmax_with_separately_tuned_sparsity_penalty",
+      "encoder_tokenizer_vocabulary": "require_versioned_sparse_encoder_artifact",
+      "score": "nonzero_intersection_inner_product",
+      "candidate_generation": "independent_sparse_inverted_index",
+      "new_document_index_required": true,
+      "parameter_gate": "freeze_nonzero_budget_weight_trimming_regularization_and_vocabulary_before_experiment"
+    },
+    "multi_vector": {
+      "status": "NOT_IMPLEMENTED",
+      "space": "masked_token_matrix_per_chunk_only",
+      "objective": "candidate_softmax_with_full_MaxSim",
+      "encoder_tokenizer_dimension_mask": "require_versioned_token_encoder_artifact",
+      "score": "query_token_MaxSim_over_complete_chunk_matrix",
+      "candidate_generation": "independent_full_scope_token_index_then_exact_MaxSim",
+      "new_document_index_required": true,
+      "parameter_gate": "freeze_token_mask_max_tokens_dimension_per_token_topk_and_aggregation_before_experiment"
+    }
+  }
+}
