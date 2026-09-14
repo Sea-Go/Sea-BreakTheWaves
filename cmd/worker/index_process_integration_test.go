@@ -125,12 +125,26 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 			ResourceProfile: "cpu", Input: inputRaw}}
 	var claims atomic.Int64
 	var representationCalls atomic.Int64
+	var rtwAccepted atomic.Bool
+	var rtwAcceptCount atomic.Int64
+	var dcMu sync.Mutex
+	var dcResult *jobs.Result
 	completed := make(chan jobs.Result, 1)
 	dc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer worker-dc-test" {
 			t.Errorf("DC lost worker token: %s", r.URL.Path)
 		}
 		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/jobs/index-job":
+			copy := job
+			dcMu.Lock()
+			if dcResult != nil {
+				copy.State = "succeeded"
+				result := *dcResult
+				copy.Result = &result
+			}
+			dcMu.Unlock()
+			_ = json.NewEncoder(w).Encode(copy)
 		case "POST /v1/jobs/claim":
 			var claim jobs.Claim
 			_ = json.NewDecoder(r.Body).Decode(&claim)
@@ -143,6 +157,9 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			}
 		case "POST /v1/jobs/index-job/complete":
+			if !rtwAccepted.Load() {
+				t.Error("DC technical ACK preceded RTW READY acceptance")
+			}
 			var receipt jobs.Complete
 			if err := json.NewDecoder(r.Body).Decode(&receipt); err != nil {
 				t.Errorf("decode DC completion: %v", err)
@@ -154,6 +171,10 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 			default:
 				t.Error("duplicate index completion")
 			}
+			dcMu.Lock()
+			result := receipt.Result
+			dcResult = &result
+			dcMu.Unlock()
 			_ = json.NewEncoder(w).Encode(jobs.CompletionReceipt{JobID: job.ID, AttemptID: job.AttemptID,
 				LeaseEpoch: job.LeaseEpoch, CancelVersion: job.CancelVersion, TechnicalState: receipt.Result.State,
 				ResultHash: artifacts.Hash([]byte("index-ack"))})
@@ -235,6 +256,26 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 			build.AttemptId, build.LeaseEpoch, build.CancelVersion, build.LeaseExpiresAt = q.AttemptId, q.LeaseEpoch, q.CancelVersion, q.LeaseExpiresAt
 			data = build
 			buildMu.Unlock()
+		case "POST /internal/v1/knowledge/builds/index-build/results":
+			var q ridethewind.AcceptBuildReq
+			if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+				t.Errorf("decode RTW result: %v", err)
+			}
+			local, err := store.Get(r.Context(), stable.BuildID)
+			if err != nil || local.State != "READY" || local.Result == nil ||
+				q.State != "READY" || q.Generation != stable.Generation || q.ManifestHash != stable.InputHash ||
+				q.AttemptId != job.AttemptID || q.LeaseEpoch != job.LeaseEpoch ||
+				q.IndexManifestRef != local.Result.Key || q.IndexManifestHash != local.Result.SHA256 {
+				t.Errorf("RTW result lacks same fixed local READY: %+v local=%+v err=%v", q, local, err)
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			buildMu.Lock()
+			build.State, build.IndexManifestRef, build.IndexManifestHash = q.State, q.IndexManifestRef, q.IndexManifestHash
+			data = build
+			buildMu.Unlock()
+			rtwAcceptCount.Add(1)
+			rtwAccepted.Store(true)
 		case "GET /internal/v1/knowledge/releases/index-release":
 			data = release
 		case "GET /internal/v1/knowledge/revisions/index-revision":
@@ -375,10 +416,14 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 		}
 	}
 	buildMu.Lock()
-	remoteState, remoteTrace := build.State, rtwTraceID
+	remoteState, remoteTrace, remoteRef, remoteHash := build.State, rtwTraceID, build.IndexManifestRef, build.IndexManifestHash
 	buildMu.Unlock()
-	if remoteState != "BUILDING" {
-		t.Fatal("technical index ACK improperly accepted RTW build")
+	if remoteState != "READY" || remoteRef != resultRef.Key || remoteHash != resultRef.SHA256 || rtwAcceptCount.Load() != 1 {
+		t.Fatal("RTW READY does not match exact accepted local index")
+	}
+	var delivered bool
+	if err := pool.QueryRow(ctx, "SELECT delivered_at IS NOT NULL FROM content_outbox WHERE build_id=$1", stable.BuildID).Scan(&delivered); err != nil || !delivered {
+		t.Fatalf("DC and RTW acceptance did not close durable outbox: delivered=%t err=%v", delivered, err)
 	}
 	traceMu.Lock()
 	frameworkTrace := traceID
