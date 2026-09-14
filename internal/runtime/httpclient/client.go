@@ -39,7 +39,10 @@ type HTTPError struct {
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("provider HTTP status %d: %s", e.StatusCode, e.Body)
+	// The typed Body remains available for an explicit bounded inspection.
+	// Errors are logged at application stages, so their string must not copy
+	// arbitrary provider response content into the shared JSON log stream.
+	return fmt.Sprintf("provider HTTP status %d", e.StatusCode)
 }
 
 func New(cfg Config) (*Client, error) {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,7 +50,8 @@ func TestTransportBoundaries(t *testing.T) {
 	client, _ = New(Config{BaseURL: server.URL})
 	_, _, err = client.Do(context.Background(), "POST", "/v1/error", nil, map[string]int{"n": 1}, "operation")
 	var status *HTTPError
-	if !errors.As(err, &status) || status.StatusCode != 409 || status.RetryAfter != "3" {
+	if !errors.As(err, &status) || status.StatusCode != 409 || status.RetryAfter != "3" || status.Body != `{"error":"conflict"}` ||
+		strings.Contains(err.Error(), "conflict") {
 		t.Fatalf("status error %v", err)
 	}
 	before := calls.Load()
