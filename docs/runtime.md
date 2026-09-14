@@ -21,7 +21,7 @@
 
 根模块是最终工程的装配入口；存量 recommendation、agent_v2/v3 子模块暂保留自身边界。普通领域包使用同一根模块，不额外创建子 module。
 
-`runtime.New(app, agent, sessions)` 借用 session.Service；`OpenPostgres` 创建并拥有框架 PostgreSQL 服务，明确 DSN/schema/table prefix，采用同步事件持久化。`Initialize` 仅显式初始化框架表，schema 须提前建立；正常启动使用已初始化的 schema。DDL 的权威来源是固定版本官方 session/postgres 模块，不在 BTW 再维护一份 session SQL。
+`runtime.New(app, agent, sessions, observed)` 借用 session.Service，强制接收已安装的进程观测 Bundle；`OpenPostgres(app, agent, cfg, observed)` 创建并拥有框架 PostgreSQL 服务，明确 DSN/schema/table prefix，采用同步事件持久化。`Initialize` 仅显式初始化框架表，schema 须提前建立；正常启动使用已初始化的 schema。DDL 的权威来源是固定版本官方 session/postgres 模块，不在 BTW 再维护一份 session SQL。
 
 运行请求使用完整 `SubjectRef(authority_id, tenant_id, subject_id)`。框架 user key 是该结构的确定性哈希，session ID 与 run ID 显式传入。run ID 通过 `agent.WithRequestID` 传到事件；同一活跃 run ID 不接受第二次调用。
 
@@ -97,12 +97,18 @@ bash internal/runtime/acceptance.sh
 
 H05兼容更新：提供者4f5abf5显式增加mean_maxsim；SDK已从此提交重生，新增mean fixture也经过真实HTTP消费者测试。旧sum_maxsim不换算，contract/space保持独立。此前r4跨进程平台验收仍是原固定提交的历史证据，新增数学枚举按受影响的表示消费范围复验。
 
-## OBS-2026-09-14-r1：局部接入与边界
+## OBS-2026-09-14-r2：框架原生链路与局部验收边界
 
 新根模块 `internal/telemetry` 提供单进程Bundle：明确服务/环境/构建版本/实例、同步JSON writer、OTel exporter及固定采样率、独立Prometheus registry；缺少配置时拒绝装配。`InstallGlobals` 必须先于Runner或worker协程调用一次，使用tRPC-Agent-Go v1.8.1和A2A公开Logger入口适配同一sink，并覆盖框架默认忽略Context的函数。未携带Context的框架日志仅为进程级记录，不伪造trace字段。
 
+本轮审计发现此前仅调用 `otel.SetTracerProvider`，框架 v1.8.1 的 `telemetry/trace.Tracer` 仍停留在独立的默认 no-op；因此原 `runtime.run` 是应用自建外层 Span，不能证明 Agent/Tool 原生观测。现通过框架公开 `telemetry/trace.TracerProvider`、`Tracer` 复用同一 Bundle Provider，不调用框架 `trace.Start` 再创建第二套Exporter。框架 `telemetry/metric` 原先也保留默认 no-op，现通过其公开 `InitMeterProvider` 在Runner运行前装配同一个 OTel MeterProvider，使用官方兼容的 Prometheus exporter v0.56.0 把原生 Agent/Model/Tool 指标送到Bundle既有 `/metrics`。SDK View 按框架meter scope分开同名仪表，仅保留框架固定operation、token type和stream布尔值；模型响应名、Agent/Tool名、用户、会话及Agent实例ID均不进入时间序列。关闭时Bundle同时关闭Trace和Meter Provider。
+
 `Runtime.New`/`OpenPostgres` 现在强制接收已安装Bundle。一次Run产生带run/session ID的 `runtime.run.started/finished`、真实Span及请求级成功/失败/取消/超时计数和耗时；OOM或panic不会被写成成功。关闭时Bundle拒绝新阶段并等待在途阶段，再有界关闭Exporter；写日志失败增加有界指标，不递归打印。调用者仍须按Runner→Bundle顺序关闭；Domain content的Preparer/Reconciler同样强制接收Bundle，在真实PG提交结果之后写含build/attempt/epoch及固定工件hash的终态。
 
-局部证据：`go test -race -count=1 ./internal/telemetry ./internal/runtime ./internal/content` 用实际JSON writer、有效trace/span ID、Exporter接收、Prometheus `/metrics`、写入失败、关闭竞争、panic拒收及PG知识构建测试核验；任务脚本 `scripts/test-content.sh` 与 `internal/runtime/acceptance.sh` 已分别通过随机端口隔离PG，后者仍只证明原有DC/RTW业务交接和Bundle调用兼容。测试中的内存Exporter/Discard模式不构成Collector或跨仓Trace验收。
+此前局部证据：`go test -race -count=1 ./internal/telemetry ./internal/runtime ./internal/content` 用实际JSON writer、有效trace/span ID、Exporter接收、应用Prometheus `/metrics`、写入失败、关闭竞争、panic拒收及PG知识构建测试核验；任务脚本 `scripts/test-content.sh` 与 `internal/runtime/acceptance.sh` 已分别通过随机端口隔离PG，后者仍只证明原有DC/RTW业务交接和Bundle调用兼容。测试中的内存Exporter/Discard模式不构成Collector或跨仓Trace验收。
 
-当前 `observability_status=LOCAL_VERIFIED` 仅指公共设施、Runtime与内容用例的本地日志/Span/指标：OBS-02、OBS-05的适用局部反例、OBS-06本地抓取、OBS-08本地关闭/故障成立；OBS-01尚无完整worker/API进程入口装配，OBS-03未证明真实框架所有日志路径，OBS-04缺DC/RTW实际traceparent与异步Link，OBS-07缺Collector/DC下钻。三路检索lane、BGE serving和数仓/训练也尚未接此设施。本结果不能标WS06-A/G或整体OBS为ACCEPTED。
+新增框架证据：`internal/runtime/framework_trace_test.go` 在独立子进程实际执行 `Runner→LLMAgent→typed FunctionTool`，内存Exporter收到 `runtime.run` 及同Trace父子链上的框架 `invoke_agent`、`chat`、`execute_tool` Span，后三者 instrumentation scope 为 `trpc.agent.go`。同一次调用抓取真实 `/metrics`，同时看到应用与框架三个meter的指标，返回HTTP 200且没有用户/会话/Agent实例ID标签；普通与race测试均通过。此测试证明**隔离Runtime组件**使用了框架原生观测，未证明内容、搜索、推荐生产入口已采用框架编排。
+
+固定源码提交 `7f5d6b9cad5cd0c85dbca2024fe5ce3fa6b33b5f` 复验：根模块 `go test -mod=readonly -race -count=1 ./...`、`go vet ./...`、`go mod verify` 均通过。专门的真实框架测试记录原生 Agent/Chat/Tool Span 数分别为1/2/1，且为同一Trace；同一抓取中的三类框架请求计数分别为1/2/1。上游模型响应名在fixture两次调用中故意不同，`/metrics` 不出现它们或其他请求级ID。原始测试输出位于任务交付区 `/Users/edy/Sea/Deliverables/2026-09-14/BTW框架原生观测验收.log`，SHA-256 为 `3785ea849b6fe5c6311d40ce0eb9f5eb6091dc3a7798b314ab673b6f9406928c`；该输出是隔离Runtime证明，不是生产Collector或业务worker日志。
+
+当前 `observability_status=LOCAL_VERIFIED` 只授予公共日志桥、隔离Runtime的框架Agent/Tool调用树及内容**业务用例**各自的本地切片；不授予BTW整体。OBS-01尚无完整worker/API进程入口，OBS-03没有内容/搜索/推荐实际GraphAgent与Tool装配，OBS-04缺DC/RTW实际traceparent与异步Link，OBS-07缺Collector/DC下钻。内容Preparer/Reconciler仍由普通Go用例直接调用，自建Bundle Stage只表达领域提交阶段，不能代替框架GraphAgent；三路检索lane、BGE serving和数仓/训练也尚未接此设施。C17云端框架业务链仍为NOT_IMPLEMENTED/NOT_VERIFIED，本结果不能标WS06-A/G或整体OBS为ACCEPTED。
