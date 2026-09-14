@@ -322,7 +322,8 @@ func assertFactGraphPostgresRunnerNativeTrace(t *testing.T) {
 		if row["event"] == "usermodel.fact.append.finished" && row["outcome"] == "rejected" && row["error_code"] == "FACT_CONFLICT" {
 			domainRejected = true
 		}
-		if row["event"] == "runtime.run.finished" && row["run_id"] == "run-conflict" && row["outcome"] == "cancelled" {
+		if row["event"] == "runtime.run.finished" && row["run_id"] == "run-conflict" &&
+			row["outcome"] == "failed" && row["error_code"] == "RUN_SINK_FAILED" {
 			runtimeStopped = true
 		}
 	}
