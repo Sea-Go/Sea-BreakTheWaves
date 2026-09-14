@@ -1,23 +1,25 @@
 package ridethewind_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/jobs"
 	sdk "github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/content"
+	frameworkruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
@@ -99,7 +101,7 @@ func TestRealKnowledgeWorkerHTTP(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	jobType := "content-" + unique
+	jobType := app.PrepareJobType
 	receipt, e := dc.SubmitJob(ctx, jobs.Submit{Producer: "btw-content-test", OperationID: input.OperationID, RunRef: "run-" + unique, JobType: jobType, ResourceProfile: "cpu", Input: rawInput, Deadline: time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano), MaxAttempts: 1})
 	if e != nil {
 		t.Fatal(e)
@@ -108,15 +110,19 @@ func TestRealKnowledgeWorkerHTTP(t *testing.T) {
 	if e != nil || granted.ID != receipt.ID {
 		t.Fatalf("DC granted job %+v %v", granted, e)
 	}
-	expires, e := time.Parse(time.RFC3339Nano, granted.LeaseExpiresAt)
-	if e != nil {
-		t.Fatal(e)
+	prepared := prepareContent(t, ctx, dc, worker, release, granted)
+	if prepared.ChunkManifest.SHA256 == "" || prepared.State != "BUILDING" || prepared.BuildID != build.BuildId {
+		t.Fatalf("invalid framework preparation receipt %+v", prepared)
 	}
-	claim := sdk.ClaimBuildReq{BuildId: build.BuildId, Generation: build.Generation, ManifestHash: build.ManifestHash, CancelVersion: granted.CancelVersion, AttemptId: granted.AttemptID, LeaseEpoch: granted.LeaseEpoch, LeaseExpiresAt: granted.LeaseExpiresAt}
-	if _, e = worker.ClaimBuild(ctx, claim); e != nil {
-		t.Fatal(e)
+	completedJob, e := dc.GetJob(ctx, granted.ID)
+	if e != nil || completedJob.State != "succeeded" || completedJob.Result == nil || completedJob.Result.Ref == nil ||
+		completedJob.Result.Ref.Hash != prepared.ChunkManifest.SHA256 {
+		t.Fatalf("DC technical chunk job was not completed from Graph receipt: %+v %v", completedJob, e)
 	}
-	prepareContent(t, ctx, worker, release, input, content.Fence{BuildID: build.BuildId, AttemptID: granted.AttemptID, LeaseEpoch: granted.LeaseEpoch, CancelVersion: granted.CancelVersion, ExpiresAt: expires})
+	assertPrepareTraceAcrossServices(t, os.Getenv("SEA_ACCEPTANCE_TEMP"))
+	if actual, e := worker.GetBuild(ctx, build.BuildId); e != nil || actual.State != "BUILDING" {
+		t.Fatalf("chunk job incorrectly promoted RTW build to READY: %+v %v", actual, e)
+	}
 	result := sdk.AcceptBuildReq{BuildId: build.BuildId, Generation: build.Generation, ManifestHash: build.ManifestHash, CancelVersion: build.CancelVersion, AttemptId: granted.AttemptID, LeaseEpoch: granted.LeaseEpoch, State: "FAILED", ErrorCode: "fixture_no_model"}
 	accepted, e := worker.AcceptBuild(ctx, result)
 	if e != nil || accepted.State != "FAILED" {
@@ -125,10 +131,6 @@ func TestRealKnowledgeWorkerHTTP(t *testing.T) {
 	if _, e = worker.AcceptBuild(ctx, result); e != nil {
 		t.Fatal("idempotent build result", e)
 	}
-	if _, e = dc.CompleteJob(ctx, granted.ID, jobs.Complete{Lease: jobs.Lease{WorkerID: granted.WorkerID, AttemptID: granted.AttemptID, LeaseEpoch: granted.LeaseEpoch, CancelVersion: granted.CancelVersion}, Result: jobs.Result{State: "failed", ErrorCode: "fixture_no_model"}}); e != nil {
-		t.Fatal(e)
-	}
-
 	result.LeaseEpoch = 2
 	if _, e = worker.AcceptBuild(ctx, result); e == nil {
 		t.Fatal("accepted incorrect lease")
@@ -148,7 +150,59 @@ func TestRealKnowledgeWorkerHTTP(t *testing.T) {
 	t.Logf("real RTW HTTP fixed revision=%s release=%s; build/compile fences and failure receipts passed", revision.RevisionId, release.ReleaseId)
 }
 
-func prepareContent(t *testing.T, ctx context.Context, worker *sdk.Client, release sdk.Release, input content.BuildInput, fence content.Fence) {
+func assertPrepareTraceAcrossServices(t *testing.T, directory string) {
+	t.Helper()
+	type observedRow struct {
+		Event   string `json:"event"`
+		TraceID string `json:"trace_id"`
+	}
+	readEvents := func(name string) []observedRow {
+		t.Helper()
+		raw, err := os.ReadFile(directory + "/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows []observedRow
+		for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+			if len(line) == 0 {
+				continue
+			}
+			var row observedRow
+			if err := json.Unmarshal(line, &row); err != nil {
+				t.Fatalf("%s non-JSON log: %v", name, err)
+			}
+			rows = append(rows, row)
+		}
+		return rows
+	}
+	var traceID string
+	for _, row := range readEvents("btw-worker.jsonl") {
+		if row.Event == "content.worker.prepare.started" {
+			traceID = row.TraceID
+		}
+	}
+	if traceID == "" {
+		t.Fatal("worker prepare did not emit a real Trace ID")
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		seenRTW, seenDC := false, false
+		for _, row := range readEvents("rtw.log") {
+			seenRTW = seenRTW || row.TraceID == traceID && row.Event == "knowledge.build.claim.succeeded"
+		}
+		for _, row := range readEvents("dc.log") {
+			seenDC = seenDC || row.TraceID == traceID && row.Event == "platform.job.complete.finished"
+		}
+		if seenRTW && seenDC {
+			t.Logf("same actual Trace ID %s joins BTW Graph, RTW build claim and DC completion", traceID)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("framework request trace %s did not reach RTW/DC: RTW=%t DC=%t", traceID, seenRTW, seenDC)
+		}
+	}
+}
+
+func prepareContent(t *testing.T, ctx context.Context, dc *datacenter.Client, worker *sdk.Client, release sdk.Release, granted jobs.Job) content.PrepareGraphReceipt {
 	t.Helper()
 	cfg, e := pgxpool.ParseConfig(os.Getenv("SEA_TEST_CONTENT_DSN"))
 	if e != nil {
@@ -171,8 +225,13 @@ func prepareContent(t *testing.T, ctx context.Context, worker *sdk.Client, relea
 	if e != nil {
 		t.Fatal(e)
 	}
+	output, e := os.Create(os.Getenv("SEA_ACCEPTANCE_TEMP") + "/btw-worker.jsonl")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer output.Close()
 	observed, e := telemetry.New(ctx, telemetry.Config{Service: "btw-knowledge-integration", Environment: "test", Version: "test-revision",
-		InstanceID: "worker-one", Output: io.Discard, Level: slog.LevelInfo, TraceExporter: integrationTraceSink{}, SampleRatio: 1})
+		InstanceID: "worker-one", Output: output, Level: slog.LevelInfo, TraceExporter: integrationTraceSink{}, SampleRatio: 1})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -184,19 +243,37 @@ func prepareContent(t *testing.T, ctx context.Context, worker *sdk.Client, relea
 	if e != nil {
 		t.Fatal(e)
 	}
-	prepared, e := preparer.Prepare(ctx, input, fence)
+	agent, e := content.NewPrepareGraphAgent(preparer)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if prepared.Build.State != "BUILDING" || prepared.Build.Chunks == nil || *prepared.Build.Chunks != prepared.Ref || len(prepared.Manifest.Chunks) == 0 || prepared.Manifest.InputManifestHash != release.ManifestHash {
-		t.Fatalf("invalid prepared content %+v", prepared)
-	}
-	replay, e := preparer.Prepare(ctx, input, fence)
-	if e != nil || replay.Ref != prepared.Ref {
-		t.Fatalf("fixed input replay differs %+v %v", replay, e)
-	}
-	if _, e = objects.Get(ctx, prepared.Ref); e != nil {
+	sessionDSN := os.Getenv("SEA_RUNTIME_TEST_DSN")
+	sessionPool, e := pgxpool.New(ctx, sessionDSN)
+	if e != nil {
 		t.Fatal(e)
 	}
-	t.Logf("real DC attempt %s -> RTW claim -> %d chunks; fixed chunk hash %s stored in content PG, state BUILDING", fence.AttemptID, len(prepared.Manifest.Chunks), prepared.Ref.SHA256)
+	if _, e = sessionPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS content_agent"); e != nil {
+		t.Fatal(e)
+	}
+	sessionPool.Close()
+	runner, e := frameworkruntime.OpenPostgres("content-prepare", agent, frameworkruntime.PostgresConfig{
+		DSN: sessionDSN, Schema: "content_agent", TablePrefix: "sea_", Initialize: true}, observed)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer runner.Close()
+	prepareWorker, e := app.NewPrepareWorker(app.PrepareWorkerConfig{WorkerID: granted.WorkerID, ResourceProfile: "cpu", LeaseSeconds: 45},
+		dc, worker, runner, store, objects, observed)
+	if e != nil {
+		t.Fatal(e)
+	}
+	prepared, e := prepareWorker.ProcessClaim(ctx, granted)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = objects.Get(ctx, prepared.ChunkManifest); e != nil {
+		t.Fatal(e)
+	}
+	t.Logf("real DC attempt %s -> RTW claim -> GraphAgent -> chunk artifact %s, count=%d, state BUILDING", granted.AttemptID, prepared.ChunkManifest.SHA256, prepared.ChunkCount)
+	return prepared
 }

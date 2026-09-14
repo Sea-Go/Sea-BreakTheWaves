@@ -42,12 +42,13 @@ export SEA_ACCEPTANCE_RTW_PORT="$sea_rtw_port"
 (cd "$SEA_RTW_ROOT" && go build -mod=readonly -o "$sea_tmp/rtw-knowledge" ./service/knowledge/api)
 git -C "$SEA_DC_ROOT" rev-parse HEAD > "$sea_tmp/dc.sha"
 git -C "$SEA_RTW_ROOT" rev-parse HEAD > "$sea_tmp/rtw.sha"
+export SEA_ACCEPTANCE_RTW_SHA="$(cat "$sea_tmp/rtw.sha")"
 DATABASE_URL="postgres://sea_runtime_test@127.0.0.1:$sea_pg_port/dc?sslmode=disable" PLATFORM_SERVICE_TOKEN=runtime-fixture "$sea_tmp/dc-platform" -listen "127.0.0.1:$sea_dc_port" -migrate > "$sea_tmp/dc.log" 2>&1 &
 sea_dc_pid=$!
 python3 - <<'PY'
 import json,os,pathlib
 root=pathlib.Path(os.environ['SEA_ACCEPTANCE_TEMP'])
-config={'Name':'knowledge-runtime-test','Host':'127.0.0.1','Port':int(os.environ['SEA_ACCEPTANCE_RTW_PORT']),'Mode':'test','Timeout':15000,'Log':{'Mode':'console','Level':'error'},'Auth':{'AccessSecret':'runtime-fixture-secret','AccessExpire':3600},'AdministratorIDs':['runtime-admin'],'WorkerToken':'runtime-worker','Postgres':{'DSN':f"postgres://sea_runtime_test@127.0.0.1:{os.environ['SEA_ACCEPTANCE_PG_PORT']}/knowledge?sslmode=disable",'MaxConnections':4,'Migrate':True},'Objects':{'Backend':'local','LocalDirectory':str(root/'objects')},'Delivery':{'Enabled':False}}
+config={'Name':'knowledge-runtime-test','Host':'127.0.0.1','Port':int(os.environ['SEA_ACCEPTANCE_RTW_PORT']),'Mode':'test','Timeout':15000,'Log':{'Mode':'console','Level':'info'},'Observability':{'Version':os.environ['SEA_ACCEPTANCE_RTW_SHA'],'SampleRatio':1},'Auth':{'AccessSecret':'runtime-fixture-secret','AccessExpire':3600},'AdministratorIDs':['runtime-admin'],'WorkerToken':'runtime-worker','Postgres':{'DSN':f"postgres://sea_runtime_test@127.0.0.1:{os.environ['SEA_ACCEPTANCE_PG_PORT']}/knowledge?sslmode=disable",'MaxConnections':4,'Migrate':True},'Objects':{'Backend':'local','LocalDirectory':str(root/'objects')},'Delivery':{'Enabled':False}}
 (root/'knowledge.json').write_text(json.dumps(config))
 PY
 "$sea_tmp/rtw-knowledge" -f "$sea_tmp/knowledge.json" > "$sea_tmp/rtw.log" 2>&1 &
