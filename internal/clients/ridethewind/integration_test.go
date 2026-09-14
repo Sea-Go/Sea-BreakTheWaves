@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -17,9 +19,16 @@ import (
 	sdk "github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/jackc/pgx/v5/pgxpool"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+type integrationTraceSink struct{}
+
+func (integrationTraceSink) ExportSpans(context.Context, []sdktrace.ReadOnlySpan) error { return nil }
+func (integrationTraceSink) Shutdown(context.Context) error                             { return nil }
 
 func TestRealKnowledgeWorkerHTTP(t *testing.T) {
 	endpoint := os.Getenv("SEA_TEST_RTW_URL")
@@ -162,7 +171,16 @@ func prepareContent(t *testing.T, ctx context.Context, worker *sdk.Client, relea
 	if e != nil {
 		t.Fatal(e)
 	}
-	preparer, e := content.NewPreparer(worker, objects, store, chunker)
+	observed, e := telemetry.New(ctx, telemetry.Config{Service: "btw-knowledge-integration", Environment: "test", Version: "test-revision",
+		InstanceID: "worker-one", Output: io.Discard, Level: slog.LevelInfo, TraceExporter: integrationTraceSink{}, SampleRatio: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer observed.Close(context.Background())
+	if e = observed.InstallGlobals(); e != nil {
+		t.Fatal(e)
+	}
+	preparer, e := content.NewPreparer(worker, objects, store, chunker, observed)
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -36,3 +36,6 @@
 ## 独立审查修正
 
 5779b3a的独立审查复现：经公开RecordChunks登记自洽的伪清单，可把3块缩成1块、把位置改为paragraph:999或修改chunk ID后仍READY。正常Preparer生成正确，但对账不应信任另一生产者自报覆盖。现已收起RecordChunks登记入口，并在首次READY前用RTW固定ID的权威原文重新生成expected manifest，与提交hash精确比较；三个反例均拒绝，状态/Outbox不推进。真实PG16全content/artifacts race与vet复验通过。现有READY的丢收据重试继续复用已接纳工件，不重复近似查询。
+
+
+观测接口补充：Preparer及Reconciler必须接收已安装的公共Telemetry Bundle；开始和最终结果围绕固定build、release、attempt/lease记录，不在纯分块函数与PG helper散落日志。对账拒绝时保留error_code与候选工件hash供查验；成功只在对应Store提交后记录。真实PG测试已覆盖错误清单与取消/过期的结构化终态，Collector和跨服务traceparent未完成，OBS整体仍为LOCAL_VERIFIED局部。

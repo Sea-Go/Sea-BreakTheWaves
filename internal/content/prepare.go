@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"reflect"
 	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 )
 
 // RevisionSource is the worker product API. It does not grant access to RTW's
@@ -41,17 +43,18 @@ type Prepared struct {
 }
 
 type Preparer struct {
-	source  RevisionSource
-	objects artifacts.Store
-	store   *Store
-	chunker *Chunker
+	source   RevisionSource
+	objects  artifacts.Store
+	store    *Store
+	chunker  *Chunker
+	observed *telemetry.Bundle
 }
 
-func NewPreparer(source RevisionSource, objects artifacts.Store, store *Store, chunker *Chunker) (*Preparer, error) {
-	if source == nil || objects == nil || store == nil || chunker == nil {
+func NewPreparer(source RevisionSource, objects artifacts.Store, store *Store, chunker *Chunker, observed *telemetry.Bundle) (*Preparer, error) {
+	if source == nil || objects == nil || store == nil || chunker == nil || observed == nil || !observed.Installed() {
 		return nil, ErrInvalid
 	}
-	return &Preparer{source: source, objects: objects, store: store, chunker: chunker}, nil
+	return &Preparer{source: source, objects: objects, store: store, chunker: chunker, observed: observed}, nil
 }
 
 func decodeObject(data []byte, value any) error {
@@ -70,8 +73,27 @@ func decodeObject(data []byte, value any) error {
 // Prepare consumes an RTW claim already granted for the DC attempt. External
 // reads and chunking happen outside database transactions. RecordChunks performs
 // the final local fence/expiry/tombstone check before committing the reference.
-func (p *Preparer) Prepare(ctx context.Context, input BuildInput, fence Fence) (Prepared, error) {
-	input, err := normalizeInput(input)
+func (p *Preparer) Prepare(ctx context.Context, input BuildInput, fence Fence) (prepared Prepared, err error) {
+	ctx, stage, startErr := p.observed.Begin(ctx, "content", "content.prepare", slog.String("operation_id", input.OperationID),
+		slog.String("build_id", input.BuildID), slog.String("release_id", input.ReleaseID),
+		slog.Int64("generation", input.Generation), slog.String("attempt_id", fence.AttemptID), slog.Int64("lease_epoch", fence.LeaseEpoch))
+	if startErr != nil {
+		return Prepared{}, startErr
+	}
+	var candidate corpus.Ref
+	defer func() {
+		if value := recover(); value != nil {
+			stage.End(ctx, "failed", "CONTENT_PANIC", fmt.Errorf("content panic (%T): %v", value, value))
+			panic(value)
+		}
+		outcome, code := contentObservation(err)
+		fields := []slog.Attr{slog.Int("chunk_count", len(prepared.Manifest.Chunks))}
+		if candidate.SHA256 != "" {
+			fields = append(fields, slog.String("candidate_chunk_manifest_hash", candidate.SHA256))
+		}
+		stage.End(ctx, outcome, code, err, fields...)
+	}()
+	input, err = normalizeInput(input)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -136,6 +158,7 @@ func (p *Preparer) Prepare(ctx context.Context, input BuildInput, fence Fence) (
 	if err != nil {
 		return Prepared{}, fmt.Errorf("save fixed chunks: %w", err)
 	}
+	candidate = ref
 	if err := p.store.recordChunks(ctx, fence, ref); err != nil {
 		return Prepared{}, err
 	}

@@ -1,6 +1,7 @@
 package content
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -79,7 +80,7 @@ func preparedFixture(t *testing.T) (*Store, *artifacts.Local, Prepared, Fence, [
 	if err != nil {
 		t.Fatal(err)
 	}
-	preparer, err := NewPreparer(client, objects, store, chunker)
+	preparer, err := NewPreparer(client, objects, store, chunker, contentObservationForTest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +122,7 @@ func TestReconcileFixedCoverageAndIndependentProbe(t *testing.T) {
 	for _, scenario := range []string{"valid", "missing_lane", "missing_chunk", "duplicate_chunk", "foreign_chunk", "wrong_space", "unreadable_shard", "probe_failed", "tombstone", "expired", "truncated_manifest", "invented_location", "invented_identity"} {
 		t.Run(scenario, func(t *testing.T) {
 			store, objects, prepared, fence, profiles, source := preparedFixture(t)
+			loggedBefore := testObservationOutput.Len()
 			ctx := context.Background()
 			if scenario == "truncated_manifest" || scenario == "invented_location" || scenario == "invented_identity" {
 				// Simulate a self-consistent corrupt producer artifact at the internal
@@ -190,14 +192,31 @@ func TestReconcileFixedCoverageAndIndependentProbe(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			reconciler, err := NewReconciler(source, objects, store, verifiers)
+			reconciler, err := NewReconciler(source, objects, store, verifiers, contentObservationForTest(t))
 			if err != nil {
 				t.Fatal(err)
 			}
 			ref, err := reconciler.Ready(ctx, fence)
+			output := testObservationOutput.Bytes()[loggedBefore:]
+			var terminal map[string]any
+			for _, line := range bytes.Split(bytes.TrimSpace(output), []byte("\n")) {
+				var entry map[string]any
+				if parseErr := json.Unmarshal(line, &entry); parseErr != nil {
+					t.Fatal(parseErr)
+				}
+				if entry["event"] == "content.reconcile.finished" {
+					terminal = entry
+				}
+			}
+			if terminal == nil || terminal["build_id"] != "build" || terminal["trace_id"] == nil || terminal["span_id"] == nil {
+				t.Fatalf("no correlated content terminal record: %+v", terminal)
+			}
 			if scenario != "valid" {
 				if err == nil {
 					t.Fatalf("%s accepted", scenario)
+				}
+				if terminal["outcome"] == "succeeded" || terminal["error_code"] == nil || terminal["error_message"] == nil {
+					t.Fatalf("rejected stage logged success or hid the cause: %+v", terminal)
 				}
 				b, e := store.Get(ctx, "build")
 				if e != nil || b.State != "BUILDING" || b.Result != nil {
@@ -207,6 +226,9 @@ func TestReconcileFixedCoverageAndIndependentProbe(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if terminal["outcome"] != "succeeded" || terminal["result_hash"] != ref.SHA256 {
+				t.Fatalf("READY terminal lacked fixed manifest: %+v", terminal)
 			}
 			raw, err := objects.Get(ctx, ref)
 			if err != nil {
@@ -238,7 +260,7 @@ func TestProfileDefinitionCannotChangeUnderSameID(t *testing.T) {
 }
 
 func TestNoDefaultReadyVerifier(t *testing.T) {
-	if _, err := NewReconciler(nil, nil, nil, nil); !errors.Is(err, ErrInvalid) {
+	if _, err := NewReconciler(nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatal("missing verifier accepted")
 	}
 }

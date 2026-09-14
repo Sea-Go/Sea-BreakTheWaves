@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 )
 
 // LaneVerifier is implemented by each retrieval lane. It validates actual shard
@@ -24,10 +26,11 @@ type Reconciler struct {
 	objects   artifacts.Store
 	store     *Store
 	verifiers map[string]LaneVerifier
+	observed  *telemetry.Bundle
 }
 
-func NewReconciler(source RevisionSource, objects artifacts.Store, store *Store, verifiers map[string]LaneVerifier) (*Reconciler, error) {
-	if source == nil || objects == nil || store == nil {
+func NewReconciler(source RevisionSource, objects artifacts.Store, store *Store, verifiers map[string]LaneVerifier, observed *telemetry.Bundle) (*Reconciler, error) {
+	if source == nil || objects == nil || store == nil || observed == nil || !observed.Installed() {
 		return nil, ErrInvalid
 	}
 	copy := map[string]LaneVerifier{}
@@ -37,7 +40,7 @@ func NewReconciler(source RevisionSource, objects artifacts.Store, store *Store,
 		}
 		copy[lane] = verifiers[lane]
 	}
-	return &Reconciler{source: source, objects: objects, store: store, verifiers: copy}, nil
+	return &Reconciler{source: source, objects: objects, store: store, verifiers: copy, observed: observed}, nil
 }
 
 func (r *Reconciler) load(ctx context.Context, ref corpus.Ref, value any) error {
@@ -48,7 +51,29 @@ func (r *Reconciler) load(ctx context.Context, ref corpus.Ref, value any) error 
 	return decodeObject(raw, value)
 }
 
-func (r *Reconciler) Ready(ctx context.Context, fence Fence) (corpus.Ref, error) {
+func (r *Reconciler) Ready(ctx context.Context, fence Fence) (result corpus.Ref, err error) {
+	ctx, stage, startErr := r.observed.Begin(ctx, "content", "content.reconcile",
+		slog.String("build_id", fence.BuildID), slog.String("attempt_id", fence.AttemptID),
+		slog.Int64("lease_epoch", fence.LeaseEpoch), slog.Int64("cancel_version", fence.CancelVersion))
+	if startErr != nil {
+		return corpus.Ref{}, startErr
+	}
+	var candidate corpus.Ref
+	defer func() {
+		if value := recover(); value != nil {
+			stage.End(ctx, "failed", "CONTENT_PANIC", fmt.Errorf("content panic (%T): %v", value, value))
+			panic(value)
+		}
+		outcome, code := contentObservation(err)
+		fields := []slog.Attr{}
+		if result.SHA256 != "" {
+			fields = append(fields, slog.String("result_hash", result.SHA256))
+		}
+		if candidate.SHA256 != "" {
+			fields = append(fields, slog.String("candidate_manifest_hash", candidate.SHA256))
+		}
+		stage.End(ctx, outcome, code, err, fields...)
+	}()
 	b, err := r.store.Get(ctx, fence.BuildID)
 	if err != nil {
 		return corpus.Ref{}, err
@@ -229,6 +254,7 @@ func (r *Reconciler) Ready(ctx context.Context, fence Fence) (corpus.Ref, error)
 	if err != nil {
 		return corpus.Ref{}, err
 	}
+	candidate = ref
 	if err := r.store.commitReady(ctx, fence, ref); err != nil {
 		return corpus.Ref{}, err
 	}
