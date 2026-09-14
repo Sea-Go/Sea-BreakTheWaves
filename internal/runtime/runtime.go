@@ -86,6 +86,7 @@ func New(app string, ag agent.Agent, sessions session.Service, observed *telemet
 // product publication or knowledge acceptance receipt. Sink failure cancels work.
 func (r *Runtime) Run(parent context.Context, q Request, sink Sink) (result Result, err error) {
 	result.RunID = q.RunID
+	var sinkFailed bool
 	if r.observed == nil {
 		return result, errors.New("runtime telemetry service unavailable")
 	}
@@ -101,6 +102,9 @@ func (r *Runtime) Run(parent context.Context, q Request, sink Sink) (result Resu
 			panic(value)
 		}
 		outcome, code := runtimeObservation(err)
+		if sinkFailed && parent.Err() == nil {
+			outcome, code = "failed", "RUN_SINK_FAILED"
+		}
 		stage.End(ctx, outcome, code, err, slog.Int("event_count", result.Events), slog.Bool("completed", result.Completed))
 	}()
 	user, err := q.Subject.UserKey()
@@ -143,13 +147,20 @@ func (r *Runtime) Run(parent context.Context, q Request, sink Sink) (result Resu
 	for {
 		select {
 		case <-cancelled:
-			first = errors.Join(first, ctx.Err())
+			// A sink rejection deliberately cancels upstream execution. That
+			// internal cancellation must not reclassify the original failure.
+			if !sinkFailed || parent.Err() != nil {
+				first = errors.Join(first, ctx.Err())
+			}
 			cancelled = nil
 			sinkEnabled = false
 		case e, ok := <-events:
 			if !ok {
-				if !result.Completed {
+				if !result.Completed && !sinkFailed {
 					first = errors.Join(first, ErrIncomplete)
+				}
+				if sinkFailed {
+					return result, errors.Join(first, parent.Err(), persistence.get())
 				}
 				return result, errors.Join(first, ctx.Err(), persistence.get())
 			}
@@ -171,6 +182,7 @@ func (r *Runtime) Run(parent context.Context, q Request, sink Sink) (result Resu
 			}
 			if sinkEnabled && sink != nil {
 				if err := sink(ctx, e); err != nil {
+					sinkFailed = true
 					cancel()
 					first = errors.Join(first, err)
 					sinkEnabled = false

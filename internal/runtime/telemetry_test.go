@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http/httptest"
 	"os"
@@ -79,6 +80,36 @@ func TestRunnerTerminalCreatesTraceLinkedStageAndMetric(t *testing.T) {
 	b.MetricsHandler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 	if !strings.Contains(response.Body.String(), `sea_btw_operations_total{component="runtime",outcome="succeeded"}`) {
 		t.Fatal("successful run not counted")
+	}
+}
+
+func TestSinkRejectionKeepsFailureOutcome(t *testing.T) {
+	b := observedForTest(t)
+	runID := "run-sink-rejected"
+	r := &Runtime{runner: runnerStub{[]*event.Event{{RequestID: runID, Response: &model.Response{Done: true,
+		Object: model.ObjectTypeRunnerCompletion}}}}, observed: b, active: map[string]context.CancelFunc{}}
+	q := runtimeRequest()
+	q.RunID, q.SessionID = runID, "session-sink-rejected"
+	want := errors.New("citation receipt rejected")
+	_, err := r.Run(context.Background(), q, func(context.Context, *event.Event) error { return want })
+	if !errors.Is(err, want) || errors.Is(err, context.Canceled) {
+		t.Fatalf("sink failure became cancellation: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var terminal map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(observedOutput.Bytes()), []byte("\n")) {
+		var entry map[string]any
+		if err := json.Unmarshal(line, &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["run_id"] == runID && entry["event"] == "runtime.run.finished" {
+			terminal = entry
+		}
+	}
+	if terminal == nil || terminal["outcome"] != "failed" || terminal["error_code"] != "RUN_SINK_FAILED" {
+		t.Fatalf("sink rejection terminal was not failed: %+v", terminal)
 	}
 }
 
