@@ -14,6 +14,8 @@ RTW `GetCurrentSearchSnapshot` 的空 `valid_revision_ids` 为 JSON `[]`，现�
 
 `TestSignedToolsScopeAndNativeGraphHTTP` 在隔离子进程中发送漏签、重复头、坏签、非法编码、错受众、错快照 hash、超长时间窗、body hash 错、缺字段与未知嵌套字段；均返回 403，零原文读和零引用接纳。真实已签 `fast/low` fixture 走 Graph、一次原文读与引用接纳，返回裸引用、同一 pack hash/收据和实际用量；有 `trpc.agent.go` 原生根 Agent Span 与统一 JSON stage 日志。已签 `high` 返回 503，不进入 Graph。`cmd/api` 真回环 socket 对无签名 Tools 返回 403。`TestCloneSnapshotPreservesEmptyRevisionArray` 守住空发布集合形状。
 
-`TestRTWRealToolsSearchServer` 是可选 RTW 真 User Center/PG 联验子进程，要求 RTW 测试提供 0600 JSON fixture（`rtw_base,worker_token,scope_key,ready_path,module_id`），启动前读取真实 RTW 当前发布，并将服务 URL 写入 `ready_path`；收到一条签名空证据子搜索后等待 SIGTERM，验收 1 次原生 Graph 搜索、零原文读和零引用接纳。未在 RTW 验收脚本带 `SEA_BTW_TOOLS_CONSUMER_ROOT` 成功跑完前，该跨仓子链仍为 `NOT_VERIFIED`。
+`TestRTWRealToolsSearchServer` 是可选 RTW 真 User Center/PG 联验子进程，要求 RTW 测试提供 0600 JSON fixture（`rtw_base,worker_token,scope_key,ready_path,module_id`），启动前读取真实 RTW 当前发布，并将服务 URL 写入 `ready_path`。不带 candidate 时，收到一条签名空证据子搜索后验收 1 次原生 Graph 搜索、零原文读和零引用接纳；带 `candidate:{revision_id,chunk_id,quote_hash}` 时，先验证该 chunk 属于 RTW 当前发布，再由真实 `RTWSearchCitationAdapter` 重读同版原文并接纳引用，验收 1 次 Graph/Reader/Accept。候选片段只用于确定性跨仓夹具，尚未证明本地 exact 三路召回。
+
+空证据跨仓子链已在 RTW 独立分支 `30a9083` 与 BTW 本独立树上验证：`GOFLAGS=-p=2 GOMAXPROCS=2 KNOWLEDGE_KEEP_EVIDENCE=1 KNOWLEDGE_REAL_USER_GATE=1 SEA_BTW_TOOLS_CONSUMER_ROOT=<BTW独立树> bash service/knowledge/scripts/acceptance.sh` 退出 0；`TestRealHTTPKnowledgeWorkflowWithUserCenter` 31.55s、普通工作流 12.52s 均通过。RTW 父测试断言真实签发请求原样进入 BTW、空证据在 PG 只提交一个子操作、没有 citation 行、同键 POST/GET 回放不重复执行，父搜索次数扣一次而读数/引文上界退款。首次未限制并行度时，真实 User Center 第二次注册 RPC 触发固定 2 秒超时，未到达 BTW；重试通过。日志在 `/tmp/sea-rtw-tools-btw-cross-retry-20260914.log`，保留的隔离 PG 证据目录为 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T/sea-knowledge-acceptance.WWKUe5`。有证据跨仓子链及父预算实际用量退款仍待 RTW 父测试运行验证。
 
 本消费者还未证明真实本地 exact 三路工件对某一已发布 chunk 的召回、生产 BGE/模型、详搜/中高智能、RTW 发布撤回并发竞争、WhaleHall Bun 父 Agent 多次搜索或 Collector 跨进程下钻。H02 Tools 整体为 `PARTIAL`，不能标记 `ACCEPTED`。
