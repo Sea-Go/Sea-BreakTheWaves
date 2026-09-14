@@ -10,6 +10,26 @@
 
 ---
 
+## 当前工程入口
+
+根 Go module 正在按 Sea 的最终职责划分实现内容与搜索运行基础，云端 Agent 采用 tRPC-Agent-Go。已实现部分及真实验收见以下入口：
+
+| 目录 | 当前职责 | 说明 |
+| --- | --- | --- |
+| `internal/content`、`internal/corpus` | 固定修订、分块与来源映射、构建账本及三路就绪对账 | [内容构建](docs/content.md) |
+| `internal/runtime`、`internal/clients` | 框架Runner/PG Session、DC与RTW共享客户端 | [运行与客户端](docs/runtime.md) |
+| `warehouse` | ClickHouse/dbt分层计算和不可变数据产物 | [数仓](warehouse/README.md) |
+| `training`、`contracts/jsonschema` | 冻结数据读取与数据集契约 | [训练数据消费](training/README.md) |
+
+这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；下面的RecoAgent/旧HTTP入口说明属于仍保留的 `recommendation` 实现。`recommendation`、`agent_v2`、`agent_v3` 各自拥有Go模块，根目录测试不会覆盖它们。
+
+```sh
+bash scripts/test-go-modules.sh root
+bash scripts/test-content.sh
+# 需要检查存量模块时显式选择，或使用 all：
+bash scripts/test-go-modules.sh recommendation
+```
+
 ## 前言
 由于一些原因，在原先开源的仓库中发生了诸如审核不严格导致的垃圾 PR、以及部分敏感信息泄露等问题。为了更好地控制项目质量和安全，我们决定将仓库迁移到一个新的地址，并重新整理了项目结构和文档说明。
 
