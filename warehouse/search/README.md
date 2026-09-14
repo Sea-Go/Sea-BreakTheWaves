@@ -1,6 +1,6 @@
 # 搜索相关性集市与冻结 Parquet
 
-本目录是 WS07-D 的**搜索**生产者，独立于 `warehouse/models/marts/datasets/ds_recommendation_interaction.sql` 的推荐曝光样本。输入是版本化、逐条判定的 qrel 事件；`judgment_id` 与修订、query family、**查询**近重复簇、文档/块修订与内容 hash、query/content/judgment/available 时点全部保留。真实业务 qrel 的生产和人工判定来源尚未接入；`fixtures/`只提供可逐字重放的 synthetic 合同实例，不能视为线上相关性或模型效果。
+本目录是 WS07-D 的**搜索**生产者，独立于 `warehouse/models/marts/datasets/ds_recommendation_interaction.sql` 的推荐曝光样本。输入是版本化、逐条判定的 qrel 事件；`judgment_id` 与修订、query family、**查询**近重复簇、文档/块修订与内容 hash、query/content/judgment/available 时点全部保留。现已另有 RTW/DC/PG 的**测试判定子流**与 CH/dbt 同源验收，见 [SUBSTREAM_ACCEPTANCE.md](SUBSTREAM_ACCEPTANCE.md)；真人判断及完整判断范围未接入。`fixtures/`仍只提供可逐字重放的 synthetic 合同实例，不能视为线上相关性或模型效果。
 
 ```sh
 RUNTIME=/private/tmp/sea-ws07c-ws08c-runtime-verified-20260914

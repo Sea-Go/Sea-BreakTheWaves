@@ -3,7 +3,8 @@
 select judgment_id, judgment_revision, query_id, query_family_id,
        near_duplicate_cluster_id, query_text, query_text_sha256,
        document_id, document_revision, chunk_id, chunk_text, chunk_text_sha256,
-       relevance_grade, judged_mask, judgment_source, judgment_source_ref,
+       assumeNotNull(relevance_grade) as relevance_grade, judged_mask,
+       judgment_source, judgment_source_ref,
        judgment_source_hash, query_time, content_available_at, judged_at,
        available_at, revoked_at,
        multiIf(
@@ -17,3 +18,4 @@ select judgment_id, judgment_revision, query_id, query_family_id,
        ) as split
 from {{ ref('dwd_qrel_revisions') }}
 where _revision_rank = 1 and status = 'active'
+  and relevance_grade is not null and judged_mask = true

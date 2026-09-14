@@ -38,7 +38,8 @@ def judgment(query: tuple[str, str, str, str, int], document: tuple[str, int], s
     judgment_id = f"judge.{query_id}.{document_id}"
     source_ref = f"synthetic-search-qrel/{judgment_id}/r{revision}"
     proof = {"judgment_id": judgment_id, "revision": revision, "source_ref": source_ref,
-             "grade": initial_grade if grade is None else grade, "retracted": retracted}
+             "grade": None if retracted else initial_grade if grade is None else grade,
+             "retracted": retracted}
     result = {
         "event_id": f"{judgment_id}.r{revision}", "judgment_id": judgment_id,
         "judgment_revision": revision, "status": "retracted" if retracted else "active",
@@ -46,7 +47,8 @@ def judgment(query: tuple[str, str, str, str, int], document: tuple[str, int], s
         "query_text": query_text, "query_text_sha256": digest(query_text.encode()),
         "document_id": document_id, "document_revision": "r1", "chunk_id": chunk_id,
         "chunk_text": chunk_text, "chunk_text_sha256": digest(chunk_text.encode()),
-        "relevance_grade": initial_grade if grade is None else grade, "judged_mask": True,
+        "relevance_grade": None if retracted else initial_grade if grade is None else grade,
+        "judged_mask": not retracted,
         "judgment_source": "synthetic_fixture", "judgment_source_ref": source_ref,
         "judgment_source_hash": digest(encoded(proof)), "query_time": iso(query_time),
         "content_available_at": iso(content_time), "judged_at": iso(judged_at),

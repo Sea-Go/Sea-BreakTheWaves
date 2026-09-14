@@ -105,13 +105,17 @@ def dbt_build(dbt: Path, endpoint: str, generation: str, recipe: dict, output: P
 
 
 def export(ch: ClickHouse, prefix: str, generation: str, revision: int, batches: list[Path],
-           rows: list[dict], contracts: Path, build: Path, output: Path, parent_sha: str | None) -> tuple[Path, dict]:
+           rows: list[dict], contracts: Path, build: Path, output: Path, parent_sha: str | None,
+           *, substream: dict | None = None, split_plan: dict | None = None,
+           cutoff: str | None = None) -> tuple[Path, dict]:
     output.mkdir(parents=True, exist_ok=False)
+    effective_splits = split_plan if split_plan is not None else SPLITS
+    effective_cutoff = cutoff if cutoff is not None else CUTOFFS[revision]
     columns = json.loads((contracts / "search-qrel.columns.v1.json").read_text())
     selected = ", ".join(column["name"] for column in columns)
     files = []
     split_receipts = []
-    for split, bounds in SPLITS.items():
+    for split, bounds in effective_splits.items():
         name = f"{split}-00000.parquet"
         url = f"{prefix}/search-qrel/{generation}/{name}"
         assert_absent(url)
@@ -135,30 +139,43 @@ def export(ch: ClickHouse, prefix: str, generation: str, revision: int, batches:
                       f"FROM {generation}.ds_search_qrels ORDER BY judgment_id")
     content = sorted({(item["document_id"], item["document_revision"], item["chunk_id"],
                       item["chunk_text_sha256"], item["content_available_at"]) for item in visible})
+    watermark = {"source": "synthetic-search-qrel", "partition": "fixture-0",
+                 "position": max(item["source_sequence"] for item in rows),
+                 "event_time": max(item["available_at"] for item in rows)}
+    if substream is not None:
+        watermark = {"source": substream["producer"], "partition": substream["source_partition"],
+                     "position": substream["qrel_count"],
+                     "event_time": max(item["available_at"] for item in rows)}
+    recipe = {"cutoff": effective_cutoff, "splits": effective_splits,
+              "batches": [path.stem for path in batches]}
+    if substream is not None:
+        recipe["substream"] = {key: substream[key] for key in
+                               ("coverage_root", "coverage_sha256", "through_offset",
+                                "technical_skip_count", "grouping_policy_sha256")}
     source = {
         "warehouse_run_id": generation, "project_revision": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "generation": generation,
-        "ingest_cutoff": CUTOFFS[revision],
+        "ingest_cutoff": effective_cutoff,
         "batches": [{"batch_id": path.stem, "sha256": file_digest(path)} for path in batches],
-        "watermarks": [{"source": "synthetic-search-qrel", "partition": "fixture-0",
-                         "position": max(item["source_sequence"] for item in rows),
-                         "event_time": max(item["available_at"] for item in rows)}],
+        "watermarks": [watermark],
         "judgment_snapshot_sha256": digest(canonical(visible)),
         "content_snapshot_sha256": digest(canonical(content)),
         "dbt_manifest_sha256": file_digest(build / "target" / "manifest.json"),
         "dbt_run_results_sha256": file_digest(build / "target" / "run_results.json"),
-        "recipe_sha256": digest(canonical({"cutoff": CUTOFFS[revision], "splits": SPLITS,
-                                            "batches": [path.stem for path in batches]})),
+        "recipe_sha256": digest(canonical(recipe)),
     }
     manifest = {
         "schema_version": "sea.search-qrel-dataset.v1", "row_contract": "sea.search-qrel.v1",
-        "dataset_id": "search-qrel-synthetic-fixture", "revision": revision,
+        "dataset_id": "search-qrel-rtw-substream-synthetic-fixture" if substream is not None else
+                      "search-qrel-synthetic-fixture", "revision": revision,
         "parent_revision": revision - 1 if parent_sha else None,
         "parent_manifest_sha256": parent_sha,
         "domain": "search", "data_kind": "synthetic",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "judgment_policy_id": "synthetic-graded-qrel-v1",
-        "split_policy_id": "query-time-family-nearcluster-v1", "near_duplicate_scope": "query",
+        "judgment_policy_id": "rtw-graded-synthetic-fixture-v1" if substream is not None else
+                              "synthetic-graded-qrel-v1",
+        "split_policy_id": substream["grouping_policy_id"] if substream is not None else
+                           "query-time-family-nearcluster-v1", "near_duplicate_scope": "query",
         "columns": columns, "source": source, "splits": split_receipts, "files": files,
         "row_count": sum(item["rows"] for item in files),
     }
