@@ -1,0 +1,1 @@
+{"inputs":["user_interest","item_quality"],"missing":"reject","non_finite":"reject","operation":"identity","version":"sea.recommend.identity-f64.v1"}
