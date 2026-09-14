@@ -41,6 +41,7 @@ type realRTWIndexFixture struct {
 	WorkerToken       string   `json:"worker_token"`
 	DCJobURL          string   `json:"dc_job_url"`
 	DCJobToken        string   `json:"dc_job_token"`
+	DCJobDSN          string   `json:"dc_job_dsn"`
 	BGERuntimeFile    string   `json:"bge_runtime_file"`
 	ObjectsDir        string   `json:"objects_dir"`
 	BuildID           string   `json:"build_id"`
@@ -90,6 +91,12 @@ func readRealRTWIndexFixture(t *testing.T) (realRTWIndexFixture, bool) {
 		if parseErr != nil || platform.Scheme != "http" || net.ParseIP(platform.Hostname()) == nil ||
 			!net.ParseIP(platform.Hostname()).IsLoopback() || fixture.DCJobToken == "" {
 			t.Fatal("actual DC job platform requires a paired loopback URL and disposable token")
+		}
+	}
+	if fixture.DCJobDSN != "" {
+		pgConfig, parseErr := pgxpool.ParseConfig(fixture.DCJobDSN)
+		if parseErr != nil || pgConfig.ConnConfig.Host != "127.0.0.1" || fixture.DCJobURL == "" {
+			t.Fatal("actual DC job database must be task-owned loopback PostgreSQL")
 		}
 	}
 	return fixture, true
