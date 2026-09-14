@@ -16,4 +16,6 @@
 - 启动本机隔离 PostgreSQL 16 后设置 `SEARCH_SESSION_TEST_POSTGRES_DSN`，同一命令：PostgreSQL Session 公开读取反例通过，下一轮模型请求未包含被拒答案；无该变量时此子测试明确 `SKIP`。
 - `go test -mod=readonly -race -count=3 ./internal/search`、`go vet ./internal/search`：通过；原 `ROOT_GRAPH_ACCEPTANCE.md` 的原生 Trace/指标及单 Runner 测试仍在包级测试内。隔离路径的模型请求保留有效框架 Trace。
 
+集成分支新增`internal/search/test-session-postgres.sh`：随机端口启动并停止独立PG16，执行上述根Session反例的`go test -mod=readonly -race -count=1 -v`及`go vet`。实跑输出明确列出`inmemory`、`postgres`、`accepted-boundary`三个子测试均PASS；两种框架后端均可读到被最终拒收的原始模型答案，而受控产品历史只交付通过校验的turn。该脚本不等于正式RTW权威历史或跨轮上下文验收。
+
 正式 API 前仍须：实现 RTW/Conversation 权威 `AcceptedRootHistory` 和失败后 `AnswerID` 恢复；明确多实例幂等、提交不确定、会话排序；把受控已接纳历史按预算映射为下一轮子 Agent 输入并验证不混入原始 Graph StateDelta；公开历史只从权威 `List` 读取；在 DataCenter/RTW/Collector 实际链路上复验同根原生 Span 与业务提交点。上述任一项不能用这里的组件测试替代，H07、正式会话续跑及 OBS-r3 仍未整体接纳。
