@@ -6,4 +6,8 @@ RTW 父测试将 `SEA_RTW_PRODUCT_SERVER_FIXTURE` 指向 0600 JSON，字段为 `
 
 本轮 `SearchExecutor` 返回合法 `empty/no_evidence`，经过真实单根 GraphAgent/Runner，形成 `insufficient` 产品轮次，再由 RTW 生成客户端向同一知识服务 POST 提交。原文读取、引用接纳、模型调用在此路径均必须为零；子进程退出时确认原生根 Agent Span。RTW 父测试负责从自己的 PostgreSQL 验证 AnswerID 和主体、会话归属，并覆盖坏签名、错请求不能入库。这个路径不证明有证据的成功回答、模型质量、三路同代索引、客户端 SSE/Tools 或 H02/J02 的整体验收。
 
-本仓预验证：`go test -race ./...`、`go vet ./...`、`go mod verify` 均通过；`go test -race ./internal/transport/http/search -run '^TestRTWRealProductSearchServer$' -v` 无夹具时按预期跳过。跨仓实测结果由 RTW 父测试完成后补录。
+本仓验证：`go test -race ./...`、`go vet ./...`、`go mod verify` 均通过；`go test -race ./internal/transport/http/search -run '^TestRTWRealProductSearchServer$' -v` 无夹具时按预期跳过。
+
+跨仓验证：从 RTW 集成树运行 `SEA_BTW_PRODUCT_SEARCH_ROOT=/Users/edy/Sea/.codex-worktrees/sea-btw-rtw-product-consumer-20260914 bash service/knowledge/scripts/acceptance.sh`，退出码 0。RTW `TestRealHTTPKnowledgeWorkflow` 的 stage4 将自身签发的原始请求透明转发给此真实 BTW HTTP，BTW 验签后运行根 Graph/Runner，通过 RTW Worker HTTP 提交 `insufficient`。RTW 在同一隔离 PostgreSQL 的 `knowledge_accepted_answers` 中核实该 AnswerID、SearchID、`rtw.identity/platform/<UID>` 和逻辑会话只有一条；`knowledge_search_citations` 中该 SearchID 为零；同一幂等键重投未重跑 BTW，GET 与 POST 结果一致。BTW 子进程退出检查原文读取、引用接纳、模型调用均为零及原生根 Agent Span。此子链结论为 **`INTEGRATED`**，H02/J02 整体仍为 **`PARTIAL`**。
+
+当前默认脚本中的 User RPC 是真实 gRPC 传输上的验收替身；`TestRealHTTPKnowledgeWorkflowWithUserCenter` 明确跳过，不能把这次结果写成真实 UserCenter 进程已联验。三路真实检索命中和有证据的模型回答仍待后续验收。
