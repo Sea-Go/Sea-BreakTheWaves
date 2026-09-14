@@ -105,6 +105,23 @@ type ExactResults struct {
 	QueryCount    int
 }
 
+// LiveExact exposes the three actual immutable exact indexes only while the
+// local acceptance callback runs. It is not a production search assembly.
+type LiveExact struct {
+	Dense         *dense.Service
+	Sparse        *sparse.Service
+	MultiVector   *multivector.Service
+	DenseRef      corpus.Ref
+	SparseRef     corpus.Ref
+	MultiRef      corpus.Ref
+	ModuleID      string
+	ReleaseID     string
+	Generation    int64
+	Chunks        map[string]corpus.Chunk
+	Revisions     map[string]string
+	FullTokenRows int
+}
+
 func (f Frozen) buildCorpus(ctx context.Context, objects artifacts.Store) (corpus.ChunkManifest, corpus.Ref,
 	map[string]ChunkRow, map[string]string, error) {
 	m := corpus.ChunkManifest{SchemaVersion: 1, ModuleID: "h10b-synthetic", ReleaseID: f.ManifestSHA256,
@@ -149,6 +166,22 @@ func (f Frozen) buildCorpus(ctx context.Context, objects artifacts.Store) (corpu
 // exercises Build→Search. It does not perform another model call or use ANN.
 func RunExact(ctx context.Context, frozen Frozen, artifactDir string,
 	candidates map[string][]string) (ExactResults, error) {
+	return runExact(ctx, frozen, artifactDir, candidates, nil)
+}
+
+// RunExactWith keeps the exact lane services alive for one local acceptance
+// run, so a caller can exercise Search Service/Graph against those very index
+// refs instead of replaying a fabricated lane result.
+func RunExactWith(ctx context.Context, frozen Frozen, artifactDir string,
+	candidates map[string][]string, use func(LiveExact) error) (ExactResults, error) {
+	if use == nil {
+		return ExactResults{}, ErrArtifact
+	}
+	return runExact(ctx, frozen, artifactDir, candidates, use)
+}
+
+func runExact(ctx context.Context, frozen Frozen, artifactDir string,
+	candidates map[string][]string, use func(LiveExact) error) (ExactResults, error) {
 	var out ExactResults
 	objects, err := artifacts.NewLocal(artifactDir)
 	if err != nil {
@@ -230,6 +263,18 @@ func RunExact(ctx context.Context, frozen Frozen, artifactDir string,
 			Aggregation: multiProfile.RepresentationContract.Aggregation}})
 	if err != nil {
 		return out, fmt.Errorf("build existing multivector exact: %w", err)
+	}
+	if use != nil {
+		chunks := make(map[string]corpus.Chunk, len(m.Chunks))
+		for _, chunk := range m.Chunks {
+			chunks[chunk.ID] = chunk
+		}
+		if err := use(LiveExact{Dense: denseService, Sparse: sparseService, MultiVector: multiService,
+			DenseRef: denseBuilt.Ref, SparseRef: sparseBuilt.Ref, MultiRef: multiBuilt.Ref,
+			ModuleID: m.ModuleID, ReleaseID: m.ReleaseID, Generation: 1,
+			Chunks: chunks, Revisions: keyToRevision, FullTokenRows: out.FullTokenRows}); err != nil {
+			return out, err
+		}
 	}
 	mapDense := func(candidates []dense.Candidate) ([]Hit, error) {
 		result := make([]Hit, 0, len(candidates))
