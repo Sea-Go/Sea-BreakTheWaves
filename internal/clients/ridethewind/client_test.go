@@ -116,3 +116,27 @@ func TestClaimRejectsMismatchedFence(t *testing.T) {
 		})
 	}
 }
+
+func TestClaimAcceptsRTWAllocatedBuildFence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ClaimBuildReq
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.LeaseEpoch != 0 ||
+			request.AttemptId != "dc-attempt" {
+			t.Errorf("RTW allocation request changed: %+v %v", request, err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "msg": "success", "data": Build{
+			BuildId: "build", Generation: 2, AttemptId: "dc-attempt", LeaseEpoch: 7,
+			ManifestHash: "manifest", State: "BUILDING", LeaseExpiresAt: "lease"}})
+	}))
+	defer server.Close()
+	client, err := New(httpclient.Config{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := client.ClaimBuild(context.Background(), ClaimBuildReq{BuildId: "build",
+		Generation: 2, AttemptId: "dc-attempt", LeaseEpoch: 0, ManifestHash: "manifest",
+		LeaseExpiresAt: "lease"})
+	if err != nil || claim.LeaseEpoch != 7 {
+		t.Fatalf("client rejected RTW-issued build epoch: %+v %v", claim, err)
+	}
+}
