@@ -16,3 +16,9 @@
 状态为 **WS08-C 组件 LOCAL_VERIFIED**。`testdata/features_baseline.sql` 是本包固定对照，不是 WS07-C 已发布的真实 DWS generation。WS07-C/H10.c 交接前提是同版 FeatureSpec、不可变 generation/SQL 运行清单、逐来源连续水位、每个被覆盖活跃事实的事件键/不可变 hash/接纳修订及可逆贡献、聚合值与可用时点；缺一不可接纳。真实 DWS、用户塔 D、推荐请求 F 和训练样本消费尚未联调，H08.b/H10.c/H12 整体未验收。
 
 `Outbox.created_at` 是同事务记录时间而非 PostgreSQL commit timestamp，不能仅凭它对跨越未提交事务的任意旧时刻做严格 point-in-time 重建。请求发生时须固定并保留本切片生成的 `feature_snapshot_id`；历史样本应优先读该不可变快照。来源没有可验证 `source_sequence` 的事实始终留在尾部，不能由猜测的全局事件时间吸收到基线。单主体回放上限为 100000 条接纳事件；超限返回 `ErrPending`，后续需由真实数仓交接和有界 Outbox 游标替代全历史回放。
+
+## 2026-09-14：与独立数仓 DWS 的局部联验
+
+`warehouse/feature_baselines` 已用隔离 PostgreSQL、ClickHouse/dbt 与 SeaweedFS S3 执行两代合成事实的实际存储交接，并调用本包 `AcceptFeatureBaseline` 完成消费者接纳。来源序号 1、3 的断档只覆盖 1；补入 2 后覆盖 3；已接纳但未来生效的 4 留在水位外。S3 来源、DWS 值、基线、dbt 运行工件和清单均有内容 SHA-256；老代回退及变更清单拒收。新增 `NextChangeAt` 的未来事实失效点，防止已接纳但未来生效的事实在旧快照中永久不可见。跨存储 Go race 测试退出码 0；`USERMODEL_KEEP_EVIDENCE=1 bash internal/usermodel/test-postgres.sh` 的本包与 migration 真实 PG/race/vet 验证也退出码 0。详见 `warehouse/feature_baselines/验收结果.md`。
+
+状态升级仅限 **WS07-C→WS08-C 的合成事实 L2 跨存储子链**；原先的 `LOCAL_VERIFIED` 记录保留其当时范围。正式 H09 来源、DC 分布式执行权、FeatureSpec 产品批准、在线请求/训练消费者及严格历史 commit 时点仍未验收，H10.c 整体保持 `PARTIAL`。
