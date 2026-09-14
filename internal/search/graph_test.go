@@ -1,19 +1,27 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
 
+	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
+	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/graph"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
+	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 	frameworktrace "trpc.group/trpc-go/trpc-agent-go/telemetry/trace"
 )
 
@@ -151,6 +159,28 @@ func TestSearchGraphRejectsInvalidInputAndBadCompletion(t *testing.T) {
 }
 
 func TestSearchGraphPropagatesPlannerFailureWithoutResult(t *testing.T) {
+	if os.Getenv("SEARCH_GRAPH_FAILURE_CHILD") != "1" {
+		binary, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(binary, "-test.run=^TestSearchGraphPropagatesPlannerFailureWithoutResult$")
+		cmd.Env = append(os.Environ(), "SEARCH_GRAPH_FAILURE_CHILD=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("framework failure subprocess: %v\n%s", err, output)
+		}
+		return
+	}
+	var logs bytes.Buffer
+	observed, err := telemetry.New(context.Background(), telemetry.Config{Service: "search-graph-failure-test",
+		Environment: "test", Version: "fixture", InstanceID: "search-graph-child", Output: &logs,
+		Level: slog.LevelInfo, SampleRatio: 1, TraceExporter: tracetest.NewInMemoryExporter()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observed.InstallGlobals(); err != nil {
+		t.Fatal(err)
+	}
 	want := errors.New("planner unavailable")
 	s := service(new(calls), PlanFunc(func(context.Context, PlanInput) ([]string, error) {
 		return nil, want
@@ -163,19 +193,30 @@ func TestSearchGraphPropagatesPlannerFailureWithoutResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := runner.NewRunner("search-graph-failure-test", ag)
-	defer func() { _ = r.Close() }()
-	stream, err := r.Run(context.Background(), "user-1", "session-1", model.NewUserMessage("execute search"), option)
+	sessions := inmemory.NewSessionService()
+	r, err := btwruntime.New("search-graph-failure-test", ag, sessions, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var terminal, graphResult bool
-	for e := range stream {
-		terminal = terminal || (e.IsTerminalError() && e.Error != nil && strings.Contains(e.Error.Message, want.Error()))
-		_, isResult, _ := SearchGraphResultFromCompletion(e, Request{})
-		graphResult = graphResult || isResult
+	fixed := Request{Query: "question", Depth: Fast, Intelligence: Low, Snapshot: snapshot()}
+	var graphResult bool
+	_, err = r.Run(context.Background(), btwruntime.Request{Subject: btwruntime.SubjectRef{AuthorityID: "test", TenantID: "tenant", SubjectID: "subject"},
+		SessionID: "session-1", RunID: "run-1", Message: model.NewUserMessage("execute search"), Options: []agent.RunOption{option}},
+		func(_ context.Context, e *event.Event) error {
+			_, isResult, decodeErr := SearchGraphResultFromCompletion(e, fixed)
+			graphResult = graphResult || isResult
+			return decodeErr
+		})
+	if err == nil || !strings.Contains(err.Error(), want.Error()) || graphResult {
+		t.Fatalf("planner failure became success: err=%v result=%v", err, graphResult)
 	}
-	if !terminal || graphResult {
-		t.Fatalf("planner failure became success: terminal=%v result=%v", terminal, graphResult)
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := observed.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

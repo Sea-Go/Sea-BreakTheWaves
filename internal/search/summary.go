@@ -67,6 +67,9 @@ func (s *Summarizer) Summarize(ctx context.Context, q SummaryRequest) (out Summa
 	if s == nil || q.AnswerID == "" || q.SearchID == "" || q.SessionID == "" {
 		return out, ErrInvalid
 	}
+	if _, err := q.Subject.UserKey(); err != nil {
+		return out, err
+	}
 	out.Search, err = s.delivery.Search(ctx, q.SearchID, q.Search)
 	if err != nil {
 		return out, err

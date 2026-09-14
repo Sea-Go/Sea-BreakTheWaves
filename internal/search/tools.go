@@ -163,7 +163,8 @@ func (s *ToolSession) ReadEvidence(ctx context.Context, in ReadEvidenceInput) (o
 				break
 			}
 		}
-		if evidence == nil || candidate == nil || stored.Receipt.DurableRef == "" || stored.Receipt.PackHash != stored.Pack.Hash() {
+		packHash, hashErr := stored.Pack.Hash()
+		if evidence == nil || candidate == nil || hashErr != nil || stored.Receipt.DurableRef == "" || stored.Receipt.PackHash != packHash {
 			return ErrEvidence
 		}
 		if s.remaining.ReadCalls < 1 || s.remaining.QuoteRunes < utf8.RuneCountInString(evidence.Quote) {

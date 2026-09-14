@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"unicode/utf8"
@@ -130,7 +131,9 @@ func (d *Delivery) Search(ctx context.Context, searchID string, request Request)
 	expected := cloneSnapshot(request.Snapshot)
 	retrieval, err := d.search.Execute(ctx, request)
 	if err != nil {
-		return SearchResult{Retrieval: retrieval}, err
+		// A failed adapter has not passed the delivery contract. In particular,
+		// its error result may still contain indexed text or invalid provenance.
+		return SearchResult{}, err
 	}
 	if err := validateRetrieval(expected, request, retrieval); err != nil {
 		return SearchResult{}, err
@@ -190,7 +193,10 @@ func (d *Delivery) Search(ctx context.Context, searchID string, request Request)
 	if len(pack.Evidence) == 0 {
 		return SearchResult{Retrieval: retrieval, Pack: pack, Usage: EvidenceUsage{reads, runes}}, nil
 	}
-	packHash := pack.Hash()
+	packHash, err := pack.Hash()
+	if err != nil {
+		return SearchResult{Retrieval: retrieval}, fmt.Errorf("encode fixed evidence pack: %w", err)
+	}
 	receipt, err := d.accept.Accept(ctx, cloneEvidencePack(pack))
 	if err != nil {
 		return SearchResult{Retrieval: retrieval}, fmt.Errorf("accept citations: %w", err)
@@ -198,37 +204,85 @@ func (d *Delivery) Search(ctx context.Context, searchID string, request Request)
 	if receipt.SearchID != searchID || receipt.PackHash != packHash || receipt.DurableRef == "" {
 		return SearchResult{Retrieval: retrieval}, ErrReceipt
 	}
+	if err := ctx.Err(); err != nil {
+		// The RTW transaction may already have committed. Preserve its receipt
+		// for recovery, but never return a public quote as a cancelled success.
+		return SearchResult{Retrieval: retrieval, Receipt: receipt, Usage: EvidenceUsage{reads, runes}}, err
+	}
 	return SearchResult{Retrieval: retrieval, Pack: pack, Receipt: receipt, Usage: EvidenceUsage{reads, runes}}, nil
 }
 
 func validateRetrieval(expected Snapshot, request Request, result Result) error {
-	if !reflect.DeepEqual(expected, result.Snapshot) || result.Profile.RequestedDepth != request.Depth ||
-		result.Profile.RequestedIntelligence != request.Intelligence || result.Profile.EffectiveDepth != request.Depth ||
-		result.Profile.PolicyVersion == "" ||
-		(result.Status != "complete" && result.Status != "partial" && result.Status != "empty") {
+	if !reflect.DeepEqual(expected, result.Snapshot) || !validGraphResult(result, request) {
+		return ErrRetrievalContract
+	}
+	if !allowedEffectiveIntelligence(request.Intelligence, result.Profile.EffectiveIntelligence) {
 		return ErrRetrievalContract
 	}
 	allowed := make(map[string]bool, len(expected.ValidRevisionIDs))
 	for _, id := range expected.ValidRevisionIDs {
 		allowed[id] = true
 	}
+	byKey := make(map[Key]Candidate, len(result.Candidates))
 	for _, c := range result.Candidates {
-		if c.Chunk.Text != "" {
+		_, duplicate := byKey[c.Key]
+		if c.Chunk.Text != "" || c.Key != key(c.Chunk) ||
+			math.IsNaN(c.RRFScore) || math.IsInf(c.RRFScore, 0) ||
+			!validCandidateSources(c.Sources, expected) || duplicate {
 			return ErrRetrievalContract
 		}
+		byKey[c.Key] = c
 	}
+	seen := make(map[Key]bool, len(result.Verified))
 	for _, v := range result.Verified {
-		if v.Key != key(v.Chunk) || !allowed[v.Key.RevisionID] || v.Chunk.Text != "" {
+		c, present := byKey[v.Key]
+		if v.Key != key(v.Chunk) || !allowed[v.Key.RevisionID] || v.Chunk.Text != "" ||
+			math.IsNaN(v.RRFScore) || math.IsInf(v.RRFScore, 0) ||
+			!validCandidateSources(v.Sources, expected) || !present || seen[v.Key] ||
+			c.RRFScore != v.RRFScore || !reflect.DeepEqual(c.Chunk, v.Chunk) || !reflect.DeepEqual(c.Sources, v.Sources) {
 			return ErrRetrievalContract
 		}
+		seen[v.Key] = true
 	}
 	return nil
 }
 
-func (p EvidencePack) Hash() string {
-	b, _ := json.Marshal(p)
+func allowedEffectiveIntelligence(requested, effective Intelligence) bool {
+	switch requested {
+	case Low:
+		return effective == Low
+	case Medium:
+		return effective == Medium || effective == Low
+	case High:
+		return effective == High || effective == Medium || effective == Low
+	default:
+		return false
+	}
+}
+
+func validCandidateSources(hits []LaneHit, snapshot Snapshot) bool {
+	if len(hits) == 0 || len(hits) > len(lanes) {
+		return false
+	}
+	seen := make(map[Lane]bool, len(hits))
+	for _, hit := range hits {
+		index, present := snapshot.Indexes[hit.Lane]
+		if !present || seen[hit.Lane] || hit.Index != index || hit.Rank < 1 ||
+			math.IsNaN(hit.RawScore) || math.IsInf(hit.RawScore, 0) {
+			return false
+		}
+		seen[hit.Lane] = true
+	}
+	return true
+}
+
+func (p EvidencePack) Hash() (string, error) {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func cloneEvidencePack(p EvidencePack) EvidencePack {

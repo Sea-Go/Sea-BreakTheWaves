@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,7 +72,11 @@ func exactSource(_ context.Context, _ Snapshot, v VerifiedCandidate) (corpus.Chu
 }
 
 func accepted(_ context.Context, p EvidencePack) (CitationReceipt, error) {
-	return CitationReceipt{SearchID: p.SearchID, PackHash: p.Hash(), DurableRef: "rtw:fixture:committed"}, nil
+	hash, err := p.Hash()
+	if err != nil {
+		return CitationReceipt{}, err
+	}
+	return CitationReceipt{SearchID: p.SearchID, PackHash: hash, DurableRef: "rtw:fixture:committed"}, nil
 }
 
 func searchRequest(depth Depth, level Intelligence) Request {
@@ -94,7 +101,8 @@ func TestEvidenceRequiresSameRevisionAndDurableReceipt(t *testing.T) {
 	})
 	d := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, source, accept)
 	r, err := d.Search(context.Background(), "s-1", searchRequest(Fast, Low))
-	if err != nil || r.Pack.Status != "complete" || len(r.Pack.Evidence) != 1 || r.Receipt.PackHash != r.Pack.Hash() || strings.Join(order, ",") != "read,accept" {
+	hash, hashErr := r.Pack.Hash()
+	if err != nil || hashErr != nil || r.Pack.Status != "complete" || len(r.Pack.Evidence) != 1 || r.Receipt.PackHash != hash || strings.Join(order, ",") != "read,accept" {
 		t.Fatalf("delivery %+v %v order=%v", r, err, order)
 	}
 	if r.Pack.Evidence[0].QuoteHash != artifacts.Hash([]byte("citation text")) {
@@ -183,6 +191,59 @@ func TestDeliveryRejectsGraphAdapterScopeDriftBeforeRTWRead(t *testing.T) {
 		if !errors.Is(err, ErrRetrievalContract) || len(got.Pack.Evidence) != 0 || readCalls != 0 {
 			t.Fatalf("adapter drift reached RTW: %+v %v read=%d", got, err, readCalls)
 		}
+	}
+}
+
+func TestDeliveryRejectsUntrustedAdapterScoresProfileAndErrorText(t *testing.T) {
+	reads, accepts := 0, 0
+	d := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(func(ctx context.Context, s Snapshot, v VerifiedCandidate) (corpus.Chunk, error) {
+		reads++
+		return exactSource(ctx, s, v)
+	}), AcceptFunc(func(ctx context.Context, p EvidencePack) (CitationReceipt, error) {
+		accepts++
+		return accepted(ctx, p)
+	}))
+	base := d.search
+	for _, mutate := range []func(*Result){
+		func(r *Result) { r.Verified[0].RRFScore = math.NaN() },
+		func(r *Result) { r.Verified[0].Sources[0].RawScore = math.Inf(1) },
+		func(r *Result) { r.Profile.EffectiveIntelligence = High },
+		func(r *Result) { r.Verified[0].Sources[0].Index = ref("e") },
+	} {
+		d.search = ExecuteFunc(func(ctx context.Context, request Request) (Result, error) {
+			result, err := base.Execute(ctx, request)
+			if err == nil {
+				mutate(&result)
+			}
+			return result, err
+		})
+		result, err := d.Search(context.Background(), "untrusted", searchRequest(Fast, Low))
+		if !errors.Is(err, ErrRetrievalContract) || len(result.Pack.Evidence) != 0 || reads != 0 || accepts != 0 {
+			t.Fatalf("untrusted adapter reached evidence: result=%+v err=%v reads=%d accepts=%d", result, err, reads, accepts)
+		}
+	}
+	d.search = ExecuteFunc(func(context.Context, Request) (Result, error) {
+		return Result{Candidates: []Candidate{{Chunk: corpus.Chunk{Text: "untrusted indexed text"}}}}, ErrBudget
+	})
+	result, err := d.Search(context.Background(), "failed-adapter", searchRequest(Fast, Low))
+	if !errors.Is(err, ErrBudget) || len(result.Retrieval.Candidates) != 0 || len(result.Pack.Evidence) != 0 {
+		t.Fatalf("failed adapter leaked unverified body: %+v %v", result, err)
+	}
+	if hash, err := (EvidencePack{Evidence: []Evidence{{Relevance: math.NaN()}}}).Hash(); err == nil || hash != "" {
+		t.Fatalf("invalid pack obtained hash: %q %v", hash, err)
+	}
+}
+
+func TestDeliveryCancelledAfterCitationCommitRetainsReceiptButNoQuote(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	d := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(exactSource), AcceptFunc(func(ctx context.Context, p EvidencePack) (CitationReceipt, error) {
+		receipt, err := accepted(ctx, p)
+		cancel()
+		return receipt, err
+	}))
+	result, err := d.Search(ctx, "cancel-after-commit", searchRequest(Fast, Low))
+	if !errors.Is(err, context.Canceled) || len(result.Pack.Evidence) != 0 || result.Receipt.DurableRef == "" {
+		t.Fatalf("cancel after committed receipt became public success: %+v %v", result, err)
 	}
 }
 
@@ -344,6 +405,20 @@ func (m *summaryModel) GenerateContent(ctx context.Context, q *model.Request) (<
 }
 
 func TestSummaryRunsNativeLLMAgentRunnerAfterReceipt(t *testing.T) {
+	if os.Getenv("SEARCH_SUMMARY_NATIVE_CHILD") != "1" {
+		binary, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binary, "-test.run=^TestSummaryRunsNativeLLMAgentRunnerAfterReceipt$")
+		cmd.Env = append(os.Environ(), "SEARCH_SUMMARY_NATIVE_CHILD=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("native summary subprocess: %v\n%s", err, output)
+		}
+		return
+	}
 	var logs bytes.Buffer
 	exporter := &searchSpanExporter{}
 	observed, err := telemetry.New(context.Background(), telemetry.Config{Service: "btw-search-test", Environment: "test", Version: "fixture-v1", InstanceID: "search-test", Output: &logs, Level: slog.LevelInfo, SampleRatio: 1, TraceExporter: exporter})
@@ -366,6 +441,11 @@ func TestSummaryRunsNativeLLMAgentRunnerAfterReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := SummaryRequest{SearchID: "s", AnswerID: "a", Subject: btwSubject(), SessionID: "session", Search: searchRequest(Fast, Low)}
+	invalid := q
+	invalid.Subject = btwruntime.SubjectRef{}
+	if _, err := summary.Summarize(context.Background(), invalid); !errors.Is(err, btwruntime.ErrInvalidSubject) || receiptDone.Load() || m.calls.Load() != 0 {
+		t.Fatalf("invalid subject reached citation acceptance or model: %v", err)
+	}
 	result, err := summary.Summarize(context.Background(), q)
 	if err != nil || result.SummaryStatus != "succeeded" || !receiptDone.Load() || !m.sawReceipt.Load() || m.calls.Load() != 1 || m.sawTools.Load() || !m.sawTrace.Load() || len(result.Citations) != 1 {
 		t.Fatalf("summary result %+v err=%v model=%+v", result, err, m)
