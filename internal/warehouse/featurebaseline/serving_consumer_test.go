@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/usermodel"
 	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/jackc/pgx/v5"
@@ -43,7 +44,7 @@ func (a servingFixedApproval) AuthorizePair(context.Context, usermodel.PairRef) 
 
 // This consumer test intentionally owns its schema and migration. It uses the
 // existing H10.c runtime but changes no warehouse producer or acceptance code.
-func servingWarehouseRunner(t *testing.T) (Runner, usermodel.SubjectRef) {
+func servingWarehouseRunner(t *testing.T, observed ...*telemetry.Bundle) (Runner, usermodel.SubjectRef) {
 	t.Helper()
 	dsn := os.Getenv("USERMODEL_TEST_POSTGRES_DSN")
 	ch, s3, dbt := os.Getenv("USERMODEL_TEST_CH_URL"), os.Getenv("USERMODEL_TEST_S3_PREFIX"), os.Getenv("USERMODEL_TEST_DBT")
@@ -100,7 +101,11 @@ func servingWarehouseRunner(t *testing.T) (Runner, usermodel.SubjectRef) {
 		t.Fatal(err)
 	}
 	root := filepath.Clean(filepath.Join(wd, "../../.."))
-	return Runner{Source: usermodel.NewStore(pool, nil), ClickHouse: ch, S3Prefix: s3, DBT: dbt,
+	var bundle *telemetry.Bundle
+	if len(observed) > 0 {
+		bundle = observed[0]
+	}
+	return Runner{Source: usermodel.NewStore(pool, bundle), ClickHouse: ch, S3Prefix: s3, DBT: dbt,
 			ProjectDir:  filepath.Join(root, "warehouse/feature_baselines"),
 			ProfilesDir: filepath.Join(root, "warehouse/environment"), WorkDir: t.TempDir()},
 		usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "ws08d-1001"}
