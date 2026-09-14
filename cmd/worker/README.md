@@ -2,7 +2,7 @@
 
 `cmd/worker` 另有显式 `BTW_JOB_TYPE=usermodel.favorite-facts.v1` 的收藏事实消费者。该模式使用独立用户事实 PostgreSQL、RTW 私有收藏权威读、DC 事件批次与现有 tRPC-Agent-Go FactGraphRuntime，不初始化内容工件或内容 Session；下文内容准备/索引配置与行为保持原样。收藏模式仅在所有专用字段齐备时启动，不能因为内容模式的默认值而意外开启。验收及运行边界见 [收藏事实进程验收](FAVORITE_PROCESS_ACCEPTANCE.md)。
 
-此入口真实装配 DataCenter 技术任务客户端、RideTheWind 固定版本读取客户端、BTW 内容 Postgres Store、本地 SHA256 工件、tRPC-Agent-Go GraphAgent/Runner 与框架 Postgres Session。一个进程只领取一个明确的技术任务类型：默认 `content.prepare.v1` 生成 chunk manifest；显式 `content.build.v1` 使用三路真实本地 exact 索引实现、各自的 `Build` 与 `VerifyAndProbe`，并在固定代通过协调器、Reconciler、本地 PostgreSQL READY 后给 DataCenter 技术回执。索引任务**不调用 RTW `AcceptBuild`，不移动发布指针**。`BTW_ARTIFACT_STORE=local` 是当前硬限制，工件目录必须由本地 RTW 联调进程共享；尚无生产对象存储适配，因此不得将此二进制解释为生产发布入口。
+此入口真实装配 DataCenter 技术任务客户端、RideTheWind 固定版本读取客户端、BTW 内容 Postgres Store、本地 SHA256 工件、tRPC-Agent-Go GraphAgent/Runner 与框架 Postgres Session。一个进程只领取一个明确的技术任务类型：默认 `content.prepare.v1` 生成 chunk manifest；显式 `content.build.v1` 使用三路真实本地 exact 索引实现、各自的 `Build` 与 `VerifyAndProbe`，并在固定代通过协调器、Reconciler、本地 PostgreSQL READY 后请求 RTW `AcceptBuild`，再给 DataCenter 技术回执。RTW READY 不移动人工发布指针。`BTW_ARTIFACT_STORE=local` 是当前硬限制，工件目录必须由本地 RTW 联调进程共享；尚无生产对象存储适配，因此不得将此二进制解释为生产发布入口。
 
 所有配置均从环境变量读取；启动缺字段即退出，且不会打印 DSN 或令牌。布尔迁移开关必须明确为 `true` 或 `false`：
 
@@ -27,4 +27,4 @@
 
 先在专属数据库建立 `BTW_CONTENT_SCHEMA` 与 `BTW_SESSION_SCHEMA`，或使用其已有 `public` schema。首启时按部署步骤显式设置两个初始化开关，后续运行设为 `false`。准备进程和索引进程应使用不同的 `BTW_SESSION_TABLE_PREFIX`，并分别运行 `go run ./cmd/worker`。进程启动后先检查 JSON `content.worker.started` 中的 `job_type`，再抓取 `/metrics`；收到 SIGINT/SIGTERM 后停止轮询并依次关闭 Metrics、Runner/Session、内容连接池和遥测 Bundle。DataCenter 无待领取任务是正常空轮询，不生成 `READY`。
 
-本目录 `acceptance.sh` 创建临时 PostgreSQL 16 的 content/sessions 两库，并在 Go 测试中启动本地 DC/RTW/OTLP HTTP 端点，构建并运行两个真实 worker 子进程。准备进程验证固定 `content.prepare.v1` 任务的 chunk 回执、RTW claim、框架原生 Span/指标、工件、本地账本、`/metrics`、`traceparent`、JSON 与 SIGTERM。索引进程从已准备的固定 chunk 运行真实三路本地 exact 实现，检查 DC typed representation 调用、三路索引工件/独立探针、本地 READY、DC 技术 ACK、框架原生 Graph Span 与 RTW 仍为 `BUILDING`。HTTP 端点是隔离协议 fixture，不能代替真实 DC BGE-M3、RTW 服务、Milvus 投影或实际 Collector 查询后端的跨仓验收；生产对象存储仍未实现。详细边界见 [索引入口验收](INDEX_ENTRY_ACCEPTANCE.md)。
+本目录 `acceptance.sh` 创建临时 PostgreSQL 16 的 content/sessions 两库，并在 Go 测试中启动本地 DC/RTW/OTLP HTTP 端点，构建并运行两个真实 worker 子进程。准备进程验证固定 `content.prepare.v1` 任务的 chunk 回执、RTW claim、框架原生 Span/指标、工件、本地账本、`/metrics`、`traceparent`、JSON 与 SIGTERM。索引进程从已准备的固定 chunk 运行真实三路本地 exact 实现，检查 DC typed representation 调用、三路索引工件/独立探针、本地 READY、RTW READY、DC 技术 ACK 与框架原生 Graph Span。普通包内测试的 HTTP 端点是隔离协议 fixture；`TestRTWRealBGEWorkerProcesses` 需由 RTW `bge_worker_process_acceptance.sh` 提供真 RTW/DC/锁定 BGE，验证两个命令进程和一次 DC ACK 故障后重启补投。它仍使用 local-exact 和共享本地工件，未验证 Milvus、生产对象存储或 lease 过期/取消补偿。详细边界见 [索引入口验收](INDEX_ENTRY_ACCEPTANCE.md)。
