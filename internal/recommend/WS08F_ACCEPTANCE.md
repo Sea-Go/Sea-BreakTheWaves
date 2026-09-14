@@ -16,6 +16,8 @@
 
 ## 执行与证据
 
+既有 `internal/app/TestRTWRealItemPoolHandoff` 可选真实RTW父夹具已扩展：同次将已发布真实item/revision/content-hash全集写入配对proposal与索引预构建代，并断言没有DC/index/批准验证器时仍 `Pending`、不产生Slate。该子测试当前在无 `SEA_RTW_ITEM_POOL_FIXTURE` 时只编译并跳过；**这不是已执行的真实RTW→Pair跨仓验收**，固定权重和索引对象也不等于真实DC工件。RTW父测试复跑后才能提升该子链状态。
+
 最终 `RECOMMEND_KEEP_EVIDENCE=1 bash internal/recommend/test-postgres.sh` 退出0；日志 `/tmp/sea-btw-ws08f-pg-final-20260914.log`，隔离PG证据 `/var/folders/f_/l5hv3b1d6sx8zwr_cc8fkjkm0000gn/T/sea-recommend-acceptance.V2qZh9`。`TestRealPostgresPairActivationUnknownAfterCommittedPointer` 在真实PG里使前两次探针通过、提交后第三次失败，核`CurrentPointer`可见已提交版本而`Active`与`Plan`拒绝服务；探针恢复后同一指针恢复。
 
 隔离PG16脚本以 `-race -count=1` 跑推荐包和app，局部vet退出0；根 `go test -mod=readonly -race -count=1 ./...`、`go vet ./...`、`go mod verify` 均退出0。测试证明：proposal/index不自动授权，缺验证器与ranker探针拒批准，错space/缺item覆盖拒收，同批准重试ID稳定，撤销后同键批准回放拒绝，并发两个相同CAS只有一个激活，未激活release不给usermodel授权，活动后DC探针失效或RTW内容换代即不给授权/列表，错Bundle不给列表，计划期间活动pair切换不给旧规则列表，model pair没有真实评分器时保持Pending；触发器拒改不可变release。
