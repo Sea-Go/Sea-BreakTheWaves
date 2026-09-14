@@ -11,3 +11,7 @@ ItemCF 手算 `u1={A,B}`、`u2={A,B,C}` 得 `sim(A,B)=0.75` 且 TopK、固定输
 状态为 `LOCAL_VERIFIED/PARTIAL`。H08.a 真请求/阶段候选事件、H10.c 正式 item 特征产品、WS07-C 真实成熟行为与可靠热门分母、ItemCF 耐久准入、H08.b 用户 bundle 配对消费、H11.b 训练 user/item 空间、真实 RTW PG 内容发布联验、生产索引与 Collector 均未验收。
 
 真实 RTW 发布到 BTW 候选 PG 的可选联验入口已加到 `internal/app/recommend_rtw_real_test.go`。RTW 父测试应在人工发布后提供 0600 JSON（`rtw_base,worker_token,pg_dsn,module_id,revision_id,item_id`），对 BTW `go test -c -race -o <bin> ./internal/app` 编出的子进程设置 `SEA_RTW_ITEM_POOL_FIXTURE=<path>` 并运行 `-test.run=^TestRTWRealItemPoolHandoff$`。子进程在 RTW 隔离 PG 内创建自己独立 schema，执行显式迁移、RTW 当前快照/逐修订读取、PG Rebuild 和有界查询，核指定 item 同版与不可变行一次。**此门禁目前只编译/跳过，尚未实际收到 RTW 父 fixture。**
+
+## 真实RTW发布交接追加验收
+
+RTW集成父测试已给上述可选入口提供真实人工发布后的0600 fixture；`GOFLAGS=-p=2 GOMAXPROCS=2 KNOWLEDGE_KEEP_EVIDENCE=1 KNOWLEDGE_REAL_USER_GATE=1 SEA_BTW_ITEM_CONSUMER_ROOT=/Users/edy/Sea/.codex-worktrees/sea-btw-runtime-content-20260914 bash service/knowledge/scripts/acceptance.sh`完整退出0，真实User Center版与gRPC替身版知识工作流分别PASS（35.88秒、10.31秒），子进程`TestRTWRealItemPoolHandoff`报告PASS。它用真实RTW Worker当前发布快照/逐修订metadata与同一隔离PG的独立schema，核指定item同版、池候选上界/版本hash和不可变release只有一行。RTW仓内说明见`service/knowledge/docs/acceptance/item-pool-handoff.md`。这把**RTW人工发布→BTW不可变候选池**子链标`INTEGRATED`，但未补真实RTW撤回后的跨仓二阶段测试；ItemCF仍只验合成成熟归因，未获正式H09/DWS，WS08-E整体`PARTIAL`。
