@@ -9,6 +9,7 @@
 - Dense、Sparse、Multi-vector 由各自真实 Service 的 `Build` 签名与 `VerifyAndProbe` 签名接入；协调器只协调调用，不重写向量算法。成功 lane 的索引 Ref 先回读内容寻址对象，校验索引正文与本代/本 build/本 chunk/profile 后才 `RecordLane`。所有 Ref 均属于同一个 `BuildID` 和 `Generation`。
 - 投影失败时完整编码索引可能以 `ResumeIndexes` 返回，但**不登记为成功 lane**；调用方必须先持久保存该提示，下一次尝试再传回。未持久化的提示丢失时重算，不伪称已恢复。已有 lane 仍可从本地账本恢复。
 - 三路都登记后，再次核对 RTW claim，并交既有 `Reconciler.Ready`：它回读固定原文、覆盖、分片、数值表示并调用三路独立 `VerifyAndProbe`，最后由 PostgreSQL fence 事务写本地 `READY`、结果 Ref 与 outbox。单 lane、单 DC job 成功或生产者的探针标志均不产生 READY。RTW build 接纳与人工发布仍是独立后续动作。
+- 本地`READY`已提交但DC技术ACK丢失时，新的DC/RTW attempt须先证明当前RTW build身份、generation和新lease，随后用Store里**旧已提交fence**只读复核本地不可变READY工件与原修订；不重绑READY旧fence、不重建三路、不重复写READY Outbox，最后用新的DC技术lease回同一Ref。RTW若已接纳`READY`，还必须让其IndexManifest Ref/hash与本地相同；过期或伪造的新RTW claim不获回执。
 - 整个 content 操作使用已安装的统一 telemetry Bundle 创建 `content.index_build` span/结构化终态及结果标签；当前并未给索引阶段装配 tRPC-Agent-Go Graph/Runner，不能称为完整框架观测链。
 
 ## 已执行验证
@@ -17,7 +18,7 @@
 
 | 命令 | 结果 | 覆盖 |
 | --- | --- | --- |
-| `GOFLAGS='-run=TestIndexCoordinator' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | 三路 READY/重放、局部失败重试、投影 ResumeIndex、旧 lease/new epoch、伪造 generation、独立 probe 失败、未知/冲突 resume、缺失 indexer |
+| `GOFLAGS='-run=TestIndexCoordinator' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | 三路READY/重放、新技术attempt只读恢复且不重复Outbox、局部失败重试、投影ResumeIndex、旧lease/new epoch、伪造generation、独立probe失败、未知/冲突resume、缺失indexer |
 | `GOFLAGS='-skip=TestPrepareGraph' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | content 非 Graph 用例与 artifacts 全部用例，包括真实 PG ledger/reconcile |
 | `bash scripts/test-content.sh` | 原独立分支失败；集成修复后完整通过 | 含Graph正常/错误/取消、同代协调器、PG ledger/reconcile和artifacts的完整race+vet |
 
