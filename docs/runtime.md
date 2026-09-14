@@ -82,7 +82,7 @@ bash internal/runtime/acceptance.sh
 | 持久化失败 | 用户输入写入成功后，后续 Assistant 事件 AppendEvent 失败 | 通过；运行返回保存失败，没有用 completion 覆盖错误 |
 | DC 实际平台 HTTP | 事件接纳/重放/冲突/读取/批次确认/连续水位；任务 submit/claim/renew/complete 重放/无任务/cancel/ack | 通过；精确大值按提供者规则编码为字符串 |
 | RTW 实际 worker HTTP | 固定正文/发布输入/构建/编制读取、执行权与失败结果回执、错误 lease 拒收 | 通过；fixture 明确以 no-model 失败结束，不虚构索引就绪 |
-| DC → RTW → content | DC 真实 claim 的 attempt/epoch/expiry传入 RTW，Preparer 消费实际固定源和对象，分块写 content PG，同输入重放 | 通过；1 个 chunk，固定清单 hash 可回读，状态仍 BUILDING |
+| DC → RTW → content | DC真实claim的attempt/epoch/expiry传入RTW；后续版本由真实GraphAgent/Runner调用Preparer，分块写content PG并以chunk Ref完成DC技术任务 | 通过；固定清单hash可回读，RTW与content状态仍BUILDING，未提交三路READY |
 | H05 三种表示 | 消费 DC 权威 fixture，固定模型/空间/角色；错空间拒收 | 通过，仅 HTTP fixture 消费；未宣称真实模型效果或 DC 完整模型配置链验证 |
 | SDK 故障边界 | 错回执的 generation/attempt/lease/cancel/hash/state/expiry，HTTP 409、取消、重定向、超大响应 | 通过 |
 
@@ -90,7 +90,7 @@ bash internal/runtime/acceptance.sh
 
 ## 未完成项
 
-- 经真实 DataCenter 模型配置、真实 Dense/Sparse/Multi-vector 或聊天 Provider 的完整调用和效果验收；当前模型与表示数值是明确 fixture。
+- 经真实DataCenter模型配置、三路检索与聊天Provider的**同一产品调用链**及效果验收；Dense/Sparse/Multi-vector已有各自独立数值与原生引擎证据，尚未由本worker合并构建或接入搜索。
 - RTW 首个公开引用前的持久收据、产品 SSE 恢复接口、首引到完整流的跨服务 trace。
 - 多实例运行取消、任意中断点继续执行与业务副作用对账；当前证明的是完成一轮后 PostgreSQL 历史跨进程延续。
 - 实际三路索引构建与 READY、答案资源、产品发布及生产部署。这些仍由各领域推进，不能从本 SDK 或会话验收外推。
@@ -111,4 +111,6 @@ H05兼容更新：提供者4f5abf5显式增加mean_maxsim；SDK已从此提交�
 
 固定源码提交 `7f5d6b9cad5cd0c85dbca2024fe5ce3fa6b33b5f` 复验：根模块 `go test -mod=readonly -race -count=1 ./...`、`go vet ./...`、`go mod verify` 均通过。专门的真实框架测试记录原生 Agent/Chat/Tool Span 数分别为1/2/1，且为同一Trace；同一抓取中的三类框架请求计数分别为1/2/1。上游模型响应名在fixture两次调用中故意不同，`/metrics` 不出现它们或其他请求级ID。原始测试输出位于任务交付区 `/Users/edy/Sea/Deliverables/2026-09-14/BTW框架原生观测验收.log`，SHA-256 为 `3785ea849b6fe5c6311d40ce0eb9f5eb6091dc3a7798b314ab673b6f9406928c`；该输出是隔离Runtime证明，不是生产Collector或业务worker日志。
 
-当前 `observability_status=LOCAL_VERIFIED` 只授予公共日志桥、隔离Runtime的框架Agent/Tool调用树及内容**业务用例**各自的本地切片；不授予BTW整体。OBS-01尚无完整worker/API进程入口，OBS-03没有内容/搜索/推荐实际GraphAgent与Tool装配，OBS-04缺DC/RTW实际traceparent与异步Link，OBS-07缺Collector/DC下钻。内容Preparer/Reconciler仍由普通Go用例直接调用，自建Bundle Stage只表达领域提交阶段，不能代替框架GraphAgent；三路检索lane、BGE serving和数仓/训练也尚未接此设施。C17云端框架业务链仍为NOT_IMPLEMENTED/NOT_VERIFIED，本结果不能标WS06-A/G或整体OBS为ACCEPTED。
+后续本地内容worker提交至`5b7d9c9264c653a16bf7cc177ef9698adf548950`：`cmd/worker`实际子进程装配同一Bundle、DC/RTW SDK、内容Store、`content_prepare` GraphAgent、Runner和框架PostgreSQL Session。隔离DC/RTW HTTP fixture与PG16任务产生2个chunk，DC `content.prepare.v1`技术任务`succeeded`，content和RTW build均保持`BUILDING`；真实OTLP protobuf含框架`invoke_agent`及Graph节点Span，与RTW请求同Trace，`/metrics`有框架指标。worker的9行运行日志逐行JSON且版本均为固定代码提交；一次真实指标抓取曾暴露Prometheus exemplar标签超限，现通过公开SDK过滤并在进程测试中强制断言无`telemetry.export.failed`。证据在任务交付区`Deliverables/2026-09-14/BTW内容worker证据/`：`summary.json` SHA-256 `9bc39435b19027c0736add4bf4c95a950ca8440435d23fb492e94982f43e822c`、`worker.jsonl` `7469e63a472f442907b323d36dbb8ecb783a7155ee4101e5111266084d65117b`、`metrics.prom` `a0f5c722eb289df0cb1ef22b4c6f44b668286318feb4df26b1704f555c30434b`、`otlp-0.pb` `d28119cbacd085f20637e3f9178f47b88d257d8d37807c43258e01997caf53ff`。实际DC平台与RTW知识进程的另一条隔离PG16联验将Graph准备及DC技术完成串在同Trace，原始日志在`Deliverables/2026-09-14/BTW内容Graph证据/`。
+
+当前`LOCAL_VERIFIED`只适用于**本地内容准备阶段与隔离Runtime组件**。worker仅支持local共享对象目录、固定chunk profile与单一准备技术job；尚无生产对象存储、真实DC调度提交来源、三路索引job/同代Reconciler/RTW READY接纳，搜索/推荐/用户建模也尚未在正式API/worker中装配。OBS-04的准备阶段真实跨服务Trace已局部验证，但异步Outbox Link未验；OBS-07 Collector→DataCenter查询下钻、模型/索引全阶段指标和正常生产退出仍未验。C17整体及WS06-A/G不能因此标ACCEPTED。

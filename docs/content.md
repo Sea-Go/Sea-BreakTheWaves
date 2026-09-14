@@ -31,11 +31,11 @@
 
 已通过：CRLF/中文/重复字符/overlap来源位置；输入排序与重放同hash；重复文本不丢修订；空/坏必需输入整批拒绝；16代并发fence；三路缺失、缺片、重复/外来ID、错空间、损坏对象、查询失败；取消、过期、乱序tombstone和新代不得复活；Outbox写入耗时导致过期时READY及Outbox全回滚；同profile偷偷变参拒绝。
 
-测试中的lane对象和verifier明确为合成结构替身，尚无真实dense/sparse/multivector实现，不能宣称三路算法READY或WS06-A全项完成。下一步仍需：真实lane数值后端、Wiki编制Agent、DC事件驱动worker与RTW结果/Outbox派送恢复、生产对象存储、领域失败/重试与跨lease重绑已准备结果。当前READY仅为内容领域记录，不会自动调用RTW发布接口或DC技术完成。
+本页原始READY测试中的lane对象和verifier仍是合成结构替身；Dense/Sparse/Multi-vector已在各自独立目录完成局部真实数值/引擎验收，但尚未同代接入本Reconciler，不能宣称三路算法READY或WS06-A全项完成。下一步仍需：Wiki编制Agent、三路索引worker及真实同代对账、RTW结果/Outbox派送恢复、生产对象存储、领域失败/重试与跨lease重绑已准备结果。当前READY仅为内容领域记录，不会自动调用RTW发布接口。
 
 ## 独立审查修正
 
 5779b3a的独立审查复现：经公开RecordChunks登记自洽的伪清单，可把3块缩成1块、把位置改为paragraph:999或修改chunk ID后仍READY。正常Preparer生成正确，但对账不应信任另一生产者自报覆盖。现已收起RecordChunks登记入口，并在首次READY前用RTW固定ID的权威原文重新生成expected manifest，与提交hash精确比较；三个反例均拒绝，状态/Outbox不推进。真实PG16全content/artifacts race与vet复验通过。现有READY的丢收据重试继续复用已接纳工件，不重复近似查询。
 
 
-观测接口补充：Preparer及Reconciler必须接收已安装的公共Telemetry Bundle；开始和最终结果围绕固定build、release、attempt/lease记录，不在纯分块函数与PG helper散落日志。对账拒绝时保留error_code与候选工件hash供查验；成功只在对应Store提交后记录。真实PG测试已覆盖错误清单与取消/过期的结构化终态，Collector和跨服务traceparent未完成，OBS整体仍为LOCAL_VERIFIED局部。
+观测接口补充：Preparer及Reconciler必须接收已安装的公共Telemetry Bundle；开始和最终结果围绕固定build、release、attempt/lease记录，不在纯分块函数与PG helper散落日志。对账拒绝时保留error_code与候选工件hash供查验；成功只在对应Store提交后记录。真实PG测试已覆盖错误清单与取消/过期的结构化终态。`content_prepare`已通过tRPC GraphAgent/Runner执行Preparer，Graph完成事件只输出chunk Ref/数量并继续等待Runner完成；本地worker进程和隔离真实DC/RTW联验均验证准备阶段跨服务traceparent，RTW build仍BUILDING。异步Outbox Link、三路worker、Collector/DC查询仍缺，OBS整体仍为LOCAL_VERIFIED局部。
