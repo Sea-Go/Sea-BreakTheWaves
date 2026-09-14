@@ -41,6 +41,13 @@ type FactGraphCommitter interface {
 	Append(context.Context, usermodel.FactGraphRequest) (usermodel.FactGraphReceipt, error)
 }
 
+// CurrentFactReceiptReader resolves a formerly pending event after its missing
+// predecessor arrives. Store.CurrentReceipt also proves an accepted Outbox row
+// in the same PG snapshot; the immutable Append replay receipt cannot do that.
+type CurrentFactReceiptReader interface {
+	CurrentReceipt(context.Context, usermodel.SubjectRef, usermodel.EventKey) (usermodel.Receipt, error)
+}
+
 type FactWorkerConfig struct {
 	Consumer      string
 	Producer      string
@@ -57,18 +64,19 @@ type FactWorker struct {
 	source   FactEventSource
 	binder   TrustedFactBinder
 	graph    FactGraphCommitter
+	receipts CurrentFactReceiptReader
 	observed *telemetry.Bundle
 }
 
 func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedFactBinder,
-	graph FactGraphCommitter, observed *telemetry.Bundle) (*FactWorker, error) {
+	graph FactGraphCommitter, receipts CurrentFactReceiptReader, observed *telemetry.Bundle) (*FactWorker, error) {
 	if cfg.Consumer == "" || !factDeliveryToken.MatchString(cfg.Producer) ||
 		len("dc:event:")+len(cfg.Producer)+1+20 > 192 || cfg.EventType == "" || cfg.SchemaVersion < 1 ||
 		cfg.BatchLimit < 1 || cfg.BatchLimit > 128 || nilDependency(source) || nilDependency(binder) ||
-		nilDependency(graph) || observed == nil || !observed.Installed() || observed.Closed() {
+		nilDependency(graph) || nilDependency(receipts) || observed == nil || !observed.Installed() || observed.Closed() {
 		return nil, fmt.Errorf("fact worker dependencies and fixed source contract: %w", ErrFactDeliveryContract)
 	}
-	return &FactWorker{config: cfg, source: source, binder: binder, graph: graph, observed: observed}, nil
+	return &FactWorker{config: cfg, source: source, binder: binder, graph: graph, receipts: receipts, observed: observed}, nil
 }
 
 type FactDeliveryResult struct {
@@ -199,13 +207,32 @@ func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (re
 	if err != nil {
 		return usermodel.FactGraphReceipt{}, fmt.Errorf("commit fact through tRPC Runner/Graph: %w", err)
 	}
-	if receipt.Subject != bound.Subject || receipt.EventKey != bound.EventKey ||
-		receipt.Status != "accepted" || receipt.AcceptedVersion <= 0 ||
-		!factDeliveryHash.MatchString(receipt.NormalizedHash) {
-		if receipt.Status == "pending_dependency" && receipt.AcceptedVersion == 0 {
-			return receipt, ErrFactDeliveryPending
-		}
+	if receipt.Subject != bound.Subject || receipt.EventKey != bound.EventKey || !factDeliveryHash.MatchString(receipt.NormalizedHash) {
 		return usermodel.FactGraphReceipt{}, fmt.Errorf("fact Graph receipt before DC ACK: %w", ErrFactDeliveryContract)
+	}
+	current, err := w.receipts.CurrentReceipt(ctx, bound.Subject, bound.EventKey)
+	if err != nil {
+		return receipt, fmt.Errorf("read current fact and Outbox receipt: %w", err)
+	}
+	if current.Subject != bound.Subject || current.EventKey != bound.EventKey ||
+		current.NormalizedHash != receipt.NormalizedHash {
+		return usermodel.FactGraphReceipt{}, fmt.Errorf("current fact differs from immutable Graph input: %w", ErrFactDeliveryContract)
+	}
+	if current.Status == "pending_dependency" && current.StateVersion >= 0 {
+		if receipt.Status != "pending_dependency" || receipt.AcceptedVersion != 0 {
+			return usermodel.FactGraphReceipt{}, fmt.Errorf("pending fact and Graph disagree: %w", ErrFactDeliveryContract)
+		}
+		return receipt, ErrFactDeliveryPending
+	}
+	if current.Status != "accepted" || current.StateVersion <= 0 ||
+		(receipt.Status != "accepted" && receipt.Status != "pending_dependency") ||
+		(receipt.Status == "accepted" && receipt.AcceptedVersion != current.StateVersion) {
+		return usermodel.FactGraphReceipt{}, fmt.Errorf("fact lacks accepted version and Outbox: %w", ErrFactDeliveryContract)
+	}
+	if receipt.Status == "pending_dependency" {
+		receipt.Status = "accepted"
+		receipt.AcceptedVersion = current.StateVersion
+		receipt.Replay = true
 	}
 	return receipt, nil
 }

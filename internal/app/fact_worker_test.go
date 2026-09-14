@@ -272,7 +272,7 @@ func assertFactWorkerPostgresDCAndRTWFixture(t *testing.T) {
 	}
 	worker, err := NewFactWorker(FactWorkerConfig{Consumer: "btw-facts", Producer: "rtw.product",
 		EventType: "rtw.product.fact.v1", SchemaVersion: 1, BatchLimit: 10}, source,
-		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client()}, graph, observed)
+		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client()}, graph, store, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func assertFactWorkerPostgresDCAndRTWFixture(t *testing.T) {
 			ReceivedAt: now.Add(2 * time.Second).Format(time.RFC3339Nano)}}
 	pendingWorker, err := NewFactWorker(FactWorkerConfig{Consumer: "btw-facts", Producer: "rtw.product",
 		EventType: "rtw.product.fact.v1", SchemaVersion: 1, BatchLimit: 10}, pendingSource,
-		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client(), pending: true}, graph, observed)
+		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client(), pending: true}, graph, store, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,6 +337,25 @@ func assertFactWorkerPostgresDCAndRTWFixture(t *testing.T) {
 	outbox, err = store.OutboxAfter(context.Background(), subject, 0, 10)
 	if err != nil || len(outbox) != 1 {
 		t.Fatalf("pending fact created accepted Outbox: %+v %v", outbox, err)
+	}
+	predecessor := usermodel.Event{Subject: subject, EventKey: usermodel.EventKey{Producer: "rtw.product", EventID: "missing-predecessor"},
+		Action: usermodel.Assert, Kind: usermodel.Reading, Predicate: "read", ValueRef: "article/rev-1",
+		EvidenceRef: "rtw/event/missing-predecessor", EvidenceHash: strings.Repeat("a", 64),
+		OccurredAt: now.Add(-time.Minute), ObservedAt: now, SourcePartition: "rtw-fixture", ItemID: "article-1"}
+	if _, err := store.Append(context.Background(), predecessor); err != nil {
+		t.Fatalf("admit late predecessor: %v", err)
+	}
+	currentReceipt, err := store.CurrentReceipt(context.Background(), subject, usermodel.EventKey{Producer: "rtw.product", EventID: "event-2"})
+	if err != nil || currentReceipt.Status != "accepted" || currentReceipt.StateVersion != 3 {
+		t.Fatalf("pending event did not gain current accepted Outbox: %+v %v", currentReceipt, err)
+	}
+	resumed, err := pendingWorker.RunOnce(context.Background())
+	if err != nil || resumed.Count != 1 || resumed.Replayed != 1 || resumed.AckedOffset != 2 || pendingSource.ackCount != 1 {
+		t.Fatalf("promoted pending event did not ACK exactly once: %+v %v ack=%d", resumed, err, pendingSource.ackCount)
+	}
+	outbox, err = store.OutboxAfter(context.Background(), subject, 0, 10)
+	if err != nil || len(outbox) != 3 {
+		t.Fatalf("pending replay duplicated Outbox: %+v %v", outbox, err)
 	}
 	metrics := httptest.NewRecorder()
 	observed.MetricsHandler().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
