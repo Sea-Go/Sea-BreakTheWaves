@@ -6,4 +6,6 @@
 
 局部验证：`go test -mod=readonly -race -count=1 ./cmd/api ./internal/app`、根模块 `go test -mod=readonly -race -count=1 ./...`、`go vet ./...` 与 `go mod verify` 均通过。真实回环 socket 上 `/livez` 和 `/metrics` 可读，未签名 `POST /v1/search/summary` 返回 403，DC/RTW/模型目标均为不可达端点，证明该请求在上游调用前被拒绝。`TestRTWEffectiveRevisionChecker` 覆盖有效、撤回、换代和移指针。
 
-当前状态为 **`LOCAL_VERIFIED/PARTIAL`**。RTW 既有真实 HTTP/PG 验收证明了同一签名范围经 BTW 测试服务和 Root Graph 可提交 `insufficient`，但其三路索引是结构性固定工件，并未通过本 `cmd/api` 的真实本地 exact 读取，不能据此称本进程有证据成功回答或跨仓 PG 已验。模型 Provider/DC BGE、真实三路同代索引、RTW 当前发布与本进程合并运行、正式双进程签名范围、OTLP Collector 查询链、生产 Milvus 与对象存储、详细搜/高中智能/Tools/SSE 尚未验收。
+原阶段状态为 **`LOCAL_VERIFIED/PARTIAL`**。RTW 既有真实 HTTP/PG 验收证明了同一签名范围经 BTW 测试服务和 Root Graph 可提交 `insufficient`，但其三路索引是结构性固定工件，并未通过本 `cmd/api` 的真实本地 exact 读取，不能据此称本进程有证据成功回答或跨仓 PG 已验。模型 Provider/DC BGE、真实三路同代索引、RTW 当前发布与本进程合并运行、正式双进程签名范围、OTLP Collector 查询链、生产 Milvus 与对象存储、详细搜/高中智能/公开 SSE 尚未验收。
+
+Tools 独立入口的合同、Graph 和 RTW 子进程联验准备见 [TOOLS_ACCEPTANCE.md](../../internal/transport/http/search/TOOLS_ACCEPTANCE.md)。`BTW_SEARCH_TOOLS_SCOPE_KEY` 必须显式配置，启动前拒绝缺失/短密钥；`POST /v1/search/tools/search` 使用与总结不同的签名受众，只有 `fast/low` 进入本地 exact 查询。不能凭本进程装配把高档、跨进程预算、正式三路索引或客户端 Tools Agent 标为已验收。
