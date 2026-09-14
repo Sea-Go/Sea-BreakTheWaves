@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-14",
+  "background": "BG-2026-09-13-r2",
+  "scope": "WS06-G partial and H03 fixed content preparation",
+  "foundation_revision": "7d05187",
+  "datacenter_revision": "317ce623904dc153ef36ad96a8a437fabb09a9f3",
+  "ridethewind_revision": "52e0bd4e70e1db99e35fed15075d6bc4c9fa777f",
+  "ridethewind_sdk_revision": "627c1c9bb63088f59fb9429160158ba6ba2bc46d",
+  "framework": {
+    "core": "v1.8.1",
+    "session_postgres": "v1.8.0",
+    "storage_postgres": "v0.8.0"
+  },
+  "postgres": "postgres (PostgreSQL) 16.14 (Homebrew)",
+  "test_command": "go test -race -count=1 -v ./internal/runtime/... ./internal/clients/...",
+  "result": "passed",
+  "vet": "passed",
+  "services_stopped": true,
+  "model_source": "deterministic HTTP fixture; no real model credential",
+  "session_recovery": {
+    "processes": 2,
+    "persisted_events": 6,
+    "tool_effect_count": 1
+  },
+  "content_preparation": {
+    "attempt_id": "c99e02ee-c4d6-43b2-8783-de407b5036b8",
+    "revision_id": "revision_cb802362-fde9-49b3-b32c-cb499b5525b2",
+    "release_id": "release_6b244637-daaf-4726-ad50-d479dfcbaf05",
+    "chunks": 1,
+    "chunk_manifest_sha256": "a076af141ceec79df485beea484a78621a5429ff4baac719575ce60f5363d10b",
+    "state": "BUILDING",
+    "replay_same_hash": true
+  },
+  "evidence": {
+    "directory_basename": "sea-runtime-acceptance.WJTrJB",
+    "tests_log_sha256": "4ca0efb5b1c36af0bbdb028beba120c5dcf75a6242b5f2a9dd67cdd6a4982485"
+  },
+  "not_verified": [
+    "real model provider and DC model control plane chain",
+    "RTW first citation receipt and product SSE trace",
+    "three independent retrieval indexes and READY",
+    "arbitrary interrupted tool recovery",
+    "production deployment"
+  ]
+}
