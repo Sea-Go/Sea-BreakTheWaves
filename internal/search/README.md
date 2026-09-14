@@ -12,11 +12,11 @@
 
 `VerifiedCandidate` 只通过当前有效状态的二次检查，并非 `EvidencePack`：`Candidates` 与 `VerifiedCandidate` 的 `Chunk.Text` 在公开返回前都被清空（包括错误返回），不能拿索引里的片段当原文。WS06-F 局部 `Delivery` 注入 RTW 同版原文 `SourceReader` 与引用 `CitationAcceptor`，严格核对修订、对象 hash、定位与 quote hash，并只在收据匹配固定 EvidencePack hash 后返回可引用证据；目前仅用假实现验收，不宣称已接正式 RTW 接口。执行内核只约束 wall time、批次、子查询、每路 TopK 和候选数；交付层额外约束阅读次数和 quote rune 数，模型调用数/token 及正式累计账本仍缺，不可认为完整 H07 预算已实现。
 
-框架选择：项目根 `go.mod` 固定 tRPC-Agent-Go v1.8.1，已核对公开 `graph.NewStateGraph`、`graphagent.New`、`runner.NewRunner`，以及框架 Knowledge VectorStore 不能表达学习型 Sparse 与 token MaxSim 的固定工件边界。三路表示继续使用已有领域包，确定性执行内核独立可测；正式 Search GraphAgent/Runner、模型 Planner、typed Tools 与 summary 均未在本切片装配。本包的 `for` 是当前确定性预算循环，不冒称符合 Docs 的最终 StateGraph 条件环或 C17 搜索运行时验收。
+框架选择：项目根 `go.mod` 固定 tRPC-Agent-Go v1.8.1，已核对公开 `graph.NewStateGraph`、`graphagent.New`、`runner.NewRunner`，以及框架 Knowledge VectorStore 不能表达学习型 Sparse 与 token MaxSim 的固定工件边界。三路表示继续使用已有领域包，确定性执行内核独立可测；集成分支已用真实 Search GraphAgent/Runner 函数节点验证原生Agent→Graph→节点Span，见 [GRAPH_ACCEPTANCE.md](GRAPH_ACCEPTANCE.md)。WS06-F 的typed Tools与无工具Summary Runner也分别有局部框架测试；**尚未把搜索、证据、总结装成单根业务Graph，亦无正式搜索API/worker**。本包的 `for` 是当前确定性预算循环，不冒称符合 Docs 的最终 StateGraph 条件环或 C17搜索运行时验收。
 
-观测状态为 `PARTIAL`（OBS-2026-09-14-r2）：WS06-F fixture 的 Summary `LLMAgent→Runner` 与调用方 `Runner→LLMAgent→FunctionTool` 使用已安装的共享 Bundle，并验证框架原生 Agent/Chat/Tool Span 和指标，同一调用方 Agent/Tool TraceID 相同。WS06-E 确定性检索、WS06-F 原文/引用接纳阶段未注入业务 stage 日志/Span/指标，也没有 Collector→DataCenter 下钻；返回状态/耗时字段和测试输出不算 OBS 接纳。最终集成须在 Search GraphAgent/Runner 外层及每个 stage 注入共享 Bundle，保留框架原生 Agent/Tool/模型 Span，按失败、部分结果、预算、取消、发布/引用提交点核对。
+观测状态为 `PARTIAL`（OBS-2026-09-14-r3）：WS06-E Graph组件有框架原生Agent/Graph/节点Span；WS06-F fixture 的 Summary `LLMAgent→Runner` 与调用方 `Runner→LLMAgent→FunctionTool` 使用已安装的共享 Bundle，并验证框架原生 Agent/Chat/Tool Span 和指标，同一调用方 Agent/Tool TraceID 相同。**这些是分开的组件/fixture运行，不是搜索API同根链。** WS06-E 确定性检索、WS06-F 原文/引用接纳阶段未注入业务 stage 日志/Span/指标，也没有 Collector→DataCenter 下钻；返回状态/耗时字段和测试输出不算 OBS 接纳。最终集成须在同一业务入口及各stage注入共享Bundle，保留框架原生Agent/Tool/模型Span，按失败、部分结果、预算、取消、发布/引用提交点核对。
 
-验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。WS06-F 的 summary 与 tools 已分别有真实框架 Agent/Tool 局部调用，但仍待正式 Search GraphAgent、RTW/DC、真实模型与三路索引接纳；12 组合只做固定 fixture，不算 H07 真实验收。
+验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。WS06-F 的 summary 与 tools 已分别有真实框架 Agent/Tool 局部调用，但仍待 Search GraphAgent 与Delivery/单根总结流程的正式装配、RTW/DC、真实模型与三路索引接纳；12 组合只做固定 fixture，不算 H07 真实验收。
 
 ## WS06-F 证据与两种交付
 

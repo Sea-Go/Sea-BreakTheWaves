@@ -9,8 +9,8 @@
 | 六种执行配置 | `TestSixProfileLimitsChangeActualExecution`：fast low/medium/high 的每路调用分别 1/2/3 次，均只一批；detailed low/medium/high 分别 2/3/4 批，TopK 亦按配置实际传递 | 通过，测试策略非线上 D12 值 |
 | 降级、部分/无结果、取消、预算 | 缺档拒绝，只有显式允许才降级；单路失败需部分授权；无有效修订不查询；取消不调用；超出子查询预算在三路前拒绝 | 通过，合成检索器 |
 | 有效状态与引用 | Checker 入选及返回前再次检查；正常及错误返回的 Candidate/VerifiedCandidate 均清空索引文本；未连 RTW 权威状态/同版原文和 quote hash | 局部通过，非 EvidencePack |
-| tRPC-Agent-Go 搜索流程 | 已核对 v1.8.1 API；未装配正式 Search GraphAgent/Runner | 未验收 C17 搜索路径 |
-| OBS-2026-09-14-r2 | 无本包共享 Bundle 实际日志、Trace/metrics、Collector 查询 | `NOT_IMPLEMENTED` |
+| tRPC-Agent-Go 搜索流程 | 原独立分支未装配；集成分支新增真实Search GraphAgent/Runner组件，详见`GRAPH_ACCEPTANCE.md` | 组件局部通过，未验收C17正式搜索路径 |
+| OBS-2026-09-14-r3 | Graph组件原生Span已测，summary/tool独立fixture有框架Span/指标；无同根入口/Collector | 本路径完整状态`NOT_VERIFIED` |
 | H07 12 组合 | WS06-F 已做固定 fixture 的两种交付；真实三路+RTW联调未跑 | 未验收 |
 
 本包不修改根 `go.mod/go.sum`。在此隔离工作树实际运行 `go test -race ./internal/search -count=1`（`ok`）、`go vet ./internal/search`（退出码 0）、`git diff --check`（退出码 0）。外部引擎和真实模型的单路验收属于各 `internal/retrieval/*/ACCEPTANCE.md`，不能据此推断这条组合路径已实联。
@@ -29,6 +29,8 @@
 | 调用方 Tool 框架路径 | 同一测试再运行调用方 `Runner→LLMAgent→search_fast FunctionTool`，模型第二次调用收到结构化证据 Tool 消息；真实框架 `invoke_agent search_caller`、`execute_tool search_fast` 共用 TraceID，`chat` 同一调用下，Prometheus 有框架原生 Agent/Chat/Tool 指标 | fixture 通过，不等于正式 Search GraphAgent |
 | 12 组合 | 同一测试逐个运行 fast/detailed × low/medium/high 的 summary 与 typed Tool 各六个 fixture；每个核对请求/实际 profile、引用收据与状态 | 局部 12/12；模型规划、高智能语义、真实三路与客户端未验收 |
 | 反馈、词典 | 尚无真正展示/负反馈事实收据，也没有 WS07 查询统计/词典候选审核数据 | `NOT_IMPLEMENTED`；未点击候选不得作负例，共点击不得自动作同义词 |
-| OBS-2026-09-14-r2 / C17 | 框架原生 Summary Agent、调用方 Tool Trace/指标已测；证据读取/接纳和确定性搜索无共享业务 stage 观测，搜索+总结尚未同根 GraphAgent，Collector→DataCenter 下钻缺失 | `PARTIAL`；C17 未接纳 |
+| OBS-2026-09-14-r3 / C17 | 框架原生 Search Graph组件、Summary Agent和调用方Tool各自有局部Trace/指标证据；证据读取/接纳缺业务stage，搜索+总结尚未同根GraphAgent，Collector→DataCenter下钻缺失 | `PARTIAL`；C17未接纳 |
 
 当前运行 `go test -race -count=1 ./internal/search`（通过）、`go vet ./internal/search`（通过）、`go test ./...`（根模块全包通过）和 `git diff --check`（通过）。这些命令证明本地 fixture 与现有根模块未回归；RTW `SourceReader/CitationAcceptor` 仍是假实现，不表示 RTW 已耐久保存引用或公开流可恢复。
+
+集成复核补证：成功搜索归还未使用的阅读/引文额度，失败仍耗预留；不可信执行器错误结果不向外返回索引正文，非有限分数、伪造等级/来源在RTW读取前拒收，不能编码的EvidencePack不产生hash/收据；接纳收据后发生取消仅返回可恢复收据而不公开引文。原生Graph错误路径通过项目Runtime隔离子进程验证，避免直接使用锁定版原始Runner错误事件的共享对象竞争。Summary/Tool框架全局装配测试也改为独立子进程，`go test -mod=readonly -race -count=5 ./internal/search`通过；完整根模块race/vet/mod verify亦通过。以上仍是fixture及组件级证据，不构成真实API链路或H07接纳。
