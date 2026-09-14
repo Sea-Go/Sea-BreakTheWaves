@@ -95,7 +95,7 @@ func queryFor(b BuildResult) Query {
 func TestExactScoresScopesAndRestart(t *testing.T) {
 	s, objects, m, b, dir := fixtureService(t)
 	ctx := context.Background()
-	if len(b.Index.Shards) != 2 || b.EncodedChunks != 4 || b.Usage.TotalTokens != 4 {
+	if len(b.Index.Shards) != 2 || b.EncodedChunks != 4 || b.Usage.TotalTokens != 4 || b.StoredUsage.TotalTokens != 4 {
 		t.Fatal(b)
 	}
 	q := queryFor(b)
@@ -146,13 +146,41 @@ func TestExactScoresScopesAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	resume, err := s2.Build(ctx, BuildRequest{BuildID: "build", Generation: 1, ChunkManifest: b.Index.ChunkManifest, Profile: b.Index.Profile, ResumeIndex: &b.Ref})
-	if err != nil || !resume.Reused || resume.Ref != b.Ref {
+	if err != nil || !resume.Reused || resume.Ref != b.Ref || resume.Usage.TotalTokens != 0 ||
+		resume.StoredUsage.TotalTokens != 4 || resume.EncodedChunks != 0 || resume.ReusedChunks != 4 {
 		t.Fatal(resume, err)
 	}
 	if _, err = s2.Build(ctx, BuildRequest{BuildID: "build", Generation: 2, ChunkManifest: b.Index.ChunkManifest, Profile: b.Index.Profile, ResumeIndex: &b.Ref}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
 	_ = objects
+}
+
+func TestFailedSecondEncodingPreservesKnownCostAndFlagsUnknownUse(t *testing.T) {
+	objects, err := artifacts.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ref := fixtureManifest(t, objects)
+	config := fixtureConfig()
+	var calls int
+	encoder := encoderFunc(func(_ context.Context, q representation.Request, c representation.Contract, model string) (representation.Response, error) {
+		calls++
+		if calls == 2 {
+			return representation.Response{}, errors.New("model outcome unknown after request")
+		}
+		return fixtureResponse(q, c, model), nil
+	})
+	service, err := New(objects, encoder, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Build(context.Background(), BuildRequest{BuildID: "build", Generation: 1,
+		ChunkManifest: ref, Profile: fixtureProfile(config)})
+	if err == nil || result.Usage.TotalTokens != 2 || result.EncodedChunks != 2 || !result.UsageUnknown ||
+		result.StoredUsage.TotalTokens != 0 || result.ReusedChunks != 0 {
+		t.Fatalf("failed request erased or duplicated model use: %+v err=%v", result, err)
+	}
 }
 func TestTypedHTTPEncodingAndQuerySpaceMismatch(t *testing.T) {
 	cfg := fixtureConfig()

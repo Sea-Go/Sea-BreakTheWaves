@@ -15,3 +15,5 @@
 恢复时先使用 `Load` 校验已有 Milvus 投影；`Open` 只读文件，不能自动加载重启后的引擎集合。构建的 backend 失败以 `ProjectionError.IndexRef` 交还完整编码结果供显式 ResumeIndex，不隐式变更发布状态。共享 DC SDK 的 Represent 为独立调用，需跨进程恢复同一次模型调用时使用 RepresentWithKey 并持久化其 key。
 
 Milvus Lite 必须显式 `Engine:"lite"`。采用完整 digest 集合名和实际回读验证，适配其缺少 description、固定索引名称及 nested 参数协议；查询明确传 metric，BackendScoreKind 为 cosine_similarity 或 dot_product。正式 Standalone 与分布式容量尚未验收。统一业务日志/trace 尚未达到新标准，见验收记录，不以当前函数返回值替代运行观测。
+
+用量语义与Sparse一致：BuildResult.Usage只计本次确认的模型调用，StoredUsage是完整旧工件的历史用量；ResumeIndex不重新编码，本次Usage和EncodedChunks为0，ReusedChunks为复用数量。失败保留已确认批次的Usage，模型结果不明时UsageUnknown=true，不把未知成本记为0。

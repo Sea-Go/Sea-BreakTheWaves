@@ -88,8 +88,11 @@ func (e *ProjectionError) Unwrap() error { return e.Err }
 type BuildResult struct {
 	Index         corpus.LaneIndex
 	Ref           corpus.Ref
-	Usage         representation.Usage
+	Usage         representation.Usage // confirmed model use during this invocation only
+	StoredUsage   representation.Usage // original complete artifact, not billed again
 	EncodedChunks int
+	ReusedChunks  int
+	UsageUnknown  bool // a failed/unknown model request may have incurred unreported use
 	Reused        bool
 }
 type row struct {
@@ -259,14 +262,17 @@ func (s *Service) Build(ctx context.Context, q BuildRequest) (BuildResult, error
 			return BuildResult{}, fmt.Errorf("%w: resume binding differs", ErrInvalid)
 		}
 		if err = s.backend.prepare(ctx, snapshot); err != nil {
-			return BuildResult{}, err
+			return BuildResult{Index: snapshot.index, Ref: *q.ResumeIndex, StoredUsage: snapshot.usage,
+				ReusedChunks: len(snapshot.rows), Reused: true}, err
 		}
-		return BuildResult{Index: snapshot.index, Ref: *q.ResumeIndex, Usage: snapshot.usage, EncodedChunks: len(snapshot.rows), Reused: true}, nil
+		return BuildResult{Index: snapshot.index, Ref: *q.ResumeIndex, StoredUsage: snapshot.usage,
+			ReusedChunks: len(snapshot.rows), Reused: true}, nil
 	}
 	usage := representation.Usage{}
+	encodedCount := 0
 	for start := 0; start < len(m.Chunks); start += s.config.BatchSize {
 		if err := ctx.Err(); err != nil {
-			return BuildResult{}, err
+			return BuildResult{Usage: usage, EncodedChunks: encodedCount}, err
 		}
 		chunks := m.Chunks[start:min(start+s.config.BatchSize, len(m.Chunks))]
 		inputs := make([]representation.Input, len(chunks))
@@ -275,8 +281,11 @@ func (s *Service) Build(ctx context.Context, q BuildRequest) (BuildResult, error
 		}
 		response, err := s.encode(ctx, "document", inputs)
 		if err != nil {
-			return BuildResult{}, err
+			return BuildResult{Usage: usage, EncodedChunks: encodedCount, UsageUnknown: true}, err
 		}
+		usage.PromptTokens += response.Usage.PromptTokens
+		usage.TotalTokens += response.Usage.TotalTokens
+		encodedCount += len(chunks)
 		vectors := map[string][]float64{}
 		for _, item := range response.Data {
 			vectors[item.ID] = item.Dense.Values
@@ -290,24 +299,23 @@ func (s *Service) Build(ctx context.Context, q BuildRequest) (BuildResult, error
 		}
 		ref, err := put(ctx, s.objects, part)
 		if err != nil {
-			return BuildResult{}, err
+			return BuildResult{Usage: usage, EncodedChunks: encodedCount}, err
 		}
 		index.Shards = append(index.Shards, corpus.IndexShard{Artifact: ref, ChunkIDs: chunkIDs})
-		usage.PromptTokens += response.Usage.PromptTokens
-		usage.TotalTokens += response.Usage.TotalTokens
 	}
 	ref, err := put(ctx, s.objects, index)
 	if err != nil {
-		return BuildResult{}, err
+		return BuildResult{Usage: usage, EncodedChunks: encodedCount}, err
 	}
 	snapshot, err := s.Open(ctx, ref)
 	if err != nil {
-		return BuildResult{}, err
+		return BuildResult{Index: index, Ref: ref, Usage: usage, StoredUsage: usage, EncodedChunks: encodedCount}, err
 	}
 	if err = s.backend.prepare(ctx, snapshot); err != nil {
-		return BuildResult{}, &ProjectionError{IndexRef: ref, Err: err}
+		return BuildResult{Index: index, Ref: ref, Usage: usage, StoredUsage: usage, EncodedChunks: encodedCount},
+			&ProjectionError{IndexRef: ref, Err: err}
 	}
-	return BuildResult{Index: index, Ref: ref, Usage: usage, EncodedChunks: len(m.Chunks)}, nil
+	return BuildResult{Index: index, Ref: ref, Usage: usage, StoredUsage: usage, EncodedChunks: encodedCount}, nil
 }
 
 // Snapshot is immutable after Open and may serve concurrent queries. Keep one

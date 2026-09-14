@@ -40,3 +40,5 @@ Go 检查：`go test ./...`、`go test -race ./internal/retrieval/dense ./intern
 4. 所有实现留在开发分支，未推送、未合并主分支、未部署生产。
 
 依赖的精确增量见 [dependencies.json](acceptance/dependencies.json)。Milvus SDK 必要 MVS 提升经过根模块回归；tRPC、pgx、OpenAI 原显式版本保持。
+
+后续消费者成本对齐：Dense恢复不再把历史工件用量计入本次调用；第二批模型结果未知时保留首批已知用量并标记UsageUnknown。此项为成本口径回归，不改变原功能/OBS未完成边界。
