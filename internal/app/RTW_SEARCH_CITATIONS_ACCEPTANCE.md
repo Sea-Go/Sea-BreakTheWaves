@@ -11,3 +11,5 @@
 后续两仓同进程链局部联验：在RTW集成树运行`SEA_BTW_CITATION_CONSUMER_ROOT=<固定BTW集成工作树> bash service/knowledge/scripts/acceptance.sh`，实际RTW go-zero HTTP进程和隔离PG16发布固定release/结构性三路IndexManifest，再启动BTW自身的`TestRTWRealProviderCitationAdapter`子进程。BTW生成客户端从该真实RTW实例读取固定chunk/quote，`Delivery`先校验原文再提交新search_id EvidencePack，GET回查同一RTW数据库耐久Ref；RTW原文读取/引用接纳JSON终态与BTW父Span共享W3C Trace ID，引用计数在原fixture与新search_id共两次唯一提交、重放不多计。完整RTW脚本含全仓知识服务race/vet退出码0；BTW子测试PASS。此处输入三路IndexManifest仍是合成结构fixture，不证明真实模型/三引擎数值链。
 
 状态：H07**引用子合同**达到隔离环境`INTEGRATED`；后续同一RTW进程/PG上的答案历史子合同亦已联验，见`RTW_ACCEPTED_HISTORY_ACCEPTANCE.md`。实际三路同代索引、正式搜索API/SSE、客户端、Collector→DataCenter仍`NOT_VERIFIED`。不能把同版引用成功替代整个H07或OBS接纳。
+
+后续按RTW真实当前快照又验证了typed Tools及框架Agent调用`search_fast`，并修复Tool生成search_id含冒号的跨仓400；完整经过见`RTW_SEARCH_SNAPSHOT_ACCEPTANCE.md`。
