@@ -1,0 +1,33 @@
+{
+  "engine": "milvus-lite",
+  "version": "3.2.1",
+  "source_commit": "43d1257774e629bc9f66873977ab7c320d5bf5a7",
+  "go_sdk": "2.6.2",
+  "fresh_build": "passed",
+  "process_restart_without_rebuild": "passed",
+  "cosine_raw_score_kind": "cosine_similarity",
+  "cosine_raw_score_tolerance": 1e-05,
+  "original_float64_score_tolerance": 1e-12,
+  "pre_ann_revision_filter": "passed",
+  "index_files": [
+    {
+      "path": "data/collections/sea_dense_acceptance_20260914044036_a4cf8cf961ce31eee19a0cbac24e4c49cf38756172a89338c96eeece4ca5f669/partitions/_default/indexes/data_000001_000004.vector.hnsw.idx",
+      "sha256": "ac99c9c3720af2d15cfe7c279141a93f30c21f916c3baa210e2cb09cd877a6a3",
+      "type": "IndexHNSWFlat",
+      "rows": 4,
+      "dimensions": 2,
+      "M": 16,
+      "efConstruction": 128
+    },
+    {
+      "path": "data/collections/sea_dense_acceptance_20260914044036_a4cf8cf961ce31eee19a0cbac24e4c49cf38756172a89338c96eeece4ca5f669/partitions/_default/indexes/data_000005_000008.vector.hnsw.idx",
+      "sha256": "ac99c9c3720af2d15cfe7c279141a93f30c21f916c3baa210e2cb09cd877a6a3",
+      "type": "IndexHNSWFlat",
+      "rows": 4,
+      "dimensions": 2,
+      "M": 16,
+      "efConstruction": 128
+    }
+  ],
+  "scope": "Real local FAISS HNSW; synthetic encoding fixture; no production-scale claim."
+}

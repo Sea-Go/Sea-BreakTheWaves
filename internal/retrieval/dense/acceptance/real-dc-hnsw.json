@@ -1,0 +1,227 @@
+{
+  "config": {
+    "document": {
+      "callpoint": "bge-real-dense",
+      "configuration_id": "113cb73f-4666-4f1d-a8b2-40e76f26a8d9",
+      "physical_model": "BAAI/bge-m3@5617a9f61b02"
+    },
+    "query": {
+      "callpoint": "bge-real-dense",
+      "configuration_id": "113cb73f-4666-4f1d-a8b2-40e76f26a8d9",
+      "physical_model": "BAAI/bge-m3@5617a9f61b02"
+    },
+    "contract": {
+      "id": "bge-m3-dense@5617a9f61b02-v1",
+      "kind": "dense",
+      "dimensions": 1024,
+      "tokenizer_id": "bge-m3-tokenizer@5617a9f61b02",
+      "normalization": "l2",
+      "metric": "dot",
+      "aggregation": "none"
+    },
+    "space": "bge-m3-dense@5617a9f61b02-fp32-v1",
+    "batch_size": 2,
+    "probe_top_k": 4
+  },
+  "build": {
+    "Index": {
+      "schema_version": 1,
+      "build_id": "build",
+      "generation": 1,
+      "input_manifest_hash": "45f38c5660c83bfef7acf9dd4dd416b8d0fac40bbbcd138d36c48f216b71f491",
+      "chunk_manifest": {
+        "key": "sha256/6f7037177f0757be3cc2f5afc420f75144520e0229d93c54cfa7696abd9bdf86",
+        "sha256": "6f7037177f0757be3cc2f5afc420f75144520e0229d93c54cfa7696abd9bdf86"
+      },
+      "profile": {
+        "lane": "dense",
+        "encoder": "BAAI/bge-m3@5617a9f61b02",
+        "tokenizer": "bge-m3-tokenizer@5617a9f61b02",
+        "space": "bge-m3-dense@5617a9f61b02-fp32-v1",
+        "dimensions": 1024
+      },
+      "shards": [
+        {
+          "artifact": {
+            "key": "sha256/625cf37e6f2af0d695f2fa17bfe81c8a1481df9879c86c138546b3cbe1833c75",
+            "sha256": "625cf37e6f2af0d695f2fa17bfe81c8a1481df9879c86c138546b3cbe1833c75"
+          },
+          "chunk_ids": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "artifact": {
+            "key": "sha256/0be4461cf0a16bd63e39946fbbb28bde50578321b6079cc9746ebec703b65d85",
+            "sha256": "0be4461cf0a16bd63e39946fbbb28bde50578321b6079cc9746ebec703b65d85"
+          },
+          "chunk_ids": [
+            "c",
+            "d"
+          ]
+        }
+      ]
+    },
+    "Ref": {
+      "key": "sha256/6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4",
+      "sha256": "6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4"
+    },
+    "Usage": {
+      "prompt_tokens": 15,
+      "total_tokens": 15
+    },
+    "EncodedChunks": 4,
+    "Reused": false
+  },
+  "result": {
+    "candidates": [
+      {
+        "chunk": {
+          "chunk_id": "a",
+          "revision_id": "r1",
+          "content_id": "r1",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/d8c7252eb6ad479990e19bc401f0902bf8b48b54673ebf0de0aa1eb81404a824",
+            "sha256": "d8c7252eb6ad479990e19bc401f0902bf8b48b54673ebf0de0aa1eb81404a824"
+          },
+          "location": {
+            "locator": "paragraph-1",
+            "original_byte_start": 0,
+            "original_byte_end": 10,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 4
+          },
+          "text": "east",
+          "text_hash": "6bdb262b0201799aefb0ae4116c6fb88f549425e30cd85a7f75a06be246751cf",
+          "encoding_key": "76eddb2399e4256973bead1eb7b144282b7f3a1c2cd214a10e8d9c1c935c38c8",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "dense",
+        "index_ref": {
+          "key": "sha256/6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4",
+          "sha256": "6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4"
+        },
+        "score": 0.9999998683750585,
+        "backend_score_kind": "dot_product",
+        "backend_score": 0.9999999403953552,
+        "rank": 1
+      },
+      {
+        "chunk": {
+          "chunk_id": "b",
+          "revision_id": "r1",
+          "content_id": "r1",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/d8c7252eb6ad479990e19bc401f0902bf8b48b54673ebf0de0aa1eb81404a824",
+            "sha256": "d8c7252eb6ad479990e19bc401f0902bf8b48b54673ebf0de0aa1eb81404a824"
+          },
+          "location": {
+            "locator": "paragraph-1",
+            "original_byte_start": 0,
+            "original_byte_end": 10,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 9
+          },
+          "text": "northeast",
+          "text_hash": "48d2278d84eb667b15445d796315d80cd263380ad5968db19ed87fbd0910db8a",
+          "encoding_key": "9aeb4ba4d9aba3333dba5c3e259b3078b634cdb9454cb84e4373d07c049a6dee",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "dense",
+        "index_ref": {
+          "key": "sha256/6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4",
+          "sha256": "6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4"
+        },
+        "score": 0.8211999740181803,
+        "backend_score_kind": "dot_product",
+        "backend_score": 0.8212000727653503,
+        "rank": 2
+      },
+      {
+        "chunk": {
+          "chunk_id": "c",
+          "revision_id": "r2",
+          "content_id": "r2",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/501e16d4a35d52154f9ab243e0534b74bcad8b7c35460a6f315d867c68376a13",
+            "sha256": "501e16d4a35d52154f9ab243e0534b74bcad8b7c35460a6f315d867c68376a13"
+          },
+          "location": {
+            "locator": "paragraph-1",
+            "original_byte_start": 0,
+            "original_byte_end": 10,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 5
+          },
+          "text": "north",
+          "text_hash": "dc365e79d41cfae1c3c0d969319ae62165b81b1815a86c32bbc6c64cbdf2311b",
+          "encoding_key": "62a59cf8fb83a037549637f41367aad0ec41bd30125a596b339dc35ce810470b",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "dense",
+        "index_ref": {
+          "key": "sha256/6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4",
+          "sha256": "6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4"
+        },
+        "score": 0.7190690134446907,
+        "backend_score_kind": "dot_product",
+        "backend_score": 0.7190690040588379,
+        "rank": 3
+      },
+      {
+        "chunk": {
+          "chunk_id": "d",
+          "revision_id": "r2",
+          "content_id": "r2",
+          "source_kind": "wiki",
+          "original": {
+            "key": "sha256/501e16d4a35d52154f9ab243e0534b74bcad8b7c35460a6f315d867c68376a13",
+            "sha256": "501e16d4a35d52154f9ab243e0534b74bcad8b7c35460a6f315d867c68376a13"
+          },
+          "location": {
+            "locator": "paragraph-1",
+            "original_byte_start": 0,
+            "original_byte_end": 10,
+            "normalized_rune_start": 0,
+            "normalized_rune_end": 4
+          },
+          "text": "west",
+          "text_hash": "76a796208b71779c0331e79e8ac17df979c7d2c5bd10b491c94bd1e16d422088",
+          "encoding_key": "f516a91d317bb8d904c22195472750c37c228c8404be8971ab6c0e3695a78cca",
+          "required": true
+        },
+        "module_id": "module",
+        "release_id": "release",
+        "generation": 1,
+        "lane": "dense",
+        "index_ref": {
+          "key": "sha256/6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4",
+          "sha256": "6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4"
+        },
+        "score": 0.7124573981375677,
+        "backend_score_kind": "dot_product",
+        "backend_score": 0.7124574184417725,
+        "rank": 4
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 4,
+      "total_tokens": 4
+    }
+  },
+  "backend": "milvus-lite-hnsw",
+  "note": "Real DC encoding; fixed four-chunk local retrieval, not large corpus relevance or production-scale acceptance."
+}

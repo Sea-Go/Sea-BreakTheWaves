@@ -1,0 +1,19 @@
+{
+  "engine": "milvus-lite",
+  "version": "3.2.1",
+  "source_commit": "43d1257774e629bc9f66873977ab7c320d5bf5a7",
+  "model": "BAAI/bge-m3@5617a9f61b02",
+  "encoding_index_sha256": "6f24408f3030c7b6a0e8954284a1452e33a944f28d1d8518d6f95eadecf9f2a4",
+  "files": [
+    {
+      "path": "data/collections/sea_dense_real_dc_20260914044227_1b2e022d1d9a6fa5bcf7f02ec986ad697a525048caa137491a800f7d1a6bae21/partitions/_default/indexes/data_000001_000004.vector.hnsw.idx",
+      "sha256": "51e8e525b1ab46c116334e7dcaad226bb80fde253f8ce0d9b120e6b3492d3bd8",
+      "type": "IndexHNSWFlat",
+      "dimensions": 1024,
+      "rows": 4,
+      "faiss_metric": "INNER_PRODUCT",
+      "M": 16,
+      "efConstruction": 128
+    }
+  ]
+}
