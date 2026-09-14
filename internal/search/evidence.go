@@ -212,6 +212,23 @@ func (d *Delivery) Search(ctx context.Context, searchID string, request Request)
 	return SearchResult{Retrieval: retrieval, Pack: pack, Receipt: receipt, Usage: EvidenceUsage{reads, runes}}, nil
 }
 
+// SearchWithin applies an RTW-signed per-child upper bound without changing the
+// shared delivery policy. RTW owns the cumulative parent ledger and refunds;
+// this method only constrains the current source reads and public quote runes.
+func (d *Delivery) SearchWithin(ctx context.Context, searchID string, request Request, limits EvidenceLimits) (SearchResult, error) {
+	if d == nil || limits.MaxReads < 1 || limits.MaxQuoteRunes < 1 {
+		return SearchResult{}, ErrInvalid
+	}
+	bounded := *d
+	if limits.MaxReads < bounded.limits.MaxReads {
+		bounded.limits.MaxReads = limits.MaxReads
+	}
+	if limits.MaxQuoteRunes < bounded.limits.MaxQuoteRunes {
+		bounded.limits.MaxQuoteRunes = limits.MaxQuoteRunes
+	}
+	return bounded.Search(ctx, searchID, request)
+}
+
 func validateRetrieval(expected Snapshot, request Request, result Result) error {
 	if !reflect.DeepEqual(expected, result.Snapshot) || !validGraphResult(result, request) {
 		return ErrRetrievalContract
