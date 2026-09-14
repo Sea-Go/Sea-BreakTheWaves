@@ -106,6 +106,7 @@ def _three_lane_acceptance(manifest_key: str, expected_qrel_sha256: str,
     go_env = env.copy()
     go_env.update({"SEA_BGE_THREE_LANE_MANIFEST": str(representation_manifest),
                    "SEA_BGE_THREE_LANE_SCORES": str(output / "scores-test.json"),
+                   "SEA_BGE_THREE_LANE_SCORES_SHA256": scores["test"]["sha256"],
                    "SEA_BGE_THREE_LANE_REPORT": str(go_report_path),
                    "GOFLAGS": "-mod=readonly -p=2", "GOMAXPROCS": "2"})
     _run_logged(["go", "test", "-race", "-count=1", "-run", "^TestFrozenBGEThreeLaneParity$",
