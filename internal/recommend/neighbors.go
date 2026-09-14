@@ -75,6 +75,7 @@ type ItemCFArtifact struct {
 	ManifestRef       string          `json:"manifest_ref"`
 	ManifestHash      string          `json:"manifest_hash"`
 	DefinitionVersion string          `json:"definition_version"`
+	Watermark         time.Time       `json:"watermark"`
 	BehaviorState     string          `json:"behavior_state"` // no_mature_rows, mature_no_positive, positive
 	MatureRows        int             `json:"mature_rows"`
 	PositiveRows      int             `json:"positive_rows"`
@@ -102,6 +103,9 @@ func ComputeItemCF(ctx context.Context, release PoolRelease, source MatureSource
 	if ctx == nil || !validRelease(release) || source == nil || topK < 1 || topK > MaxNeighbors {
 		return ItemCFArtifact{}, ErrInvalid
 	}
+	if err := ctx.Err(); err != nil {
+		return ItemCFArtifact{}, err
+	}
 	batch, err := source.ReadMature(ctx, release)
 	if err != nil {
 		return ItemCFArtifact{}, err
@@ -120,7 +124,8 @@ func ComputeItemCF(ctx context.Context, release PoolRelease, source MatureSource
 	seenImpressions := make(map[impressionKey]bool, len(batch.Rows))
 	artifact := ItemCFArtifact{PoolReleaseID: release.ID, Version: ItemCFVersion, TopK: topK,
 		Generation: batch.Generation, ManifestRef: batch.ManifestRef, ManifestHash: batch.ManifestHash,
-		DefinitionVersion: batch.DefinitionVersion, MatureRows: len(batch.Rows), Items: []ItemNeighbors{}}
+		DefinitionVersion: batch.DefinitionVersion, Watermark: batch.Watermark.UTC(),
+		MatureRows: len(batch.Rows), Items: []ItemNeighbors{}}
 	for _, row := range batch.Rows {
 		if err := ctx.Err(); err != nil {
 			return ItemCFArtifact{}, err
@@ -168,6 +173,9 @@ func ComputeItemCF(ctx context.Context, release PoolRelease, source MatureSource
 	freq := make(map[string]int)
 	pairs := make(map[pairKey]pairStats)
 	for _, items := range positives {
+		if err := ctx.Err(); err != nil {
+			return ItemCFArtifact{}, err
+		}
 		ids := make([]string, 0, len(items))
 		for id := range items {
 			ids = append(ids, id)
