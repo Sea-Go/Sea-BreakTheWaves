@@ -354,3 +354,26 @@ func TestPolicyIsFrozenAndDistinct(t *testing.T) {
 		t.Fatalf("policy mutated after assembly: %+v %v", r, e)
 	}
 }
+
+func TestPlannerCannotMutateSavedQueryOrPrevious(t *testing.T) {
+	shared := []string{"  focus  "}
+	c := new(calls)
+	p := PlanFunc(func(_ context.Context, in PlanInput) ([]string, error) {
+		if in.Round == 1 {
+			return shared, nil
+		}
+		if len(in.Previous) > 0 {
+			in.Previous[0].Sources[0].Rank = 999
+			in.Previous[0].Subqueries[0] = "changed"
+		}
+		return nil, nil
+	})
+	s := service(c, p, CheckFunc(allow), policy())
+	r, e := s.Execute(context.Background(), Request{Query: "focus", Depth: Detailed, Intelligence: Low, Snapshot: snapshot()})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if shared[0] != "  focus  " || len(r.Verified) == 0 || r.Verified[0].Sources[0].Rank == 999 || r.Verified[0].Subqueries[0] != "focus" {
+		t.Fatalf("planner mutated owned state: %+v", r.Verified)
+	}
+}
