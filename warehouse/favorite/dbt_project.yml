@@ -1,0 +1,11 @@
+name: sea_favorite_warehouse
+version: '0.1.0'
+config-version: 2
+profile: sea_warehouse
+model-paths: [models]
+test-paths: [tests]
+models:
+  sea_favorite_warehouse:
+    +materialized: table
+    +engine: MergeTree()
+    +order_by: tuple()

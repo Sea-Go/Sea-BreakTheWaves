@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: favorite_landing
+    schema: "{{ var('favorite_landing_schema') }}"
+    tables:
+      - name: ods_favorite_event
+        description: Independently ACKed DC source, verified against RTW immutable EventSpec and technical receipt.
