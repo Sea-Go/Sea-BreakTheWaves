@@ -66,7 +66,8 @@ func testEnv(t *testing.T) map[string]string {
 		"BTW_SEARCH_MODEL_NAME": "test-model", "BTW_ARTIFACT_DIR": filepath.Join(dir, "artifacts"),
 		"BTW_SEARCH_INDEX_FILE": indexFile, "BTW_SEARCH_POLICY_FILE": policyFile,
 		"BTW_SEARCH_MAX_QUOTE_RUNES": "1024", "BTW_SEARCH_HTTP_TIMEOUT": "5s",
-		"BTW_OTLP_TRACES_URL": "http://127.0.0.1:1/v1/traces", "BTW_SERVICE_VERSION": strings.Repeat("a", 40),
+		"BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT": "1",
+		"BTW_OTLP_TRACES_URL":                     "http://127.0.0.1:1/v1/traces", "BTW_SERVICE_VERSION": strings.Repeat("a", 40),
 		"BTW_ENVIRONMENT": "test", "BTW_INSTANCE_ID": "search-api-test",
 	}
 }
@@ -97,6 +98,8 @@ func TestSearchAPIConfigRejectsIncompleteAndUnsafeModes(t *testing.T) {
 		{"BTW_SEARCH_MODE", ""}, {"BTW_SEARCH_MODE", "milvus"},
 		{"BTW_SEARCH_SCOPE_KEY", "short"}, {"BTW_SEARCH_API_ADDR", "0.0.0.0:8080"},
 		{"BTW_SEARCH_MODEL_KEY", ""}, {"BTW_SEARCH_POLICY_FILE", ""},
+		{"BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT", "0"},
+		{"BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT", "33"},
 	} {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
 			copy := make(map[string]string, len(values))
