@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/session/postgres"
 )
@@ -19,7 +20,7 @@ type PostgresConfig struct {
 }
 
 // OpenPostgres owns the session connection and closes it after all runs exit.
-func OpenPostgres(app string, ag agent.Agent, cfg PostgresConfig) (*Runtime, error) {
+func OpenPostgres(app string, ag agent.Agent, cfg PostgresConfig, observed *telemetry.Bundle) (*Runtime, error) {
 	if strings.TrimSpace(cfg.DSN) == "" || cfg.Schema == "" || cfg.TablePrefix == "" {
 		return nil, errors.New("explicit session DSN, schema and prefix required")
 	}
@@ -27,7 +28,7 @@ func OpenPostgres(app string, ag agent.Agent, cfg PostgresConfig) (*Runtime, err
 	if err != nil {
 		return nil, fmt.Errorf("open framework postgres session: %w", err)
 	}
-	result, err := New(app, ag, svc)
+	result, err := New(app, ag, svc, observed)
 	if err != nil {
 		_ = svc.Close()
 		return nil, err

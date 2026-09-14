@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/model"
@@ -23,6 +25,8 @@ var (
 	ErrDuplicateCompletion = errors.New("runner emitted duplicate completion")
 	ErrClosed              = errors.New("runtime closed")
 	ErrRunActive           = errors.New("run ID is already active")
+	ErrInvalidSubject      = errors.New("complete subject reference required")
+	ErrInvalidRunRequest   = errors.New("run ID and session ID required")
 )
 
 // SubjectRef is the complete H01 scope; no delimiter concatenation can alias users.
@@ -34,7 +38,7 @@ type SubjectRef struct {
 
 func (s SubjectRef) UserKey() (string, error) {
 	if s.AuthorityID == "" || s.TenantID == "" || s.SubjectID == "" {
-		return "", errors.New("complete subject reference required")
+		return "", ErrInvalidSubject
 	}
 	raw, _ := json.Marshal(s)
 	sum := sha256.Sum256(raw)
@@ -58,6 +62,7 @@ type Sink func(context.Context, *event.Event) error
 type Runtime struct {
 	runner       runner.Runner
 	sessions     session.Service
+	observed     *telemetry.Bundle
 	ownedSession bool
 	mu           sync.Mutex
 	closed       bool
@@ -68,26 +73,44 @@ type Runtime struct {
 }
 
 // New borrows sessions. The caller closes it after Runtime.Close returns.
-func New(app string, ag agent.Agent, sessions session.Service) (*Runtime, error) {
-	if app == "" || ag == nil || sessions == nil {
-		return nil, errors.New("runtime requires app, agent and session service")
+func New(app string, ag agent.Agent, sessions session.Service, observed *telemetry.Bundle) (*Runtime, error) {
+	if app == "" || ag == nil || sessions == nil || observed == nil || !observed.Installed() || observed.Closed() {
+		return nil, errors.New("runtime requires app, agent, session and installed telemetry service")
 	}
 	tracked := &trackedSessions{Service: sessions}
-	return &Runtime{runner: runner.NewRunner(app, ag, runner.WithSessionService(tracked), runner.WithPlugins(errorOwnership{})), sessions: sessions, active: map[string]context.CancelFunc{}}, nil
+	return &Runtime{runner: runner.NewRunner(app, ag, runner.WithSessionService(tracked), runner.WithPlugins(errorOwnership{})),
+		sessions: sessions, observed: observed, active: map[string]context.CancelFunc{}}, nil
 }
 
 // Run forwards every event through EOF. Completion is a runtime boundary, not a
 // product publication or knowledge acceptance receipt. Sink failure cancels work.
 func (r *Runtime) Run(parent context.Context, q Request, sink Sink) (result Result, err error) {
 	result.RunID = q.RunID
+	if r.observed == nil {
+		return result, errors.New("runtime telemetry service unavailable")
+	}
+	ctx, stage, err := r.observed.Begin(parent, "runtime", "runtime.run", slog.String("request_id", q.RunID),
+		slog.String("run_id", q.RunID), slog.String("session_id", q.SessionID))
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		if value := recover(); value != nil {
+			failure := fmt.Errorf("runtime panic (%T): %v", value, value)
+			stage.End(ctx, "failed", "RUN_PANIC", failure, slog.Int("event_count", result.Events))
+			panic(value)
+		}
+		outcome, code := runtimeObservation(err)
+		stage.End(ctx, outcome, code, err, slog.Int("event_count", result.Events), slog.Bool("completed", result.Completed))
+	}()
 	user, err := q.Subject.UserKey()
 	if err != nil {
 		return result, err
 	}
 	if q.RunID == "" || q.SessionID == "" {
-		return result, errors.New("run ID and session ID required")
+		return result, ErrInvalidRunRequest
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(ctx)
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -154,6 +177,32 @@ func (r *Runtime) Run(parent context.Context, q Request, sink Sink) (result Resu
 				}
 			}
 		}
+	}
+}
+
+func runtimeObservation(err error) (string, string) {
+	if err == nil {
+		return "succeeded", ""
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled", "CANCELLED"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timed_out", "TIMEOUT"
+	case errors.Is(err, ErrIncomplete):
+		return "failed", "RUN_INCOMPLETE"
+	case errors.Is(err, ErrDuplicateCompletion):
+		return "failed", "DUPLICATE_COMPLETION"
+	case errors.Is(err, ErrClosed):
+		return "rejected", "RUNTIME_CLOSED"
+	case errors.Is(err, ErrRunActive):
+		return "rejected", "RUN_ALREADY_ACTIVE"
+	case errors.Is(err, ErrInvalidSubject):
+		return "rejected", "SUBJECT_REQUIRED"
+	case errors.Is(err, ErrInvalidRunRequest):
+		return "rejected", "RUN_ID_REQUIRED"
+	default:
+		return "failed", "RUN_FAILED"
 	}
 }
 func (r *Runtime) Cancel(runID string) bool {

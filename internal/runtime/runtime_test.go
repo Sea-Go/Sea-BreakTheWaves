@@ -63,7 +63,7 @@ func TestOpenAIModelRunnerLifecycle(t *testing.T) {
 			a := llmagent.New("assistant", llmagent.WithModel(m), llmagent.WithGenerationConfig(model.GenerationConfig{Stream: mode != "plain"}))
 			sessions := inmemory.NewSessionService()
 			defer sessions.Close()
-			r, e := New("runtime-test", a, sessions)
+			r, e := New("runtime-test", a, sessions, observedForTest(t))
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -149,7 +149,7 @@ func TestEOFAndTerminalErrors(t *testing.T) {
 		{"error_then_completion", []*event.Event{{RequestID: "run", Response: &model.Response{Done: true, Error: &model.ResponseError{Type: "test", Message: "terminal"}}}, completion()}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &Runtime{runner: runnerStub{tc.events}, active: map[string]context.CancelFunc{}}
+			r := &Runtime{runner: runnerStub{tc.events}, active: map[string]context.CancelFunc{}, observed: observedForTest(t)}
 			_, err := r.Run(context.Background(), runtimeRequest(), nil)
 			if err == nil {
 				t.Fatal("accepted invalid stream")
@@ -194,7 +194,7 @@ func TestSessionFailureCannotBecomeSuccess(t *testing.T) {
 	base := inmemory.NewSessionService()
 	defer base.Close()
 	a := llmagent.New("assistant", llmagent.WithModel(responseModel{}))
-	r, e := New("app", a, sessionFailure{base})
+	r, e := New("app", a, sessionFailure{base}, observedForTest(t))
 	if e != nil {
 		t.Fatal(e)
 	}

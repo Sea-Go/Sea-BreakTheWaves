@@ -141,7 +141,7 @@ func recoveryPhase(t *testing.T, dsn, phase string) {
 		return out, e
 	}, function.WithName("save_effect"), function.WithDescription("Record a fixture-only side effect."))
 	a := llmagent.New("assistant", llmagent.WithModel(m), llmagent.WithTools([]tool.Tool{effect}), llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false}))
-	r, e := OpenPostgres("runtime-recovery", a, PostgresConfig{DSN: dsn, Schema: os.Getenv("SEA_RUNTIME_SCHEMA"), TablePrefix: "sea_", Initialize: phase == "first"})
+	r, e := OpenPostgres("runtime-recovery", a, PostgresConfig{DSN: dsn, Schema: os.Getenv("SEA_RUNTIME_SCHEMA"), TablePrefix: "sea_", Initialize: phase == "first"}, observedForTest(t))
 	if e != nil {
 		t.Fatal(e)
 	}

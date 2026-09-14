@@ -96,3 +96,13 @@ bash internal/runtime/acceptance.sh
 - 实际三路索引构建与 READY、答案资源、产品发布及生产部署。这些仍由各领域推进，不能从本 SDK 或会话验收外推。
 
 H05兼容更新：提供者4f5abf5显式增加mean_maxsim；SDK已从此提交重生，新增mean fixture也经过真实HTTP消费者测试。旧sum_maxsim不换算，contract/space保持独立。此前r4跨进程平台验收仍是原固定提交的历史证据，新增数学枚举按受影响的表示消费范围复验。
+
+## OBS-2026-09-14-r1：局部接入与边界
+
+新根模块 `internal/telemetry` 提供单进程Bundle：明确服务/环境/构建版本/实例、同步JSON writer、OTel exporter及固定采样率、独立Prometheus registry；缺少配置时拒绝装配。`InstallGlobals` 必须先于Runner或worker协程调用一次，使用tRPC-Agent-Go v1.8.1和A2A公开Logger入口适配同一sink，并覆盖框架默认忽略Context的函数。未携带Context的框架日志仅为进程级记录，不伪造trace字段。
+
+`Runtime.New`/`OpenPostgres` 现在强制接收已安装Bundle。一次Run产生带run/session ID的 `runtime.run.started/finished`、真实Span及请求级成功/失败/取消/超时计数和耗时；OOM或panic不会被写成成功。关闭时Bundle拒绝新阶段并等待在途阶段，再有界关闭Exporter；写日志失败增加有界指标，不递归打印。调用者仍须按Runner→Bundle顺序关闭；Domain content的Preparer/Reconciler同样强制接收Bundle，在真实PG提交结果之后写含build/attempt/epoch及固定工件hash的终态。
+
+局部证据：`go test -race -count=1 ./internal/telemetry ./internal/runtime ./internal/content` 用实际JSON writer、有效trace/span ID、Exporter接收、Prometheus `/metrics`、写入失败、关闭竞争、panic拒收及PG知识构建测试核验；任务脚本 `scripts/test-content.sh` 与 `internal/runtime/acceptance.sh` 已分别通过随机端口隔离PG，后者仍只证明原有DC/RTW业务交接和Bundle调用兼容。测试中的内存Exporter/Discard模式不构成Collector或跨仓Trace验收。
+
+当前 `observability_status=LOCAL_VERIFIED` 仅指公共设施、Runtime与内容用例的本地日志/Span/指标：OBS-02、OBS-05的适用局部反例、OBS-06本地抓取、OBS-08本地关闭/故障成立；OBS-01尚无完整worker/API进程入口装配，OBS-03未证明真实框架所有日志路径，OBS-04缺DC/RTW实际traceparent与异步Link，OBS-07缺Collector/DC下钻。三路检索lane、BGE serving和数仓/训练也尚未接此设施。本结果不能标WS06-A/G或整体OBS为ACCEPTED。
