@@ -8,7 +8,7 @@
 | 片段 RRF | Dense/Sparse/Multi-vector 原始分数与 rank 留存；`2/61` 和 `1/62+1/61` 手算对照，同名不同修订及来源键不合并 | 通过，合成检索器 |
 | 六种执行配置 | `TestSixProfileLimitsChangeActualExecution`：fast low/medium/high 的每路调用分别 1/2/3 次，均只一批；detailed low/medium/high 分别 2/3/4 批，TopK 亦按配置实际传递 | 通过，测试策略非线上 D12 值 |
 | 降级、部分/无结果、取消、预算 | 缺档拒绝，只有显式允许才降级；单路失败需部分授权；无有效修订不查询；取消不调用；超出子查询预算在三路前拒绝 | 通过，合成检索器 |
-| 有效状态与引用 | Checker 入选及返回前再次检查；未连 RTW 权威状态/同版原文和 quote hash | 局部通过，非 EvidencePack |
+| 有效状态与引用 | Checker 入选及返回前再次检查；正常及错误返回的 Candidate/VerifiedCandidate 均清空索引文本；未连 RTW 权威状态/同版原文和 quote hash | 局部通过，非 EvidencePack |
 | tRPC-Agent-Go 搜索流程 | 已核对 v1.8.1 API；未装配正式 Search GraphAgent/Runner | 未验收 C17 搜索路径 |
 | OBS-2026-09-14-r2 | 无本包共享 Bundle 实际日志、Trace/metrics、Collector 查询 | `NOT_IMPLEMENTED` |
 | H07 12 组合 | WS06-F summary/tools 未完成；真实三路+RTW联调未跑 | 未验收 |
