@@ -332,6 +332,21 @@ func TestAcceptActualH10CoveredCandidateHistoricalAndReplay(t *testing.T) {
 			}
 		})
 	}
+	future := built.Candidate
+	future.Generation = "future_baseline"
+	future.Revision = 2
+	future.AsOf = time.Now().UTC().Add(time.Hour)
+	future.AvailableAt = future.AsOf
+	futureRaw, err := json.Marshal(future)
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureHash := coveredBytesHash(futureRaw)
+	if _, err := store.AcceptCoveredBaseline(ctx, usermodel.CoveredBaselineSubmission{
+		ArtifactURL:    "http://objects.test/warehouse-coverage/future_baseline/covered-baseline/" + futureHash + ".json",
+		ArtifactSHA256: futureHash, CandidateJSON: futureRaw, FeatureSpec: spec}); !errors.Is(err, usermodel.ErrCoveredBaselineInvalid) {
+		t.Fatalf("future available_at was stored as historical baseline: %v", err)
+	}
 	stale, err := builder.BuildCovered(ctx, subject, spec, "baseline_accept_g2", 2, prefix)
 	if err != nil {
 		t.Fatal(err)
