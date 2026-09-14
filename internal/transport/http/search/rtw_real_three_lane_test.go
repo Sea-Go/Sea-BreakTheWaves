@@ -34,9 +34,10 @@ type realIndexFixture struct {
 }
 
 type realIndexResult struct {
-	IndexManifest corpus.Ref            `json:"index_manifest"`
-	Indexes       map[string]corpus.Ref `json:"indexes"`
-	ChunkCount    int                   `json:"chunk_count"`
+	IndexManifest    corpus.Ref            `json:"index_manifest"`
+	Indexes          map[string]corpus.Ref `json:"indexes"`
+	ChunkCount       int                   `json:"chunk_count"`
+	APIIndexSettings json.RawMessage       `json:"api_index_settings"`
 }
 
 type realIndexLanes struct {
@@ -209,7 +210,16 @@ func buildRTWRealThreeLane(ctx context.Context, fixture realIndexFixture) (realI
 	if err != nil {
 		return realIndexLanes{}, err
 	}
-	result := realIndexResult{IndexManifest: indexRef, Indexes: refs, ChunkCount: len(chunks.Chunks)}
+	apiIndexSettings, err := json.Marshal(struct {
+		Dense       dense.Config       `json:"dense"`
+		Sparse      sparse.Config      `json:"sparse"`
+		MultiVector multivector.Config `json:"multivector"`
+	}{dConfig, sConfig, mConfig})
+	if err != nil {
+		return realIndexLanes{}, err
+	}
+	result := realIndexResult{IndexManifest: indexRef, Indexes: refs,
+		ChunkCount: len(chunks.Chunks), APIIndexSettings: apiIndexSettings}
 	raw, err = json.Marshal(result)
 	if err != nil {
 		return realIndexLanes{}, err
