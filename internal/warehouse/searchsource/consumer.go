@@ -158,7 +158,7 @@ func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row)
 		return 0, err
 	}
 	if producer != Producer || batch.FromOffset > last+1 {
-		return 0, ErrContract
+		return 0, fmt.Errorf("%w: independent cursor producer or offset mismatch", ErrContract)
 	}
 	for _, r := range rows {
 		if r.item.Offset <= last {
@@ -171,7 +171,7 @@ func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row)
 			continue
 		}
 		if r.item.Offset != last+1 {
-			return 0, ErrContract
+			return 0, fmt.Errorf("%w: noncontiguous ODS source offset %d", ErrContract, r.item.Offset)
 		}
 		status := "technical_skip"
 		var authorityRaw []byte
@@ -191,7 +191,7 @@ func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row)
 			}
 			if (errors.Is(err, pgx.ErrNoRows) && (j.BaseRevisionID != "" || j.JudgmentRevision != 1)) ||
 				(err == nil && (j.BaseRevisionID != prior || j.JudgmentRevision != priorNumber+1)) {
-				return 0, ErrContract
+				return 0, fmt.Errorf("%w: judgment revision chain at source offset %d", ErrContract, r.item.Offset)
 			}
 			authorityRaw, payload = r.authorityRaw, r.item.Event.Payload
 			authoritySHA, judgmentID, revisionID = &r.authoritySHA, &j.JudgmentID, &j.RevisionID
