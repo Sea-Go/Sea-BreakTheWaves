@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS {database}.ods_favorite_event (
+  producer String,
+  source_offset Int64,
+  event_id String,
+  event_type String,
+  authority_id String,
+  tenant_id String,
+  subject_id String,
+  favorite_id String,
+  folder_id String,
+  target_type String,
+  target_id String,
+  target_revision Nullable(String),
+  operation String,
+  predecessor_event_id String,
+  event_time DateTime64(9, 'UTC'),
+  available_at DateTime64(9, 'UTC'),
+  dc_received_at DateTime64(9, 'UTC'),
+  source_event_hash String,
+  technical_receipt String,
+  event_spec String
+) ENGINE = MergeTree ORDER BY (producer, source_offset);
