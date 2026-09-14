@@ -1,5 +1,7 @@
 # 本地内容准备与索引 Worker
 
+`cmd/worker` 另有显式 `BTW_JOB_TYPE=usermodel.favorite-facts.v1` 的收藏事实消费者。该模式使用独立用户事实 PostgreSQL、RTW 私有收藏权威读、DC 事件批次与现有 tRPC-Agent-Go FactGraphRuntime，不初始化内容工件或内容 Session；下文内容准备/索引配置与行为保持原样。收藏模式仅在所有专用字段齐备时启动，不能因为内容模式的默认值而意外开启。验收及运行边界见 [收藏事实进程验收](FAVORITE_PROCESS_ACCEPTANCE.md)。
+
 此入口真实装配 DataCenter 技术任务客户端、RideTheWind 固定版本读取客户端、BTW 内容 Postgres Store、本地 SHA256 工件、tRPC-Agent-Go GraphAgent/Runner 与框架 Postgres Session。一个进程只领取一个明确的技术任务类型：默认 `content.prepare.v1` 生成 chunk manifest；显式 `content.build.v1` 使用三路真实本地 exact 索引实现、各自的 `Build` 与 `VerifyAndProbe`，并在固定代通过协调器、Reconciler、本地 PostgreSQL READY 后给 DataCenter 技术回执。索引任务**不调用 RTW `AcceptBuild`，不移动发布指针**。`BTW_ARTIFACT_STORE=local` 是当前硬限制，工件目录必须由本地 RTW 联调进程共享；尚无生产对象存储适配，因此不得将此二进制解释为生产发布入口。
 
 所有配置均从环境变量读取；启动缺字段即退出，且不会打印 DSN 或令牌。布尔迁移开关必须明确为 `true` 或 `false`：
