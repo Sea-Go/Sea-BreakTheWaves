@@ -15,12 +15,28 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/graph"
 	"trpc.group/trpc-go/trpc-agent-go/model"
+	"trpc.group/trpc-go/trpc-agent-go/plugin"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	frameworktrace "trpc.group/trpc-go/trpc-agent-go/telemetry/trace"
 )
 
 type prepareGraphFixture struct {
 	prepare func(context.Context, BuildInput, Fence) (Prepared, error)
+}
+
+// Production Runtime clones error events at this public plugin hook before
+// Runner repairs their content. Component tests use the same ownership rule
+// so framework Graph tracing never reads an Event Runner is mutating.
+type prepareErrorOwnership struct{}
+
+func (prepareErrorOwnership) Name() string { return "content.test-error-ownership" }
+func (prepareErrorOwnership) Register(r *plugin.Registry) {
+	r.OnEvent(func(_ context.Context, _ *agent.Invocation, e *event.Event) (*event.Event, error) {
+		if e != nil && e.Response != nil && e.Error != nil {
+			return e.Clone(), nil
+		}
+		return nil, nil
+	})
 }
 
 func (f *prepareGraphFixture) Prepare(ctx context.Context, input BuildInput, fence Fence) (Prepared, error) {
@@ -56,7 +72,7 @@ func runPrepareGraph(t *testing.T, ctx context.Context, preparer PrepareService,
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := runner.NewRunner("prepare-graph-test", ag)
+	r := runner.NewRunner("prepare-graph-test", ag, runner.WithPlugins(prepareErrorOwnership{}))
 	defer func() {
 		if err := r.Close(); err != nil {
 			t.Errorf("close runner: %v", err)
@@ -232,7 +248,7 @@ func TestPrepareGraphCancellationReachesPreparer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := runner.NewRunner("prepare-graph-cancel-test", ag)
+	r := runner.NewRunner("prepare-graph-cancel-test", ag, runner.WithPlugins(prepareErrorOwnership{}))
 	defer r.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
