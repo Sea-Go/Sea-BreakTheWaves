@@ -39,6 +39,8 @@ import (
 type realRTWIndexFixture struct {
 	BaseURL           string   `json:"base_url"`
 	WorkerToken       string   `json:"worker_token"`
+	DCJobURL          string   `json:"dc_job_url"`
+	DCJobToken        string   `json:"dc_job_token"`
 	ObjectsDir        string   `json:"objects_dir"`
 	BuildID           string   `json:"build_id"`
 	ReleaseID         string   `json:"release_id"`
@@ -81,6 +83,13 @@ func readRealRTWIndexFixture(t *testing.T) (realRTWIndexFixture, bool) {
 		fixture.ChunkOverlap < 0 || fixture.ChunkOverlap >= fixture.ChunkSize ||
 		len(fixture.SourceRevisionIDs) == 0 {
 		t.Fatal("RTW index fixture requires loopback provider, fixed build/release, shared objects and chunk profile")
+	}
+	if fixture.DCJobURL != "" || fixture.DCJobToken != "" {
+		platform, parseErr := url.Parse(fixture.DCJobURL)
+		if parseErr != nil || platform.Scheme != "http" || net.ParseIP(platform.Hostname()) == nil ||
+			!net.ParseIP(platform.Hostname()).IsLoopback() || fixture.DCJobToken == "" {
+			t.Fatal("actual DC job platform requires a paired loopback URL and disposable token")
+		}
 	}
 	return fixture, true
 }
@@ -158,11 +167,15 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	}
 	attemptID := fmt.Sprintf("btw-real-index-%d", time.Now().UnixNano())
 	expires := time.Now().UTC().Add(75 * time.Second).Truncate(time.Microsecond)
+	// Preparation used an earlier technical job/fence. The index DC job starts
+	// its own epoch at one; RTW must allocate build epoch two independently.
+	prepareFence := content.Fence{BuildID: remote.BuildId, AttemptID: "prepare-" + attemptID, LeaseEpoch: 1,
+		CancelVersion: remote.CancelVersion, ExpiresAt: expires}
 	fence := content.Fence{BuildID: remote.BuildId, AttemptID: attemptID, LeaseEpoch: 1,
 		CancelVersion: remote.CancelVersion, ExpiresAt: expires}
 	claim := ridethewind.ClaimBuildReq{BuildId: remote.BuildId, Generation: remote.Generation,
-		ManifestHash: remote.ManifestHash, AttemptId: attemptID, LeaseEpoch: fence.LeaseEpoch,
-		CancelVersion: fence.CancelVersion, LeaseExpiresAt: expires.Format(time.RFC3339Nano)}
+		ManifestHash: remote.ManifestHash, AttemptId: prepareFence.AttemptID, LeaseEpoch: 0,
+		CancelVersion: prepareFence.CancelVersion, LeaseExpiresAt: expires.Format(time.RFC3339Nano)}
 	expired := claim
 	expired.AttemptId, expired.LeaseExpiresAt = "expired-claim", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
 	if _, err := rtw.ClaimBuild(ctx, expired); err == nil {
@@ -172,7 +185,7 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 		t.Fatalf("expired claim mutated RTW build: %+v err=%v", after, err)
 	}
 	claimed, err := rtw.ClaimBuild(ctx, claim)
-	if err != nil || claimed.AttemptId != attemptID || claimed.LeaseEpoch != fence.LeaseEpoch {
+	if err != nil || claimed.AttemptId != prepareFence.AttemptID || claimed.LeaseEpoch != prepareFence.LeaseEpoch {
 		t.Fatalf("claim real RTW build: %+v err=%v", claimed, err)
 	}
 	old := ridethewind.AcceptBuildReq{BuildId: remote.BuildId, Generation: remote.Generation,
@@ -181,7 +194,7 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	if _, err := rtw.AcceptBuild(ctx, old); err == nil {
 		t.Fatal("real RTW accepted old fence")
 	}
-	if after, err := rtw.GetBuild(ctx, remote.BuildId); err != nil || after.State != "BUILDING" || after.AttemptId != attemptID {
+	if after, err := rtw.GetBuild(ctx, remote.BuildId); err != nil || after.State != "BUILDING" || after.AttemptId != prepareFence.AttemptID {
 		t.Fatalf("old result changed claimed RTW build: %+v err=%v", after, err)
 	}
 	chunker, err := content.NewChunker(content.ChunkConfig{ID: fixture.ChunkProfile,
@@ -196,7 +209,7 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	stable := content.BuildInput{BuildID: remote.BuildId, ModuleID: remote.ModuleId, ReleaseID: remote.ReleaseId,
 		Generation: remote.Generation, InputHash: remote.ManifestHash, OperationID: "real-index-preparation-" + attemptID,
 		Revisions: append(append([]string(nil), release.SourceRevisionIds...), release.WikiRevisionIds...)}
-	prepared, err := preparer.Prepare(ctx, stable, fence)
+	prepared, err := preparer.Prepare(ctx, stable, prepareFence)
 	if err != nil || len(prepared.Manifest.Chunks) == 0 || prepared.Build.Chunks == nil {
 		t.Fatalf("prepare real RTW revisions into BTW chunk ledger: chunks=%d err=%v", len(prepared.Manifest.Chunks), err)
 	}
@@ -211,14 +224,19 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 	if state.RepresentationCalls() < 6 || !state.Completed() {
 		t.Fatal("three real BTW lanes or DC technical ACK missing")
 	}
+	technicalJob, err := state.CurrentJob(ctx)
+	if err != nil || technicalJob.State != "succeeded" || technicalJob.AttemptID == "" ||
+		technicalJob.LeaseEpoch != 1 || technicalJob.Result == nil || technicalJob.Result.State != "succeeded" {
+		t.Fatalf("actual/fixed DC job did not finish its own epoch one: %+v %v", technicalJob, err)
+	}
 	local, err := store.Get(ctx, remote.BuildId)
 	if err != nil || local.State != "READY" || local.Result == nil || len(local.Lanes) != 3 {
 		t.Fatalf("local index not fixed READY: %+v err=%v", local, err)
 	}
 	accepted, err := rtw.GetBuild(ctx, remote.BuildId)
 	if err != nil || accepted.State != "READY" || accepted.IndexManifestRef != local.Result.Key ||
-		accepted.IndexManifestHash != local.Result.SHA256 || accepted.AttemptId != attemptID ||
-		accepted.LeaseEpoch != fence.LeaseEpoch {
+		accepted.IndexManifestHash != local.Result.SHA256 || accepted.AttemptId != technicalJob.AttemptID ||
+		accepted.LeaseEpoch != 2 {
 		t.Fatalf("real RTW READY differs from BTW/ DC accepted result: %+v err=%v", accepted, err)
 	}
 	if !state.ResultMatches(*local.Result) {
@@ -229,7 +247,7 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 		t.Fatalf("RTW and DC receipts did not deliver PG outbox: delivered=%t err=%v", delivered, err)
 	}
 	replay := ridethewind.AcceptBuildReq{BuildId: remote.BuildId, Generation: remote.Generation,
-		ManifestHash: remote.ManifestHash, AttemptId: attemptID, LeaseEpoch: fence.LeaseEpoch,
+		ManifestHash: remote.ManifestHash, AttemptId: technicalJob.AttemptID, LeaseEpoch: accepted.LeaseEpoch,
 		CancelVersion: fence.CancelVersion, State: "READY", IndexManifestRef: local.Result.Key,
 		IndexManifestHash: local.Result.SHA256}
 	if repeated, err := rtw.AcceptBuild(ctx, replay); err != nil || repeated.State != "READY" ||
@@ -246,10 +264,14 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 		IndexManifestHash string `json:"index_manifest_hash"`
 		DCAckRef          string `json:"dc_ack_ref"`
 		DCAckHash         string `json:"dc_ack_hash"`
+		DCJobID           string `json:"dc_job_id"`
+		DCLeaseEpoch      int64  `json:"dc_lease_epoch"`
+		RTWLeaseEpoch     int64  `json:"rtw_lease_epoch"`
 		RTWState          string `json:"rtw_state"`
 		RTWGeneration     int64  `json:"rtw_generation"`
 	}{remote.BuildId, local.Result.Key, local.Result.SHA256, dcRef.URI,
-		dcRef.Hash, accepted.State, accepted.Generation})
+		dcRef.Hash, technicalJob.ID, technicalJob.LeaseEpoch, accepted.LeaseEpoch,
+		accepted.State, accepted.Generation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +286,8 @@ func structRef(key, hash string) corpus.Ref { return corpus.Ref{Key: key, SHA256
 type realRTWDCState struct {
 	mu                  sync.Mutex
 	job                 jobs.Job
+	platform            *datacenter.Client
+	platformJobID       string
 	claimed             bool
 	result              *jobs.Result
 	representationCalls int
@@ -275,11 +299,21 @@ func (s *realRTWDCState) RepresentationCalls() int {
 	return s.representationCalls
 }
 func (s *realRTWDCState) Completed() bool {
+	if s.platform != nil {
+		job, err := s.platform.GetJob(context.Background(), s.platformJobID)
+		return err == nil && job.State == "succeeded" && job.Result != nil && job.Result.State == "succeeded"
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.result != nil && s.result.State == "succeeded"
 }
 func (s *realRTWDCState) ResultMatches(ref corpus.Ref) bool {
+	if s.platform != nil {
+		job, err := s.platform.GetJob(context.Background(), s.platformJobID)
+		return err == nil && job.Result != nil && job.Result.Ref != nil &&
+			*job.Result.Ref == (jobs.ResultRef{URI: "sha256:" + ref.SHA256, Hash: ref.SHA256,
+				MediaType: "application/vnd.sea.index-manifest+json"})
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.result != nil && s.result.Ref != nil &&
@@ -287,12 +321,34 @@ func (s *realRTWDCState) ResultMatches(ref corpus.Ref) bool {
 			MediaType: "application/vnd.sea.index-manifest+json"})
 }
 func (s *realRTWDCState) ResultRef() (jobs.ResultRef, bool) {
+	if s.platform != nil {
+		job, err := s.platform.GetJob(context.Background(), s.platformJobID)
+		if err != nil || job.Result == nil || job.Result.Ref == nil {
+			return jobs.ResultRef{}, false
+		}
+		return *job.Result.Ref, true
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.result == nil || s.result.Ref == nil {
 		return jobs.ResultRef{}, false
 	}
 	return *s.result.Ref, true
+}
+
+func (s *realRTWDCState) CurrentJob(ctx context.Context) (jobs.Job, error) {
+	if s.platform != nil {
+		return s.platform.GetJob(ctx, s.platformJobID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job := s.job
+	if s.result != nil {
+		job.State = "succeeded"
+		copy := *s.result
+		job.Result = &copy
+	}
+	return job, nil
 }
 
 func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWIndexFixture,
@@ -317,9 +373,49 @@ func newRealRTWIndexWorker(t *testing.T, ctx context.Context, fixture realRTWInd
 		Request: jobs.Submit{Producer: "ridethewind", OperationID: "real-index-operation-" + fence.AttemptID,
 			RunRef: "real-index-run-" + fence.AttemptID, JobType: app.IndexJobType,
 			ResourceProfile: "cpu", Input: raw, MaxAttempts: 2}}}
+	if fixture.DCJobURL != "" {
+		platform, err := datacenter.New(httpclient.Config{BaseURL: fixture.DCJobURL,
+			Token: fixture.DCJobToken, HTTPClient: &http.Client{Timeout: 10 * time.Second}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		submission := state.job.Request
+		submission.Deadline = time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339Nano)
+		receipt, err := platform.SubmitJob(ctx, submission)
+		if err != nil || receipt.ID == "" {
+			t.Fatalf("submit actual DC index job: %+v %v", receipt, err)
+		}
+		state.platform, state.platformJobID = platform, receipt.ID
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer fixture-dc-token" {
 			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if state.platform != nil && strings.HasPrefix(r.URL.Path, "/v1/jobs") {
+			// Only the representation endpoint remains a fixed numerical fixture.
+			// Job HTTP bytes go to the real DC cmd/platform and PostgreSQL ledger.
+			forwarded, err := http.NewRequestWithContext(r.Context(), r.Method,
+				fixture.DCJobURL+r.URL.RequestURI(), io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			forwarded.Header = r.Header.Clone()
+			forwarded.Header.Set("Authorization", "Bearer "+fixture.DCJobToken)
+			response, err := (&http.Client{Timeout: 10 * time.Second}).Do(forwarded)
+			if err != nil {
+				t.Errorf("actual DC job proxy failed: %v", err)
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			defer response.Body.Close()
+			w.Header().Set("Content-Type", response.Header.Get("Content-Type"))
+			w.WriteHeader(response.StatusCode)
+			if _, err := io.Copy(w, io.LimitReader(response.Body, 1<<20)); err != nil {
+				t.Errorf("copy actual DC job reply: %v", err)
+			}
 			return
 		}
 		switch r.Method + " " + r.URL.Path {

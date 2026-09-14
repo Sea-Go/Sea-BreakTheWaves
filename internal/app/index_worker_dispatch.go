@@ -23,8 +23,8 @@ func sameAcceptedIndex(remote ridethewind.Build, fixed content.Build, result cor
 
 func sameIndexJobAttempt(job jobs.Job, claim content.IndexDispatch) bool {
 	return job.ID == claim.JobID && job.WorkerID == claim.WorkerID &&
-		job.AttemptID == claim.Fence.AttemptID && job.LeaseEpoch == claim.Fence.LeaseEpoch &&
-		job.CancelVersion == claim.Fence.CancelVersion && job.Request.JobType == IndexJobType
+		job.AttemptID == claim.DC.AttemptID && job.LeaseEpoch == claim.DC.LeaseEpoch &&
+		job.CancelVersion == claim.DC.CancelVersion && job.Request.JobType == IndexJobType
 }
 
 func sameIndexJobSuccess(job jobs.Job, claim content.IndexDispatch) bool {
@@ -46,7 +46,8 @@ func (w *IndexWorker) DispatchReadyOnce(parent context.Context, buildID string) 
 	worked = true
 	ctx, stage, beginErr := w.observed.Begin(parent, "content", "content.worker.index_dispatch",
 		slog.String("build_id", claim.BuildID), slog.String("job_id", claim.JobID),
-		slog.String("attempt_id", claim.Fence.AttemptID), slog.Int64("lease_epoch", claim.Fence.LeaseEpoch))
+		slog.String("attempt_id", claim.DC.AttemptID), slog.Int64("dc_lease_epoch", claim.DC.LeaseEpoch),
+		slog.Int64("rtw_build_lease_epoch", claim.Fence.LeaseEpoch))
 	if beginErr != nil {
 		if deferErr := w.store.DeferIndexDispatch(context.WithoutCancel(parent), claim, "pending", "observation_unavailable"); deferErr != nil {
 			beginErr = errors.Join(beginErr, deferErr)
@@ -124,7 +125,7 @@ func (w *IndexWorker) DispatchReadyOnce(parent context.Context, buildID string) 
 	}
 	if !sameIndexJobSuccess(job, claim) {
 		if !sameIndexJobAttempt(job, claim) || job.State != "running" ||
-			!claim.Fence.ExpiresAt.After(time.Now().Add(250*time.Millisecond)) {
+			!claim.DC.ExpiresAt.After(time.Now().Add(250*time.Millisecond)) {
 			state := "needs_new_attempt"
 			if job.State == "failed" || job.State == "cancelled" || job.State == "succeeded" ||
 				job.Attempt >= job.Request.MaxAttempts && job.State != "queued" {
@@ -139,8 +140,8 @@ func (w *IndexWorker) DispatchReadyOnce(parent context.Context, buildID string) 
 		result := jobs.Result{State: "succeeded", Ref: &jobs.ResultRef{
 			URI: "sha256:" + claim.Result.SHA256, Hash: claim.Result.SHA256, MediaType: indexResultMediaType}}
 		_, completeErr := w.jobs.CompleteJob(ctx, claim.JobID, jobs.Complete{
-			Lease: jobs.Lease{WorkerID: claim.WorkerID, AttemptID: claim.Fence.AttemptID,
-				LeaseEpoch: claim.Fence.LeaseEpoch, CancelVersion: claim.Fence.CancelVersion}, Result: result})
+			Lease: jobs.Lease{WorkerID: claim.WorkerID, AttemptID: claim.DC.AttemptID,
+				LeaseEpoch: claim.DC.LeaseEpoch, CancelVersion: claim.DC.CancelVersion}, Result: result})
 		if completeErr != nil {
 			job, readErr = w.jobs.GetJob(ctx, claim.JobID)
 			if readErr != nil || !sameIndexJobSuccess(job, claim) {

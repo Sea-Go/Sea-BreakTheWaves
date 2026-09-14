@@ -92,7 +92,7 @@ type IndexRunner interface {
 
 type IndexBuildStore interface {
 	Get(context.Context, string) (content.Build, error)
-	AttachIndexDispatch(context.Context, string, string, string, content.Fence) error
+	AttachIndexDispatch(context.Context, string, string, string, content.TechnicalFence, content.Fence) error
 	ClaimIndexDispatch(context.Context, string) (content.IndexDispatch, bool, error)
 	NoteIndexRTWAccepted(context.Context, content.IndexDispatch) error
 	DeferIndexDispatch(context.Context, content.IndexDispatch, string, string) error
@@ -168,7 +168,7 @@ func sameRTWIndexBuild(b ridethewind.Build, fixed content.Build, fence content.F
 func (w *IndexWorker) ProcessClaim(parent context.Context, job jobs.Job) (receipt content.IndexGraphReceipt, resultErr error) {
 	ctx, stage, err := w.observed.Begin(parent, "content", "content.worker.index", slog.String("job_id", job.ID),
 		slog.String("operation_id", job.Request.OperationID), slog.String("attempt_id", job.AttemptID),
-		slog.Int64("lease_epoch", job.LeaseEpoch), slog.Int64("cancel_version", job.CancelVersion))
+		slog.Int64("dc_lease_epoch", job.LeaseEpoch), slog.Int64("dc_cancel_version", job.CancelVersion))
 	if err != nil {
 		return receipt, err
 	}
@@ -182,15 +182,15 @@ func (w *IndexWorker) ProcessClaim(parent context.Context, job jobs.Job) (receip
 		outcome, code := indexWorkerOutcome(resultErr)
 		stage.End(ctx, outcome, code, resultErr, slog.String("index_manifest_hash", receipt.IndexManifest.SHA256))
 	}()
-	input, fence, err := DecodeIndexClaim(job, w.config.WorkerID, w.config.ResourceProfile, time.Now())
+	input, dcFence, err := DecodeIndexClaim(job, w.config.WorkerID, w.config.ResourceProfile, time.Now())
 	if err != nil {
 		return receipt, err
 	}
 	eligible = true
-	if !fence.ExpiresAt.After(time.Now().Add(time.Second)) {
+	if !dcFence.ExpiresAt.After(time.Now().Add(time.Second)) {
 		return receipt, ErrExpiredIndexLease
 	}
-	ctx, cancel := context.WithDeadline(ctx, fence.ExpiresAt.Add(-time.Second))
+	ctx, cancel := context.WithDeadline(ctx, dcFence.ExpiresAt.Add(-time.Second))
 	defer cancel()
 	fixed, err := w.store.Get(ctx, input.BuildID)
 	if err != nil {
@@ -199,9 +199,6 @@ func (w *IndexWorker) ProcessClaim(parent context.Context, job jobs.Job) (receip
 	if !sameIndexBuild(fixed, input) || (fixed.State != "BUILDING" && fixed.State != "READY") {
 		return receipt, fmt.Errorf("%w: DC job differs from prepared content build", content.ErrConflict)
 	}
-	if err := w.store.AttachIndexDispatch(ctx, input.BuildID, job.ID, w.config.WorkerID, fence); err != nil {
-		return receipt, fmt.Errorf("persist content index dispatch attempt: %w", err)
-	}
 	remote, err := w.builds.GetBuild(ctx, input.BuildID)
 	if err != nil {
 		return receipt, fmt.Errorf("read fixed RTW build: %w", err)
@@ -209,24 +206,36 @@ func (w *IndexWorker) ProcessClaim(parent context.Context, job jobs.Job) (receip
 	alreadyAccepted := fixed.State == "READY" && fixed.Result != nil && sameAcceptedIndex(remote, fixed, *fixed.Result)
 	if !alreadyAccepted && (remote.State != "BUILDING" || remote.BuildId != fixed.BuildInput.BuildID || remote.ModuleId != fixed.ModuleID ||
 		remote.ReleaseId != fixed.ReleaseID || remote.Generation != fixed.Generation || remote.ManifestHash != fixed.InputHash ||
-		remote.CancelVersion != fence.CancelVersion) {
+		remote.CancelVersion != fixed.CancelVersion) {
 		return receipt, fmt.Errorf("%w: RTW build differs from prepared content build", content.ErrConflict)
 	}
+	technical := content.TechnicalFence{AttemptID: dcFence.AttemptID, LeaseEpoch: dcFence.LeaseEpoch,
+		CancelVersion: dcFence.CancelVersion, ExpiresAt: dcFence.ExpiresAt}
+	var fence content.Fence
 	if alreadyAccepted {
+		expires, parseErr := time.Parse(time.RFC3339Nano, remote.LeaseExpiresAt)
+		if parseErr != nil || remote.AttemptId == "" || remote.LeaseEpoch < 1 {
+			return receipt, fmt.Errorf("%w: accepted RTW build has no durable fence", content.ErrConflict)
+		}
+		fence = content.Fence{BuildID: input.BuildID, AttemptID: remote.AttemptId,
+			LeaseEpoch: remote.LeaseEpoch, CancelVersion: remote.CancelVersion, ExpiresAt: expires}
 		receipt = content.IndexGraphReceipt{BuildID: fixed.BuildInput.BuildID, ReleaseID: fixed.ReleaseID,
 			Generation: fixed.Generation, ChunkManifest: *fixed.Chunks, Lanes: fixed.Lanes,
 			IndexManifest: *fixed.Result, State: "READY", AttemptID: fence.AttemptID,
 			LeaseEpoch: fence.LeaseEpoch, CancelVersion: fence.CancelVersion}
 	} else {
-		claimed, err := w.builds.ClaimBuild(ctx, ridethewind.ClaimBuildReq{BuildId: input.BuildID,
-			Generation: input.Generation, ManifestHash: input.InputManifestHash, CancelVersion: fence.CancelVersion,
-			AttemptId: fence.AttemptID, LeaseEpoch: fence.LeaseEpoch, LeaseExpiresAt: fence.ExpiresAt.UTC().Format(time.RFC3339Nano)})
+		// lease_epoch=0 asks RTW, the build authority, to allocate its next
+		// globally monotonic build fence. The DC job-local epoch is retained
+		// separately for the eventual technical ACK.
+		fence, err = claimAllocatedRTWBuildFence(ctx, w.builds, remote, dcFence)
 		if err != nil {
 			return receipt, fmt.Errorf("claim RTW index build: %w", err)
 		}
-		if !sameRTWIndexBuild(claimed, fixed, fence) {
-			return receipt, fmt.Errorf("%w: RTW claim returned another build or fence", content.ErrConflict)
-		}
+	}
+	if err := w.store.AttachIndexDispatch(ctx, input.BuildID, job.ID, w.config.WorkerID, technical, fence); err != nil {
+		return receipt, fmt.Errorf("persist content index dispatch attempt: %w", err)
+	}
+	if !alreadyAccepted {
 		option, err := content.IndexGraphRunOption(input.BuildID, fence, input.ResumeIndexes)
 		if err != nil {
 			return receipt, err

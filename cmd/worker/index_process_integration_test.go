@@ -120,7 +120,7 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 	}{stable.BuildID, stable.ReleaseID, stable.Generation, stable.InputHash}
 	inputRaw, _ := json.Marshal(input)
 	job := jobs.Job{ID: "index-job", InputHash: artifacts.Hash(inputRaw), State: "running", WorkerID: "local-worker-1",
-		AttemptID: "index-attempt", LeaseEpoch: 2, LeaseExpiresAt: leaseExpires,
+		AttemptID: "index-attempt", LeaseEpoch: 1, LeaseExpiresAt: leaseExpires,
 		Request: jobs.Submit{Producer: "ridethewind", OperationID: "index-operation", RunRef: "run-index", JobType: "content.build.v1",
 			ResourceProfile: "cpu", Input: inputRaw}}
 	var claims atomic.Int64
@@ -228,7 +228,9 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 	}))
 	defer dc.Close()
 	build := ridethewind.Build{BuildId: stable.BuildID, ModuleId: stable.ModuleID, ReleaseId: stable.ReleaseID,
-		Generation: stable.Generation, ManifestHash: stable.InputHash, State: "BUILDING"}
+		Generation: stable.Generation, ManifestHash: stable.InputHash, State: "BUILDING",
+		AttemptId: "prepare-attempt", LeaseEpoch: 1,
+		LeaseExpiresAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)}
 	release := ridethewind.Release{ReleaseId: stable.ReleaseID, ModuleId: stable.ModuleID, Ordinal: 1,
 		SourceRevisionIds: releaseManifest.SourceRevisionIDs, WikiRevisionIds: releaseManifest.WikiRevisionIDs,
 		ChunkingProfile: releaseManifest.ChunkingProfile, RetrievalProfiles: profiles, ManifestHash: releaseRef.SHA256, ManifestRef: releaseRef.Key}
@@ -253,7 +255,13 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 			var q ridethewind.ClaimBuildReq
 			_ = json.NewDecoder(r.Body).Decode(&q)
 			buildMu.Lock()
-			build.AttemptId, build.LeaseEpoch, build.CancelVersion, build.LeaseExpiresAt = q.AttemptId, q.LeaseEpoch, q.CancelVersion, q.LeaseExpiresAt
+			if q.LeaseEpoch != 0 {
+				t.Errorf("worker supplied DC job epoch as RTW build fence: %d", q.LeaseEpoch)
+			}
+			if build.AttemptId != q.AttemptId {
+				build.LeaseEpoch++
+			}
+			build.AttemptId, build.CancelVersion, build.LeaseExpiresAt = q.AttemptId, q.CancelVersion, q.LeaseExpiresAt
 			data = build
 			buildMu.Unlock()
 		case "POST /internal/v1/knowledge/builds/index-build/results":
@@ -264,7 +272,7 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 			local, err := store.Get(r.Context(), stable.BuildID)
 			if err != nil || local.State != "READY" || local.Result == nil ||
 				q.State != "READY" || q.Generation != stable.Generation || q.ManifestHash != stable.InputHash ||
-				q.AttemptId != job.AttemptID || q.LeaseEpoch != job.LeaseEpoch ||
+				q.AttemptId != job.AttemptID || q.LeaseEpoch != 2 ||
 				q.IndexManifestRef != local.Result.Key || q.IndexManifestHash != local.Result.SHA256 {
 				t.Errorf("RTW result lacks same fixed local READY: %+v local=%+v err=%v", q, local, err)
 				w.WriteHeader(http.StatusConflict)

@@ -99,8 +99,10 @@ func (f *fakePrepareJobs) GetJob(context.Context, string) (jobs.Job, error) {
 }
 
 type fakePrepareBuilds struct {
-	build  ridethewind.Build
-	claims []ridethewind.ClaimBuildReq
+	build            ridethewind.Build
+	claims           []ridethewind.ClaimBuildReq
+	claimErr         error
+	grantBeforeError bool
 }
 
 func (f *fakePrepareBuilds) GetBuild(context.Context, string) (ridethewind.Build, error) {
@@ -108,7 +110,44 @@ func (f *fakePrepareBuilds) GetBuild(context.Context, string) (ridethewind.Build
 }
 func (f *fakePrepareBuilds) ClaimBuild(_ context.Context, req ridethewind.ClaimBuildReq) (ridethewind.Build, error) {
 	f.claims = append(f.claims, req)
+	if f.claimErr != nil && !f.grantBeforeError {
+		return ridethewind.Build{}, f.claimErr
+	}
+	if req.LeaseEpoch == 0 {
+		if f.build.AttemptId != req.AttemptId {
+			f.build.LeaseEpoch++
+		}
+	} else {
+		f.build.LeaseEpoch = req.LeaseEpoch
+	}
+	f.build.AttemptId, f.build.CancelVersion, f.build.LeaseExpiresAt =
+		req.AttemptId, req.CancelVersion, req.LeaseExpiresAt
+	if f.claimErr != nil {
+		return ridethewind.Build{}, f.claimErr
+	}
 	return f.build, nil
+}
+
+func TestPrepareWorkerRecoversOnlyCommittedRTWGrantAfterLostReply(t *testing.T) {
+	for _, committed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "committed", false: "not_committed"}[committed], func(t *testing.T) {
+			worker, dc, rtw := newPreparedWorkerFixture(t, nil)
+			rtw.claimErr = errors.New("RTW claim reply lost")
+			rtw.grantBeforeError = committed
+			worked, err := worker.RunOnce(context.Background())
+			if !worked {
+				t.Fatal("DC prepare job was not claimed")
+			}
+			if committed {
+				if err != nil || len(dc.completed) != 1 || dc.completed[0].Result.State != "succeeded" ||
+					rtw.build.LeaseEpoch != 1 || len(rtw.claims) != 1 || rtw.claims[0].LeaseEpoch != 0 {
+					t.Fatalf("committed prepare grant did not recover: err=%v build=%+v DC=%+v", err, rtw.build, dc.completed)
+				}
+			} else if err == nil || len(dc.completed) != 1 || dc.completed[0].Result.State != "failed" {
+				t.Fatalf("uncommitted prepare grant falsely succeeded: err=%v DC=%+v", err, dc.completed)
+			}
+		})
+	}
 }
 
 type fakePreparedStore struct{ build content.Build }
@@ -180,6 +219,11 @@ func TestPrepareWorkerCompletesTechnicalChunkJobThroughGraph(t *testing.T) {
 	worked, err := worker.RunOnce(context.Background())
 	if err != nil || !worked || len(rtw.claims) != 1 || len(dc.completed) != 1 {
 		t.Fatalf("worked=%t err=%v RTW claims=%d DC completions=%d", worked, err, len(rtw.claims), len(dc.completed))
+	}
+	if rtw.claims[0].LeaseEpoch != 0 || rtw.build.LeaseEpoch != 1 ||
+		dc.completed[0].LeaseEpoch != dc.job.LeaseEpoch || dc.job.LeaseEpoch != 2 {
+		t.Fatalf("prepare conflated DC epoch and RTW build fence: claim=%+v build=%+v DC=%+v",
+			rtw.claims[0], rtw.build, dc.completed[0])
 	}
 	completed := dc.completed[0].Result
 	if completed.State != "succeeded" || completed.Ref == nil || completed.Ref.MediaType != prepareResultMediaType ||
