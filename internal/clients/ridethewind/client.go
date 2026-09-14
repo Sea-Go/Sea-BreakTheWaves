@@ -212,7 +212,9 @@ func (c *Client) ListAcceptedAnswers(ctx context.Context, q ListAcceptedAnswersR
 }
 func (c *Client) ClaimBuild(ctx context.Context, q ClaimBuildReq) (Build, error) {
 	v, e := request[Build](ctx, c, http.MethodPost, "builds", q.BuildId, "/claim", q)
-	if e == nil && (v.BuildId != q.BuildId || v.Generation != q.Generation || v.AttemptId != q.AttemptId || v.LeaseEpoch != q.LeaseEpoch || v.CancelVersion != q.CancelVersion || v.ManifestHash != q.ManifestHash) {
+	if e == nil && (v.BuildId != q.BuildId || v.Generation != q.Generation || v.AttemptId != q.AttemptId ||
+		v.LeaseEpoch < 1 || (q.LeaseEpoch != 0 && v.LeaseEpoch != q.LeaseEpoch) ||
+		v.CancelVersion != q.CancelVersion || v.ManifestHash != q.ManifestHash) {
 		e = errors.New("RTW build fence mismatch")
 	}
 	if e == nil && (v.State != "BUILDING" || v.LeaseExpiresAt != q.LeaseExpiresAt) {
