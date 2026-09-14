@@ -309,6 +309,13 @@ func cloneSnapshot(s Snapshot) Snapshot {
 // Execute spends explicit batch/subquery budgets and keeps partial lane results
 // only when the caller has opted in. Context cancellation always wins.
 func (s *Service) Execute(ctx context.Context, r Request) (Result, error) {
+	out, err := s.execute(ctx, r)
+	for i := range out.Candidates {
+		out.Candidates[i].Chunk.Text = ""
+	}
+	return out, err
+}
+func (s *Service) execute(ctx context.Context, r Request) (Result, error) {
 	if ctx == nil || strings.TrimSpace(r.Query) == "" || (r.Depth != Fast && r.Depth != Detailed) || (r.Intelligence != Low && r.Intelligence != Medium && r.Intelligence != High) || !validSnapshot(r.Snapshot) {
 		return Result{}, ErrInvalid
 	}

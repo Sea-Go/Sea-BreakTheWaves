@@ -10,7 +10,7 @@
 
 不可用等级只有在 `AllowLowerIntelligence` 显式为真时才降到较低档，并返回 requested/effective 和原因；深度永不自动升级。单路失败只有 `AllowPartial` 为真且仍有可用路径时返回 `partial` 与独立 `lane_status`，三路全失败报错。取消优先返回 Context 错误。`complete` **只表示 fast 配置批次完成且有经有效状态检查的候选，不表示答案充分**；详搜未有覆盖判定，所以即使有候选也只返回 `partial`，不将 `no_new_evidence` 冒称充分完成。`empty` 是无有效候选，可能有降级原因；调用方须阅读 lane_status。
 
-`VerifiedCandidate` 只通过当前有效状态的二次检查，并非 `EvidencePack`：其 `Chunk.Text` 被清空，不能拿索引里的片段当原文；还没有从 RTW 读取同版原文、校验 quote hash、定位和可引用性。WS06-F/RTW 接收方须在最终交付前执行同版原文读取与引用固定；不得将这里的 `verified_candidates` 直接传给 Summary LLMAgent 当成证据。当前只约束 wall time、批次、子查询、每路 TopK 和候选数；模型调用数/token、累计 Tools 账本、阅读/最终证据长度尚未接入，不可认为完整 H07 预算已实现。
+`VerifiedCandidate` 只通过当前有效状态的二次检查，并非 `EvidencePack`：`Candidates` 与 `VerifiedCandidate` 的 `Chunk.Text` 在公开返回前都被清空（包括错误返回），不能拿索引里的片段当原文；还没有从 RTW 读取同版原文、校验 quote hash、定位和可引用性。WS06-F/RTW 接收方须在最终交付前执行同版原文读取与引用固定；不得将这里的 `verified_candidates` 直接传给 Summary LLMAgent 当成证据。当前只约束 wall time、批次、子查询、每路 TopK 和候选数；模型调用数/token、累计 Tools 账本、阅读/最终证据长度尚未接入，不可认为完整 H07 预算已实现。
 
 框架选择：项目根 `go.mod` 固定 tRPC-Agent-Go v1.8.1，已核对公开 `graph.NewStateGraph`、`graphagent.New`、`runner.NewRunner`，以及框架 Knowledge VectorStore 不能表达学习型 Sparse 与 token MaxSim 的固定工件边界。三路表示继续使用已有领域包，确定性执行内核独立可测；正式 Search GraphAgent/Runner、模型 Planner、typed Tools 与 summary 均未在本切片装配。本包的 `for` 是当前确定性预算循环，不冒称符合 Docs 的最终 StateGraph 条件环或 C17 搜索运行时验收。
 

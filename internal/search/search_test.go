@@ -122,6 +122,11 @@ func TestThreeIndependentLanesAndRRF(t *testing.T) {
 	if r.Verified[0].Chunk.Text != "" {
 		t.Fatal("indexed text escaped into verified candidate")
 	}
+	for _, candidate := range r.Candidates {
+		if candidate.Chunk.Text != "" {
+			t.Fatal("indexed text escaped into public candidate set")
+		}
+	}
 	wantA := 2.0 / 61.0
 	wantB := 1.0/62.0 + 1.0/61.0
 	if math.Abs(r.Candidates[0].RRFScore-wantA) > 1e-12 || math.Abs(r.Candidates[1].RRFScore-wantB) > 1e-12 {
@@ -375,5 +380,25 @@ func TestPlannerCannotMutateSavedQueryOrPrevious(t *testing.T) {
 	}
 	if shared[0] != "  focus  " || len(r.Verified) == 0 || r.Verified[0].Sources[0].Rank == 999 || r.Verified[0].Subqueries[0] != "focus" {
 		t.Fatalf("planner mutated owned state: %+v", r.Verified)
+	}
+}
+
+func TestCandidateTextClearedOnErrorReturn(t *testing.T) {
+	c := new(calls)
+	p := PlanFunc(func(_ context.Context, in PlanInput) ([]string, error) {
+		if in.Round == 1 {
+			return []string{"first"}, nil
+		}
+		return []string{"second", "third"}, nil
+	})
+	s := service(c, p, CheckFunc(allow), policy())
+	r, e := s.Execute(context.Background(), Request{Query: "q", Depth: Detailed, Intelligence: Low, Snapshot: snapshot()})
+	if !errors.Is(e, ErrBudget) || len(r.Candidates) == 0 {
+		t.Fatalf("expected partial error result: %+v %v", r, e)
+	}
+	for _, candidate := range r.Candidates {
+		if candidate.Chunk.Text != "" {
+			t.Fatal("indexed text escaped on error path")
+		}
 	}
 }
