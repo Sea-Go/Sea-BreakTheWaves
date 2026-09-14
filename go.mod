@@ -3,6 +3,7 @@ module github.com/Sea-Go/Sea-BreakTheWaves
 go 1.25.5
 
 require (
+	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/milvus-io/milvus-proto/go-api/v2 v2.6.8-0.20251223041313-25746c47c1a7
 	github.com/milvus-io/milvus/client/v2 v2.6.2
