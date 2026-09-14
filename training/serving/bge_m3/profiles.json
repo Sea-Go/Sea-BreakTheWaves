@@ -1,0 +1,53 @@
+{
+  "dense": {
+    "model": "BAAI/bge-m3@5617a9f61b02",
+    "output_contract": "sea.representation.dense.v1",
+    "representation_space": "bge-m3-dense@5617a9f61b02-fp32-v1",
+    "representation_contract": {
+      "id": "bge-m3-dense@5617a9f61b02-v1",
+      "kind": "dense",
+      "dimensions": 1024,
+      "tokenizer_id": "bge-m3-tokenizer@5617a9f61b02",
+      "normalization": "l2",
+      "metric": "dot",
+      "aggregation": "none"
+    },
+    "max_input_tokens": 128,
+    "max_batch": 2
+  },
+  "sparse": {
+    "model": "BAAI/bge-m3@5617a9f61b02",
+    "output_contract": "sea.representation.sparse.v1",
+    "representation_space": "bge-m3-sparse@5617a9f61b02-fp32-v1",
+    "representation_contract": {
+      "id": "bge-m3-sparse@5617a9f61b02-v1",
+      "kind": "sparse",
+      "dimensions": 250002,
+      "tokenizer_id": "bge-m3-tokenizer@5617a9f61b02",
+      "normalization": "none",
+      "metric": "dot",
+      "aggregation": "max",
+      "vocabulary_id": "bge-m3-xlmr-vocabulary@5617a9f61b02",
+      "max_nonzero": 126
+    },
+    "max_input_tokens": 128,
+    "max_batch": 2
+  },
+  "token_matrix": {
+    "model": "BAAI/bge-m3@5617a9f61b02",
+    "output_contract": "sea.representation.token_matrix.v1",
+    "representation_space": "bge-m3-token-matrix@5617a9f61b02-fp32-v1",
+    "representation_contract": {
+      "id": "bge-m3-token-matrix@5617a9f61b02-v1",
+      "kind": "token_matrix",
+      "dimensions": 1024,
+      "tokenizer_id": "bge-m3-tokenizer@5617a9f61b02",
+      "normalization": "l2",
+      "metric": "maxsim",
+      "aggregation": "mean_maxsim",
+      "max_tokens": 127
+    },
+    "max_input_tokens": 128,
+    "max_batch": 2
+  }
+}
