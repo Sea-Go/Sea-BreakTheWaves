@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -60,7 +61,7 @@ type ToolSession struct {
 }
 
 func NewToolSession(delivery *Delivery, snapshot Snapshot, operationID string, budget ToolBudget, allowPartial, allowLower bool) (*ToolSession, error) {
-	if delivery == nil || !validSnapshot(snapshot) || strings.TrimSpace(operationID) == "" ||
+	if delivery == nil || !validSnapshot(snapshot) || strings.TrimSpace(operationID) == "" || len(operationID) > 200 ||
 		budget.MaxSearchCalls < 1 || budget.MaxReadCalls < 1 || budget.MaxQuoteRunes < 1 {
 		return nil, ErrInvalid
 	}
@@ -100,7 +101,11 @@ func (s *ToolSession) search(ctx context.Context, depth Depth, in SearchToolInpu
 			return ErrBudget
 		}
 		s.sequence++
-		id := fmt.Sprintf("%s:%d", s.operationID, s.sequence)
+		// RTW's durable citation identity allows only bounded ASCII letters,
+		// digits, underscore, dash and dot. Hash the trusted run identity and
+		// sequence so Tool calls remain deterministic without leaking raw IDs or
+		// sending the old colon-delimited value that RTW rejects with HTTP 400.
+		id := "search_" + artifacts.Hash([]byte(fmt.Sprintf("%s:%d", s.operationID, s.sequence)))
 		s.remaining.SearchCalls--
 		limits := s.delivery.limits
 		if limits.MaxReads > s.remaining.ReadCalls {
