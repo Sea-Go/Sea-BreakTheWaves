@@ -170,6 +170,9 @@ func isolatedPool(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, recommendmigration.SQL); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, recommendmigration.PairSQL); err != nil {
+		t.Fatal(err)
+	}
 	return pool
 }
 
