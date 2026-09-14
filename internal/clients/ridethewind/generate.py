@@ -9,7 +9,9 @@ source = pathlib.Path('service/knowledge/api/internal/types/types.go')
 raw = read(source).decode()
 wanted = {'Revision','SourceRef','Release','RetrievalProfile','Build','Compile','ClaimBuildReq','AcceptBuildReq','ClaimCompileReq','AcceptCompileReq',
           'CitationLocation','CitationObject','CitationChunk','ReadSearchSourceReq','AcceptSearchCitationsReq',
-          'SearchCitationReceipt','SearchCitationReference','SearchCitationRecord'}
+          'SearchCitationReceipt','SearchCitationReference','SearchCitationRecord',
+          'AcceptedSubjectRef','CommitAcceptedAnswerReq','AcceptedAnswer','AcceptedAnswersPage',
+          'GetAcceptedAnswerReq','ListAcceptedAnswersReq'}
 blocks = dict(re.findall(r'type (\w+) struct \{(.*?)\n\}', raw, re.S))
 result = ['// Code generated from RideTheWind api/knowledge.api via goctl types. DO NOT EDIT.\npackage ridethewind\n']
 for name in sorted(wanted):

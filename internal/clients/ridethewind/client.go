@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 )
@@ -125,6 +127,75 @@ func (c *Client) GetSearchCitations(ctx context.Context, searchID string) (Searc
 		return SearchCitationRecord{}, errors.New("RTW citation lookup identity mismatch")
 	}
 	return record, nil
+}
+
+func (c *Client) CommitAcceptedAnswer(ctx context.Context, q CommitAcceptedAnswerReq) (AcceptedAnswer, error) {
+	if q.AnswerId == "" || q.SearchId == "" || q.SessionId == "" || q.Subject.AuthorityId == "" ||
+		q.Subject.TenantId == "" || q.Subject.SubjectId == "" || q.TurnJson == "" {
+		return AcceptedAnswer{}, errors.New("RTW accepted answer requires complete fixed scope and turn")
+	}
+	answer, err := post[AcceptedAnswer](ctx, c, "accepted-answers", q.AnswerId, q)
+	if err != nil {
+		return AcceptedAnswer{}, err
+	}
+	if answer.AnswerId != q.AnswerId || answer.SearchId != q.SearchId || answer.Subject != q.Subject ||
+		answer.SessionId != q.SessionId || answer.TurnJson != q.TurnJson || answer.AcceptedOrdinal <= 0 ||
+		(answer.Status != "succeeded" && answer.Status != "insufficient") {
+		return AcceptedAnswer{}, errors.New("RTW accepted answer commit receipt mismatch")
+	}
+	return answer, nil
+}
+
+func (c *Client) GetAcceptedAnswer(ctx context.Context, q GetAcceptedAnswerReq) (AcceptedAnswer, error) {
+	segment, err := httpclient.Segment(q.AnswerId)
+	if err != nil || q.AuthorityId == "" || q.TenantId == "" || q.SubjectId == "" || q.SessionId == "" {
+		return AcceptedAnswer{}, errors.New("RTW accepted answer lookup requires complete scope")
+	}
+	query := url.Values{"authority_id": {q.AuthorityId}, "tenant_id": {q.TenantId},
+		"subject_id": {q.SubjectId}, "session_id": {q.SessionId}}
+	raw, _, err := c.http.Do(ctx, http.MethodGet, "/internal/v1/knowledge/accepted-answers/"+segment, query, nil, "")
+	if err != nil {
+		return AcceptedAnswer{}, err
+	}
+	answer, err := decodeEnvelope[AcceptedAnswer](raw)
+	if err != nil {
+		return AcceptedAnswer{}, err
+	}
+	if answer.AnswerId != q.AnswerId || answer.Subject != (AcceptedSubjectRef{AuthorityId: q.AuthorityId,
+		TenantId: q.TenantId, SubjectId: q.SubjectId}) || answer.SessionId != q.SessionId {
+		return AcceptedAnswer{}, errors.New("RTW accepted answer lookup scope mismatch")
+	}
+	return answer, nil
+}
+
+func (c *Client) ListAcceptedAnswers(ctx context.Context, q ListAcceptedAnswersReq) (AcceptedAnswersPage, error) {
+	if q.AuthorityId == "" || q.TenantId == "" || q.SubjectId == "" || q.SessionId == "" ||
+		q.AfterOrdinal < 0 || q.Limit < 1 || q.Limit > 100 {
+		return AcceptedAnswersPage{}, errors.New("RTW accepted answer list requires bounded complete scope")
+	}
+	query := url.Values{"authority_id": {q.AuthorityId}, "tenant_id": {q.TenantId},
+		"subject_id": {q.SubjectId}, "session_id": {q.SessionId},
+		"after_ordinal": {strconv.FormatInt(q.AfterOrdinal, 10)}, "limit": {strconv.Itoa(q.Limit)}}
+	raw, _, err := c.http.Do(ctx, http.MethodGet, "/internal/v1/knowledge/accepted-answers", query, nil, "")
+	if err != nil {
+		return AcceptedAnswersPage{}, err
+	}
+	page, err := decodeEnvelope[AcceptedAnswersPage](raw)
+	if err != nil {
+		return AcceptedAnswersPage{}, err
+	}
+	previous := q.AfterOrdinal
+	for _, answer := range page.Items {
+		if answer.Subject != (AcceptedSubjectRef{AuthorityId: q.AuthorityId, TenantId: q.TenantId,
+			SubjectId: q.SubjectId}) || answer.SessionId != q.SessionId || answer.AcceptedOrdinal <= previous {
+			return AcceptedAnswersPage{}, errors.New("RTW accepted answer list scope or order mismatch")
+		}
+		previous = answer.AcceptedOrdinal
+	}
+	if len(page.Items) > q.Limit || (page.NextOrdinal != 0 && page.NextOrdinal < previous) {
+		return AcceptedAnswersPage{}, errors.New("RTW accepted answer list cursor mismatch")
+	}
+	return page, nil
 }
 func (c *Client) ClaimBuild(ctx context.Context, q ClaimBuildReq) (Build, error) {
 	v, e := request[Build](ctx, c, http.MethodPost, "builds", q.BuildId, "/claim", q)
