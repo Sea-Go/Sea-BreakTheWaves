@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -33,13 +34,14 @@ def fixed_put(url: str, body: bytes) -> None:
 
 
 def build(dbt: Path, endpoint: str, output: Path, schema: str,
-          landing: str, v2: bool, through: int) -> None:
+          landing: str, v2: bool, through: int, old_ods_sha256: str) -> None:
     env = os.environ.copy()
     env.update(WAREHOUSE_CH_PORT=str(urllib.parse.urlsplit(endpoint).port),
                WAREHOUSE_GENERATION_SCHEMA=schema,
                DBT_SEND_ANONYMOUS_USAGE_STATS="false", DBT_USE_COLORS="false")
     vars = {"favorite_landing_schema": landing, "favorite_subjectref_v2_read": v2,
-            "favorite_subjectref_v2_through_offset": through}
+            "favorite_subjectref_v2_through_offset": through,
+            "favorite_subjectref_v2_old_ods_sha256": old_ods_sha256}
     with (output / f"dbt-{schema}.log").open("wb") as log:
         result = subprocess.run([str(dbt), "build", "--project-dir", str(HERE),
                                  "--profiles-dir", str(WAREHOUSE / "environment"),
@@ -94,7 +96,7 @@ def run_case(ch: ClickHouse, endpoint: str, prefix: str, runtime: Path,
     fixed_put(old_url, source)
     ch.query(f"INSERT INTO {landing}.ods_favorite_event SETTINGS date_time_input_format='best_effort' FORMAT JSONEachRow", source)
     build(runtime / ".venv/bin/dbt", endpoint, output, old_gen, landing, False,
-          len(parse_lines(source, ODS_FIELDS)))
+          len(parse_lines(source, ODS_FIELDS)), digest(source))
     old_dwd = ch.query(f"SELECT * FROM {old_gen}.dwd_favorite_transition ORDER BY source_offset FORMAT JSONEachRow")
     old_dwd_sha = digest(old_dwd)
 
@@ -111,7 +113,7 @@ def run_case(ch: ClickHouse, endpoint: str, prefix: str, runtime: Path,
     new_create = ch.query(f"SHOW CREATE TABLE {landing}.ods_favorite_event_subjectref_v2_r1")
     ch.query(f"INSERT INTO {landing}.ods_favorite_event_subjectref_v2_r1 SETTINGS date_time_input_format='best_effort' FORMAT JSONEachRow", projected)
     build(runtime / ".venv/bin/dbt", endpoint, output, new_gen, landing, True,
-          len(parse_lines(source, ODS_FIELDS)))
+          len(parse_lines(source, ODS_FIELDS)), digest(source))
     old_again = ch.query(f"SELECT * FROM {new_gen}.dwd_favorite_transition ORDER BY source_offset FORMAT JSONEachRow")
     if old_again != old_dwd or ch.query(f"SHOW CREATE TABLE {landing}.ods_favorite_event") != old_create:
         raise AssertionError("old ODS DDL or old DWD bytes changed")
@@ -213,7 +215,8 @@ def reject_ch_candidate(ch: ClickHouse, endpoint: str, runtime: Path,
                WAREHOUSE_GENERATION_SCHEMA=schema,
                DBT_SEND_ANONYMOUS_USAGE_STATS="false", DBT_USE_COLORS="false")
     vars = {"favorite_landing_schema": landing, "favorite_subjectref_v2_read": True,
-            "favorite_subjectref_v2_through_offset": through}
+            "favorite_subjectref_v2_through_offset": through,
+            "favorite_subjectref_v2_old_ods_sha256": digest(source)}
     log_path = output / f"dbt-{label}-rejected.log"
     with log_path.open("wb") as log:
         result = subprocess.run([str(runtime / ".venv/bin/dbt"), "build",
@@ -226,8 +229,7 @@ def reject_ch_candidate(ch: ClickHouse, endpoint: str, runtime: Path,
                                 timeout=180)
     text = log_path.read_text()
     if (result.returncode == 0 or
-            "favorite_subjectref_v2_source_integrity" not in text or
-            "FAIL 1 favorite_subjectref_v2_source_integrity" not in text or
+            re.search(r"\bFAIL [1-9][0-9]* favorite_subjectref_v2_source_integrity\b", text) is None or
             "SKIP relation " + schema + ".dwd_favorite_transition_subjectref_v2_r1" not in text):
         raise AssertionError(f"{label} candidate did not fail before its v2 DWD")
     return label + "_rejected_by_dbt"
@@ -240,13 +242,37 @@ def reject_ch_incomplete_sources(ch: ClickHouse, endpoint: str, runtime: Path,
                             ("issuer", "subject_uid", "origin_ods_sha256"))
     bad_hash = [dict(row) for row in projected]
     bad_hash[0]["source_event_hash"] = "f" * 64
+    bad_origin = [dict(row) for row in projected]
+    bad_origin[0]["origin_ods_sha256"] = "f" * 64 if digest(source) != "f" * 64 else "e" * 64
     serialize = lambda rows: b"".join(canonical(r) + b"\n" for r in rows)
+    # SQL Nullable(String) has two distinct source values: NULL and "".
+    # Rebuild a valid *test-only* v1 source with NULL revisions, then corrupt
+    # exactly one new CH projection to "" while keeping its old EventSpec and
+    # hash anchored. The source test must reject this before the v2 DWD.
+    null_rows = [dict(row) for row in old]
+    for row in null_rows:
+        spec = strict_json(row["event_spec"])
+        spec["payload"]["target_revision"] = None
+        row["target_revision"] = None
+        row["event_spec"] = canonical(spec).decode()
+        row["source_event_hash"] = digest(canonical(spec))
+        receipt = strict_json(row["technical_receipt"])
+        receipt["input_hash"] = row["source_event_hash"]
+        row["technical_receipt"] = canonical(receipt).decode()
+    null_source = serialize(null_rows)
+    null_projected = parse_lines(project(null_source, fixture_mapping(null_source)), ODS_FIELDS +
+                                 ("issuer", "subject_uid", "origin_ods_sha256"))
+    null_projected[0]["target_revision"] = ""
     gap_index = 1 if len(old) > 2 else len(old) - 1
     old_gap = [r for i, r in enumerate(old) if i != gap_index]
     projected_gap = [r for i, r in enumerate(projected) if i != gap_index]
     return [
         reject_ch_candidate(ch, endpoint, runtime, output, "hash_conflict",
                             source, serialize(bad_hash), len(old)),
+        reject_ch_candidate(ch, endpoint, runtime, output, "origin_hash_conflict",
+                            source, serialize(bad_origin), len(old)),
+        reject_ch_candidate(ch, endpoint, runtime, output, "null_vs_empty_revision",
+                            null_source, serialize(null_projected), len(old)),
         reject_ch_candidate(ch, endpoint, runtime, output, "missing_mapping",
                             source, serialize(projected[:-1]), len(old)),
         reject_ch_candidate(ch, endpoint, runtime, output, "prefix_gap",

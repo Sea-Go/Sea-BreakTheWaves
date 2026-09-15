@@ -8,5 +8,7 @@ where (r.operation='retract' and (
   or a.favorite_id!=r.favorite_id or a.folder_id!=r.folder_id
   or a.target_type!=r.target_type
   or a.target_id!=r.target_id
-  or ifNull(a.target_revision,'')!=ifNull(r.target_revision,'')
+  or isNull(a.target_revision)!=isNull(r.target_revision)
+  or (not isNull(a.target_revision) and not isNull(r.target_revision)
+    and a.target_revision!=r.target_revision)
 )) or (r.operation='assert' and r.predecessor_event_id!='')
