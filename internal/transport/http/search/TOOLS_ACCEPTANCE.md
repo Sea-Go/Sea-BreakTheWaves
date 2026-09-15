@@ -25,3 +25,11 @@ RTW `GetCurrentSearchSnapshot` 的空 `valid_revision_ids` 为 JSON `[]`，现�
 RTW集成树追加第二个独立BTW子进程夹具后，以`GOFLAGS=-p=2 GOMAXPROCS=2 KNOWLEDGE_KEEP_EVIDENCE=1 KNOWLEDGE_REAL_USER_GATE=1 SEA_BTW_TOOLS_CONSUMER_ROOT=/Users/edy/Sea/.codex-worktrees/sea-btw-runtime-content-20260914 bash service/knowledge/scripts/acceptance.sh`完整重跑，退出码0；真实User Center版和gRPC替身版工作流分别PASS（48.86秒、23.26秒），其余Knowledge/User Center race、vet也通过。首次联验在新增真实引用后只因旧总指标期望仍按原引用数失败；补计本次**一笔新引用**后通过，同键重投不增加提交。
 
 RTW父端只交给第二个BTW进程已发布chunk的`revision_id/chunk_id/quote_hash`。BTW先从RTW当前发布重读并核哈希，原生tRPC Graph/Runner执行固定候选，`RTWSearchCitationAdapter`再次读同版原文并在RTW PG接纳pack/收据；RTW父端核引用行、公开证据/收据、固定ID的POST/GET与跨主体拒读，父预算只收1次实际读及公开引文字数、未用预留退回。再通过RTW产品`evidence-reads`从其耐久pack重读，同键只扣一次。BTW子进程退出断言一次根Agent Span、一次SourceReader和一次CitationAcceptor。本次候选仍是验收指定的**真实已发布chunk**，没有由Tools正式三路local-exact索引召回；也未经过正式`cmd/api` socket或WhaleHall父Agent。故只把“签发→BTW有证据Graph→RTW耐久引用/预算/重读”子链标`INTEGRATED`，H02 Tools整体仍`PARTIAL`。
+
+## 2026-09-15 Graph引用接纳在途时的关闭生命周期
+
+后续开发集成`6f8a4c2`原`ToolRunBoundary.Close`只调用框架`Runner.Close`再关闭它借用的私有Session。锁定tRPC-Agent-Go框架取消Runner事件流时，公开`Search`可先退出，而Graph节点仍在RTW耐久`CitationAcceptor`内；关闭私有Session与返回`Close`发生在引用提交仍在途之前。新`TestToolRunCloseWaitsForInFlightCitationCommit`使用真实GraphAgent/Runner和固定来源/引用，故意让RTW引用接纳在取消后晚回；原代码race红轮**先返回Close**，日志SHA=`2ea45aa3e350dd9bae29ec17ae854a8222ef32e3da4685ed708c83177fe47d9e`（首次fixture缺TraceExporter只算测试准备失败，SHA=`5db9ffd49088887cfeb0fd9ad4a71dd7a5682d88dac20798835ef0fc1c3a2aeb`）。
+
+修复让Tool边界同一锁封住新调用并取消已在途的调用，同时在Graph节点**本身**用受锁注册的WaitGroup留证。`Runner.Close`后先阻新节点并等全部已入RTW引用接纳的节点、再等公开Search清理，最后关私有Session；只等待公开Search会漏掉已取消后仍在运行的Graph节点，因此两种活动需要分别核。晚到收据保留给RTW产品按固定SearchID回查，但关闭中的这次公开请求返回错误、没有quote/引用收据，关闭后新请求返回`runtime.ErrClosed`。原受众HMAC、旧pack/Hash及Parent预算权威RTW语义不变，日志与Span仍沿用官方框架及同源结构化阶段。
+
+修后定向race绿轮日志SHA=`062e64050ed8172fdaddc13921f101a61ca6b5cd748e96668e279ccb6a93073c`；加强公开结果/收据都为空的断言后同测试再次退出0、日志SHA=`78f358fc56251b81acaff5b21dcdd36caf1d2aaed357ebc6045c065c4e32c7be`。受影响`internal/search`、Tools HTTP handler、`cmd/api`和RTW适配器四包race退出0，日志SHA=`5cb512a13a97a180d0ed87cd14dbca447125b15b18bc6d52232973b2d7f8806a`；vet/mod verify/diff check通过。它只签本机真实框架**关闭与晚接纳**L1局部修复，未在RTW真PG/进程关闭、S3/Collector、Whale宿主取消、线上流量或十二格中档Tools下验证，H02 Tools/47整体仍`PARTIAL`。
