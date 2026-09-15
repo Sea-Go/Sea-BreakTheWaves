@@ -14,7 +14,7 @@
 
 ## 哈希和对象交接
 
-`Scope.HashDomains` 分别记录 RTW **业务 CompileInput**、DC **整个 Jobs.Submit**、RTW **Accept Result**、DC **13 键成功技术 Manifest** 和 DC **整个技术 Result** 的 SHA。每个 SourceRevision 原对象SHA、模型候选/Wiki 原文SHA、事实原 quote SHA、人工 typed Review JCS SHA、质量 Case JCS SHA、质量 Report JCS SHA、Dataset Root JCS SHA 又是不同域；不得拿摘要同名比较或从活动索引找历史字节。质量 Case 的原文对象只留 SHA/版本引用，事实 quote与人工标签按稳定 FactID 次序进 JCS；下游须从 RTW 同修订原对象读回才可重评。
+`Scope.HashDomains` 仅在 AI 目标记录 RTW **业务 CompileInput**、DC **整个 Jobs.Submit**、RTW **Accept Result**、DC **13 键成功技术 Manifest** 和 DC **整个技术 Result** 的 SHA；人工目标不得把旧 AI Job 摘要冒作本版技术结果，旧 AI 修订由独立 Case 保留。每个 SourceRevision 原对象SHA、模型候选/Wiki 原文SHA、事实原 quote SHA、人工 typed Review JCS SHA、质量 Case JCS SHA、质量 Report JCS SHA、Dataset Root JCS SHA 又是不同域；不得拿摘要同名比较或从活动索引找历史字节。质量 Case 的原文对象只留 SHA/版本引用，事实 quote与人工标签按稳定 FactID 次序进 JCS；下游须从 RTW 同修订原对象读回才可重评。
 
 `EvaluateCase` 输出 `{ManifestJCS,ManifestSHA256,ReportJCS,ReportSHA256}`。CaseID 由无自身 ID 的 Case JCS 算出，公开读 `DecodeCaseManifest(raw,sha)` 复核 JCS、自身 ID 和字面修订。`FreezeDataset(revision,cases)` 对 CaseID 排序，保留目标 WikiRevisionID、事实 ID 集、rubric/review version/typed Review SHA、人类 grade 来源、RTW 原 Event JCS SHA/真实 DC offset/Producer/EventID/ReviewerUID与各 Case/Report SHA；同一 Wiki 可在不同人工 review_version 留两条历史，重复 `(WikiRevisionID,review_version)` 拒。Root 对无自身 SHA 的 DatasetManifest JCS 取 SHA，`DecodeDatasetManifest` 再核完整排序、键、hash、状态与 `activation=none`。真实 Wiki ODS 需要独立连续 cursor；不得借用人工 qrel 消费者或把非 Wiki 源 offset 缺口补造为 Fact 位置。
 

@@ -356,6 +356,11 @@ func TestWikiQualityRejectsChangedRawSourceQuoteGradeAndOldBase(t *testing.T) {
 	if _, err := EvaluateCase(context.Background(), manual, Verifiers{}); !errors.Is(err, ErrScope) {
 		t.Fatalf("manual old-base mutation crossed accepted AI base: %v", err)
 	}
+	manual = manualQualityFixture(t, base)
+	manual.Scope.Hashes = base.Scope.Hashes
+	if _, err := EvaluateCase(context.Background(), manual, Verifiers{}); !errors.Is(err, ErrScope) {
+		t.Fatalf("manual Wiki revision inherited a different AI technical Job hash: %v", err)
+	}
 }
 
 func TestWikiQualityMissingPinnedCitationStaysVisible(t *testing.T) {
