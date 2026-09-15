@@ -22,6 +22,7 @@ import (
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
@@ -101,6 +102,7 @@ type wikiWorkerJobsFixture struct {
 	rejectAck           bool
 	autoExpireBeforeAck bool
 	lostComplete        bool
+	rejectComplete      bool
 }
 
 func (f *wikiWorkerJobsFixture) ClaimJob(context.Context, jobs.Claim) (jobs.Job, error) {
@@ -149,14 +151,21 @@ func (f *wikiWorkerJobsFixture) CompleteJob(_ context.Context, id string, req jo
 		return jobs.CompletionReceipt{}, errors.New("DC completion preceded RTW business acceptance")
 	}
 	f.completes++
+	if f.rejectComplete {
+		return jobs.CompletionReceipt{}, errors.New("fixture DC completion lease CAS conflict")
+	}
 	f.job.State, f.job.Result = "succeeded", &req.Result
 	if f.lostComplete {
 		f.lostComplete = false
 		return jobs.CompletionReceipt{}, errors.New("fixture lost DC completion HTTP response")
 	}
+	resultHash, err := wikiCompileTechnicalResultHash(req.Result)
+	if err != nil {
+		return jobs.CompletionReceipt{}, err
+	}
 	return jobs.CompletionReceipt{JobID: id, AttemptID: req.AttemptID,
 		LeaseEpoch: req.LeaseEpoch, CancelVersion: req.CancelVersion,
-		TechnicalState: "succeeded", ResultHash: strings.Repeat("d", 64)}, nil
+		TechnicalState: "succeeded", ResultHash: resultHash}, nil
 }
 
 type wikiWorkerOwnerFixture struct {
@@ -164,6 +173,11 @@ type wikiWorkerOwnerFixture struct {
 	revisions              map[string]ridethewind.Revision
 	objects                artifacts.Store
 	claims, accepts, reads int
+	wikiRevisionReads      int
+	withdrawWikiOnRead     int
+	sourceRevisionReads    int
+	withdrawSourceOnRead   int
+	headRevisionID         string
 	lostFirstAccept        bool
 	acceptedRequest        ridethewind.AcceptCompileReq
 	supersedeOnRead        int
@@ -190,7 +204,22 @@ func (f *wikiWorkerOwnerFixture) GetCompile(context.Context, string) (ridethewin
 	return f.compile, nil
 }
 func (f *wikiWorkerOwnerFixture) GetRevision(_ context.Context, id string) (ridethewind.Revision, error) {
-	return f.revisions[id], nil
+	revision := f.revisions[id]
+	if id == "source-r1" {
+		f.sourceRevisionReads++
+		if f.withdrawSourceOnRead > 0 && f.sourceRevisionReads == f.withdrawSourceOnRead {
+			revision.Withdrawn = true
+			f.revisions[id] = revision
+		}
+	}
+	if id != "" && id == f.compile.RevisionId {
+		f.wikiRevisionReads++
+		if f.withdrawWikiOnRead > 0 && f.wikiRevisionReads == f.withdrawWikiOnRead {
+			revision.Withdrawn = true
+			f.revisions[id] = revision
+		}
+	}
+	return revision, nil
 }
 func (f *wikiWorkerOwnerFixture) ClaimCompile(_ context.Context, req ridethewind.ClaimCompileReq) (ridethewind.Compile, error) {
 	if f.compile.State != "BUILDING" || req.CompileId != f.compile.CompileId ||
@@ -216,12 +245,25 @@ func (f *wikiWorkerOwnerFixture) AcceptCompile(ctx context.Context, req ridethew
 		req.State != "READY" || len(req.SourceRefs) != 2 || req.ObjectKey != "sha256/"+req.ContentHash {
 		return ridethewind.Compile{}, errors.New("RTW accept received wrong fixed result")
 	}
+	if f.headRevisionID != "" && f.headRevisionID != f.compile.BaseRevisionId {
+		return ridethewind.Compile{}, errors.New("RTW module-locked head/base CAS rejects old compile")
+	}
 	data, err := f.objects.Get(ctx, corpus.Ref{Key: req.ObjectKey, SHA256: req.ContentHash})
 	if err != nil || len(data) == 0 || artifacts.Hash(data) != req.ContentHash {
 		return ridethewind.Compile{}, errors.New("RTW cannot read BTW candidate bytes")
 	}
 	f.acceptedRequest = req
 	f.compile.State, f.compile.RevisionId, f.compile.ResultHash = "ACCEPTED", "wiki-revision-1", strings.Repeat("e", 64)
+	f.headRevisionID = f.compile.RevisionId
+	if f.revisions == nil {
+		f.revisions = make(map[string]ridethewind.Revision)
+	}
+	f.revisions[f.compile.RevisionId] = ridethewind.Revision{RevisionId: f.compile.RevisionId,
+		ModuleId: f.compile.ModuleId, EntityId: f.compile.PageId, Kind: "wiki",
+		BaseRevisionId: f.compile.BaseRevisionId, Title: req.Title, MediaType: "text/markdown",
+		ObjectKey: req.ObjectKey, ContentHash: req.ContentHash, Content: string(data),
+		SourceRefs: append([]ridethewind.SourceRef(nil), req.SourceRefs...),
+		CreatedBy:  "btw.compile/" + f.compile.CompileId}
 	if f.lostFirstAccept {
 		f.lostFirstAccept = false
 		return ridethewind.Compile{}, errors.New("fixture lost RTW accept HTTP response")
@@ -335,7 +377,12 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	defer observed.Close(context.Background())
 	frozen := wikiWorkerFixtureSession(t, "11111111-1111-4111-8111-111111111111", 0x44)
 	job, compile, revisions := wikiWorkerFixtureJob(t)
-	objects, err := artifacts.NewLocal(t.TempDir()) // One shared fixture store, never an RTW production URL.
+	sharedRoot := t.TempDir()
+	objects, err := artifacts.NewLocal(sharedRoot) // RTW fixture and BTW use the same task-owned root.
+	if err != nil {
+		t.Fatal(err)
+	}
+	independentReader, err := artifacts.NewLocal(sharedRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,27 +407,35 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 		t.Fatalf("unversioned DC ResultRef escaped partial RTW acceptance: %+v err=%v owner=%+v jobs=%+v",
 			result, err, owner, jobsClient)
 	}
-	ref := jobs.ResultRef{URI: "fixture://accepted-wiki-revision", Hash: strings.Repeat("f", 64), MediaType: "application/json"}
 	owner2 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: objects, lostFirstAccept: true}
 	job2 := job
-	job2.ID = "job-2"
-	job2.AttemptID = "attempt-2"
+	job2.ID, job2.AttemptID = uuid.NewString(), uuid.NewString()
 	jobs2 := &wikiWorkerJobsFixture{job: job2, owner: owner2, lostComplete: true}
 	model2 := &wikiWorkerFixedModel{}
 	worker2, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job2.WorkerID, LeaseSeconds: 20,
-		ModelSession: frozen,
-		CompletionRef: func(context.Context, ridethewind.Compile, content.WikiCompileCandidate) (jobs.ResultRef, error) {
-			return ref, nil // Explicitly a test-only placeholder, not the RTW/DC wire contract.
-		}}, jobs2, owner2, wikiWorkerRunFixture{model: model2, observed: observed}, objects, observed)
+		ModelSession: frozen, CompletionRef: BuildWikiCompileResultRef,
+		ResultRefContractID: WikiCompileResultRefContractID},
+		jobs2, owner2, wikiWorkerRunFixture{model: model2, observed: observed}, objects, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	completed, err := worker2.ProcessClaim(context.Background(), job2)
 	if err != nil || !completed.TechnicalComplete || owner2.accepts != 2 || jobs2.completes != 1 ||
-		model2.calls != 1 || jobs2.job.Result == nil || *jobs2.job.Result.Ref != ref ||
+		model2.calls != 1 || jobs2.job.Result == nil || jobs2.job.Result.Ref == nil ||
 		completed.TechnicalReceipt.ResultHash != "" {
 		t.Fatalf("RTW lost reply/GetCompile replay or DC lost reply/GetJob recovery failed: %+v err=%v owner=%+v jobs=%+v",
 			completed, err, owner2, jobs2)
+	}
+	resultRef := *jobs2.job.Result.Ref
+	manifestBytes, err := independentReader.Get(context.Background(), corpus.Ref{
+		Key: "sha256/" + resultRef.Hash, SHA256: resultRef.Hash})
+	var manifest map[string]json.RawMessage
+	canonical, canonicalErr := jsoncanonicalizer.Transform(manifestBytes)
+	if err != nil || json.Unmarshal(manifestBytes, &manifest) != nil || canonicalErr != nil ||
+		!bytes.Equal(manifestBytes, canonical) || len(manifest) != 13 ||
+		resultRef.URI != "sha256:"+resultRef.Hash || resultRef.MediaType != wikiCompileResultMediaType ||
+		bytes.Contains(manifestBytes, []byte(completed.Candidate.Markdown)) {
+		t.Fatalf("independent RTW-side reader could not prove 13-key JCS result manifest: ref=%+v err=%v", resultRef, err)
 	}
 	// A DC cancellation after native Runner EOF must stop before object Put,
 	// RTW Accept and DC technical ACK, even though the model returned text.

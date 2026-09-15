@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,8 +15,10 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/jobs"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/content"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
+	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/model"
@@ -57,16 +60,18 @@ type WikiCompileRun interface {
 	Close() error
 }
 
-// WikiCompileCompletionRef is supplied only after the RTW/DC owners version
-// the ResultRef URI, hash and media type. Nil keeps DC technical ACK disabled.
-type WikiCompileCompletionRef func(context.Context, ridethewind.Compile,
-	content.WikiCompileCandidate) (jobs.ResultRef, error)
+// The authoritative v1 adapter is BuildWikiCompileResultRef. The caller must
+// pass current DC/RTW snapshots and the byte-readable candidate object.
+// Nil keeps DC technical success disabled.
+type WikiCompileCompletionRef func(context.Context, WikiCompileCompletionEvidence,
+	artifacts.Store) (jobs.ResultRef, error)
 
 type WikiCompileWorkerConfig struct {
-	WorkerID      string
-	LeaseSeconds  int
-	CompletionRef WikiCompileCompletionRef
-	ModelSession  WikiCompileModelSession
+	WorkerID            string
+	LeaseSeconds        int
+	CompletionRef       WikiCompileCompletionRef
+	ResultRefContractID string
+	ModelSession        WikiCompileModelSession
 }
 
 type WikiCompileResult struct {
@@ -95,6 +100,7 @@ func NewWikiCompileWorker(cfg WikiCompileWorkerConfig, jobs WikiCompileJobClient
 		return nil, ErrWikiCompileModelIdentity
 	}
 	if cfg.WorkerID == "" || cfg.LeaseSeconds < 5 || cfg.LeaseSeconds > 3600 ||
+		(cfg.CompletionRef != nil && cfg.ResultRefContractID != WikiCompileResultRefContractID) ||
 		nilDependency(jobs) || nilDependency(owner) || nilDependency(runs) ||
 		nilDependency(objects) || observed == nil || !observed.Installed() || observed.Closed() {
 		return nil, ErrWikiCompileJobContract
@@ -298,19 +304,128 @@ func (w *WikiCompileWorker) acceptWithRecovery(ctx context.Context, job jobs.Job
 	return replayed, nil
 }
 
+// readAcceptedEvidence never infers the current editing head from a historical
+// revision. RTW Accept itself checked the head/base in its business transaction;
+// a later manual edit does not revoke the immutable accepted revision.
+func (w *WikiCompileWorker) readAcceptedEvidence(ctx context.Context, job jobs.Job,
+	claim wikiCompileClaim, accepted ridethewind.Compile, candidate content.WikiCompileCandidate,
+	object corpus.Ref, sourcePack content.WikiCompileInput) (WikiCompileCompletionEvidence, error) {
+	var evidence WikiCompileCompletionEvidence
+	if err := w.currentJob(ctx, job); err != nil {
+		return evidence, err
+	}
+	currentJob, err := w.jobs.GetJob(ctx, job.ID)
+	if err != nil || !sameWikiCompileJobAttempt(currentJob, job) ||
+		currentJob.CancelVersion != job.CancelVersion || currentJob.State != "running" ||
+		currentJob.Result != nil {
+		return evidence, ErrWikiCompileFence
+	}
+	currentAccepted, err := w.owner.GetCompile(ctx, claim.Ticket.CompileID)
+	if err != nil || !sameAcceptedWikiCompile(currentAccepted, claim, currentJob) ||
+		currentAccepted.ResultHash != accepted.ResultHash ||
+		currentAccepted.RevisionId != accepted.RevisionId ||
+		currentAccepted.ErrorCode != "" {
+		return evidence, ErrWikiCompileTechnicalPending
+	}
+	revision, err := w.owner.GetRevision(ctx, currentAccepted.RevisionId)
+	if err != nil {
+		return evidence, ErrWikiCompileTechnicalPending
+	}
+	if len(sourcePack.SourceIDs) != len(claim.Ticket.SourceRevisionIDs) ||
+		len(sourcePack.Sources) != len(sourcePack.SourceIDs) {
+		return evidence, ErrWikiCompileTechnicalPending
+	}
+	for i, sourceID := range sourcePack.SourceIDs {
+		fixed := sourcePack.Sources[i]
+		currentSource, err := w.owner.GetRevision(ctx, sourceID)
+		if err != nil || sourceID != claim.Ticket.SourceRevisionIDs[i] ||
+			currentSource.RevisionId != sourceID || currentSource.Withdrawn ||
+			currentSource.Kind != "source" || currentSource.ModuleId != currentAccepted.ModuleId ||
+			currentSource.ContentHash != fixed.SHA256 ||
+			currentSource.ObjectKey != "sha256/"+fixed.SHA256 ||
+			!bytes.Equal([]byte(currentSource.Content), []byte(fixed.Content)) ||
+			artifacts.Hash([]byte(currentSource.Content)) != fixed.SHA256 {
+			return evidence, ErrWikiCompileTechnicalPending
+		}
+	}
+	evidence = WikiCompileCompletionEvidence{Job: currentJob, Accepted: currentAccepted,
+		Revision: revision, Candidate: candidate, CandidateObject: object}
+	if _, _, err := wikiResultEvidence(ctx, evidence, w.objects, time.Now()); err != nil {
+		return WikiCompileCompletionEvidence{}, ErrWikiCompileTechnicalPending
+	}
+	return evidence, nil
+}
+
+// A callback cannot turn a well-shaped but unreadable or differently bound
+// URI into technical success. The manifest bytes must be exactly the JCS of
+// the same current evidence and readable from this shared Store.
+func (w *WikiCompileWorker) verifyManifestRef(ctx context.Context,
+	evidence WikiCompileCompletionEvidence, ref jobs.ResultRef) error {
+	manifest, _, err := wikiResultEvidence(ctx, evidence, w.objects, time.Now())
+	if err != nil {
+		return ErrWikiCompileTechnicalPending
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		return ErrWikiCompileTechnicalPending
+	}
+	canonical, err := jsoncanonicalizer.Transform(raw)
+	if err != nil {
+		return ErrWikiCompileTechnicalPending
+	}
+	hash := artifacts.Hash(canonical)
+	if ref.URI != "sha256:"+hash || ref.Hash != hash ||
+		ref.MediaType != wikiCompileResultMediaType {
+		return ErrWikiCompileTechnicalPending
+	}
+	readback, err := w.objects.Get(ctx, corpus.Ref{Key: "sha256/" + hash, SHA256: hash})
+	if err != nil || !bytes.Equal(readback, canonical) {
+		return ErrWikiCompileTechnicalPending
+	}
+	return nil
+}
+
+func wikiCompileTechnicalResultHash(result jobs.Result) (string, error) {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := jsoncanonicalizer.Transform(raw)
+	if err != nil {
+		return "", err
+	}
+	return artifacts.Hash(canonical), nil
+}
+
 func (w *WikiCompileWorker) completeTechnical(ctx context.Context, job jobs.Job,
-	accepted ridethewind.Compile, candidate content.WikiCompileCandidate) (jobs.CompletionReceipt, error) {
-	if w.config.CompletionRef == nil {
+	claim wikiCompileClaim, accepted ridethewind.Compile,
+	candidate content.WikiCompileCandidate, object corpus.Ref,
+	sourcePack content.WikiCompileInput) (jobs.CompletionReceipt, error) {
+	if w.config.CompletionRef == nil || w.config.ResultRefContractID != WikiCompileResultRefContractID {
 		return jobs.CompletionReceipt{}, ErrWikiCompileTechnicalPending
 	}
-	if err := w.currentJob(ctx, job); err != nil {
+	evidence, err := w.readAcceptedEvidence(ctx, job, claim, accepted, candidate, object, sourcePack)
+	if err != nil {
 		return jobs.CompletionReceipt{}, err
 	}
-	ref, err := w.config.CompletionRef(ctx, accepted, candidate)
-	if err != nil || ref.URI == "" || !artifacts.ValidHash(ref.Hash) || ref.MediaType == "" {
+	ref, err := w.config.CompletionRef(ctx, evidence, w.objects)
+	if err != nil || w.verifyManifestRef(ctx, evidence, ref) != nil {
 		return jobs.CompletionReceipt{}, ErrWikiCompileTechnicalPending
 	}
+	// A manifest may remain immutable when a cancellation/withdrawal races us;
+	// only the subsequent DC lease CAS can complete the technical job.
+	current, err := w.readAcceptedEvidence(ctx, job, claim, accepted, candidate, object, sourcePack)
+	if err != nil {
+		return jobs.CompletionReceipt{}, err
+	}
+	if err := w.verifyManifestRef(ctx, current, ref); err != nil {
+		return jobs.CompletionReceipt{}, err
+	}
 	result := jobs.Result{State: "succeeded", Ref: &ref}
+	wantResultHash, err := wikiCompileTechnicalResultHash(result)
+	if err != nil {
+		return jobs.CompletionReceipt{}, ErrWikiCompileTechnicalPending
+	}
 	request := jobs.Complete{Lease: jobs.Lease{WorkerID: w.config.WorkerID,
 		AttemptID: job.AttemptID, LeaseEpoch: job.LeaseEpoch,
 		CancelVersion: job.CancelVersion}, Result: result}
@@ -318,17 +433,16 @@ func (w *WikiCompileWorker) completeTechnical(ctx context.Context, job jobs.Job,
 	if err == nil {
 		if receipt.JobID != job.ID || receipt.AttemptID != job.AttemptID ||
 			receipt.LeaseEpoch != job.LeaseEpoch || receipt.CancelVersion != job.CancelVersion ||
-			receipt.TechnicalState != "succeeded" || receipt.ResultHash == "" {
+			receipt.TechnicalState != "succeeded" || receipt.ResultHash != wantResultHash {
 			return jobs.CompletionReceipt{}, ErrWikiCompileTechnicalPending
 		}
 		return receipt, nil
 	}
-	current, readErr := w.jobs.GetJob(ctx, job.ID)
-	if readErr == nil && current.State == "succeeded" && current.ID == job.ID &&
-		current.WorkerID == job.WorkerID && current.AttemptID == job.AttemptID &&
-		current.LeaseEpoch == job.LeaseEpoch && current.CancelVersion == job.CancelVersion &&
-		current.Result != nil && current.Result.State == "succeeded" &&
-		current.Result.Ref != nil && *current.Result.Ref == ref {
+	post, readErr := w.jobs.GetJob(ctx, job.ID)
+	if readErr == nil && post.State == "succeeded" &&
+		sameWikiCompileJobAttempt(post, job) && post.CancelVersion == job.CancelVersion &&
+		post.Result != nil && post.Result.State == "succeeded" &&
+		post.Result.Ref != nil && *post.Result.Ref == ref {
 		return jobs.CompletionReceipt{JobID: job.ID, AttemptID: job.AttemptID,
 			LeaseEpoch: job.LeaseEpoch, CancelVersion: job.CancelVersion,
 			TechnicalState: "succeeded"}, nil // GetJob proves status, not receipt hash.
@@ -507,7 +621,7 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 		return result, err
 	}
 	result.Accepted = accepted
-	receipt, err := w.completeTechnical(ctx, job, accepted, candidate)
+	receipt, err := w.completeTechnical(ctx, job, claim, accepted, candidate, ref, input)
 	if err != nil {
 		return result, err
 	}
