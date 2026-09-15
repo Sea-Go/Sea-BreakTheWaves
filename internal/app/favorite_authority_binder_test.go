@@ -21,6 +21,10 @@ func favoriteAuthorityFixture(t *testing.T) (FactSourceEvidence, favoriteAuthori
 	const id = "9007199254740995"
 	const at = "2026-09-15T00:00:00Z"
 	subject := usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "1001"}
+	subjectRaw, err := json.Marshal(subject)
+	if err != nil {
+		t.Fatal(err)
+	}
 	event := eventing.Event{EventID: "favorite." + id + ".v2", EventType: "rtw.favorite.retract", SchemaVersion: 1,
 		Producer: favoriteFactProducer, AggregateID: id, AggregateVersion: 2, OperationID: "favorite." + id + ".v2",
 		OccurredAt: at, Payload: json.RawMessage(`{"schema_version":1,"event_id":"favorite.9007199254740995.v2","subject_ref":{"authority_id":"rtw.identity","tenant_id":"platform","subject_id":"1001"},"target_type":"article","target_id":"article-snowflake","target_revision":null,"operation":"retract","source_ref":"rtw.favorite/9007199254740995","event_time":"2026-09-15T00:00:00Z","available_at":"2026-09-15T00:00:00Z","favorite_id":"9007199254740995","folder_id":"9007199254740993"}`)}
@@ -37,7 +41,7 @@ func favoriteAuthorityFixture(t *testing.T) (FactSourceEvidence, favoriteAuthori
 	receipt := eventing.Receipt{EventID: event.EventID, Producer: favoriteFactProducer, TechnicalStatus: "accepted",
 		ReceiptID: "rtw-dc-receipt-1", InputHash: hash, Offset: 2, ReceivedAt: "2026-09-15T00:00:01Z"}
 	evidence := FactSourceEvidence{Event: event, InputHash: hash, Offset: 2, Receipt: receipt}
-	authority := favoriteAuthorityResponse{Event: raw, SubjectRef: subject,
+	authority := favoriteAuthorityResponse{Event: raw, SubjectRef: subjectRaw,
 		PredecessorEventID: "favorite." + id + ".v1", TechnicalReceipt: receipt, SourceEventHash: hash}
 	return evidence, authority
 }
@@ -63,7 +67,7 @@ func TestFavoriteAuthorityBinderCrossChecksFrozenSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	fact, err := binder.BindFactWithEvidence(context.Background(), evidence)
-	if err != nil || fact.Subject != source.SubjectRef || fact.Action != usermodel.Retract ||
+	if err != nil || fact.Subject != (usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "1001"}) || fact.Action != usermodel.Retract ||
 		fact.Supersedes == nil || fact.Supersedes.EventID != source.PredecessorEventID ||
 		fact.ValueRef != "article/article-snowflake" {
 		t.Fatalf("high ID authoritative retract: %+v %v", fact, err)
@@ -74,7 +78,9 @@ func TestFavoriteAuthorityBinderCrossChecksFrozenSource(t *testing.T) {
 		t.Fatalf("cancelled RTW authority read lost context cause: %v", err)
 	}
 	for name, mutate := range map[string]func(*favoriteAuthorityResponse){
-		"wrong-subject":     func(f *favoriteAuthorityResponse) { f.SubjectRef.SubjectID = "impostor" },
+		"wrong-subject": func(f *favoriteAuthorityResponse) {
+			f.SubjectRef = json.RawMessage(`{"authority_id":"rtw.identity","tenant_id":"platform","subject_id":"impostor"}`)
+		},
 		"wrong-hash":        func(f *favoriteAuthorityResponse) { f.SourceEventHash = strings.Repeat("b", 64) },
 		"wrong-offset":      func(f *favoriteAuthorityResponse) { f.TechnicalReceipt.Offset++ },
 		"wrong-receipt":     func(f *favoriteAuthorityResponse) { f.TechnicalReceipt.ReceiptID = "different" },

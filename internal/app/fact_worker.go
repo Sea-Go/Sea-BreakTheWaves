@@ -68,7 +68,7 @@ type FactWorkerConfig struct {
 	EventType     string
 	SchemaVersion int
 	BatchLimit    int
-	// Bindings is a fixed per-event-type allowlist. When set, the legacy
+	// Bindings is a fixed (event-type,schema-version) allowlist. When set, the legacy
 	// EventType/SchemaVersion and constructor binder must be omitted.
 	Bindings []FactEventBinding
 }
@@ -94,10 +94,15 @@ type FactEventBinding struct {
 type FactWorker struct {
 	config   FactWorkerConfig
 	source   FactEventSource
-	bindings map[string]FactEventBinding
+	bindings map[factBindingKey]FactEventBinding
 	graph    FactGraphCommitter
 	receipts CurrentFactReceiptReader
 	observed *telemetry.Bundle
+}
+
+type factBindingKey struct {
+	eventType string
+	schema    int
 }
 
 func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedFactBinder,
@@ -108,12 +113,13 @@ func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedF
 		nilDependency(graph) || nilDependency(receipts) || observed == nil || !observed.Installed() || observed.Closed() {
 		return nil, fmt.Errorf("fact worker dependencies and fixed source contract: %w", ErrFactDeliveryContract)
 	}
-	bindings := make(map[string]FactEventBinding, len(cfg.Bindings))
+	bindings := make(map[factBindingKey]FactEventBinding, len(cfg.Bindings))
 	if len(cfg.Bindings) == 0 {
 		if !factDeliveryToken.MatchString(cfg.EventType) || cfg.SchemaVersion < 1 || nilDependency(binder) {
 			return nil, fmt.Errorf("legacy fact event binding: %w", ErrFactDeliveryContract)
 		}
-		bindings[cfg.EventType] = FactEventBinding{EventType: cfg.EventType, SchemaVersion: cfg.SchemaVersion, Binder: binder}
+		bindings[factBindingKey{cfg.EventType, cfg.SchemaVersion}] = FactEventBinding{
+			EventType: cfg.EventType, SchemaVersion: cfg.SchemaVersion, Binder: binder}
 	} else {
 		if cfg.EventType != "" || cfg.SchemaVersion != 0 || !nilDependency(binder) {
 			return nil, fmt.Errorf("ambiguous fact event bindings: %w", ErrFactDeliveryContract)
@@ -124,10 +130,11 @@ func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedF
 				(nilDependency(binding.Binder) == nilDependency(binding.EvidenceBinder)) {
 				return nil, fmt.Errorf("invalid fact event binding: %w", ErrFactDeliveryContract)
 			}
-			if _, exists := bindings[binding.EventType]; exists {
+			key := factBindingKey{binding.EventType, binding.SchemaVersion}
+			if _, exists := bindings[key]; exists {
 				return nil, fmt.Errorf("duplicate fact event binding: %w", ErrFactDeliveryContract)
 			}
-			bindings[binding.EventType] = binding
+			bindings[key] = binding
 		}
 	}
 	return &FactWorker{config: cfg, source: source, bindings: bindings, graph: graph, receipts: receipts, observed: observed}, nil
@@ -230,7 +237,7 @@ func (w *FactWorker) validateBatch(batch eventing.Batch) error {
 		return fmt.Errorf("DC fact batch scope or cursor: %w", ErrFactDeliveryContract)
 	}
 	for index, item := range batch.Events {
-		binding, allowed := w.eventBinding(item.Event.EventType)
+		binding, allowed := w.eventBinding(item.Event.EventType, item.Event.SchemaVersion)
 		if item.Offset != batch.FromOffset+int64(index) || !factDeliveryHash.MatchString(item.InputHash) ||
 			item.Event.Producer != batch.Producer || !factDeliveryToken.MatchString(item.Event.EventID) ||
 			!allowed || item.Event.SchemaVersion != binding.SchemaVersion ||
@@ -244,8 +251,8 @@ func (w *FactWorker) validateBatch(batch eventing.Batch) error {
 	return nil
 }
 
-func (w *FactWorker) eventBinding(eventType string) (FactEventBinding, bool) {
-	binding, ok := w.bindings[eventType]
+func (w *FactWorker) eventBinding(eventType string, schema int) (FactEventBinding, bool) {
+	binding, ok := w.bindings[factBindingKey{eventType, schema}]
 	return binding, ok
 }
 
@@ -275,7 +282,7 @@ func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (re
 	if err != nil {
 		return receipt, fmt.Errorf("DC event received time: %w", ErrFactDeliveryContract)
 	}
-	binding, allowed := w.eventBinding(item.Event.EventType)
+	binding, allowed := w.eventBinding(item.Event.EventType, item.Event.SchemaVersion)
 	if !allowed {
 		return receipt, fmt.Errorf("missing trusted fact event binding: %w", ErrFactDeliveryContract)
 	}
