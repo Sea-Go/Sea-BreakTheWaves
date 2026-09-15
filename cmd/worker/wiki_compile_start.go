@@ -32,7 +32,6 @@ type wikiCompileStartDeps struct {
 	Owner               app.WikiCompileOwner
 	Runs                wikiCompileAuthorizedRuns
 	Objects             artifacts.Store
-	CompletionRef       app.WikiCompileCompletionRef
 	ResultRefContractID string
 	ObjectBackend       string
 	RTWObjectBucket     string
@@ -75,8 +74,8 @@ func wikiCompileStartupSession(ctx context.Context, cfg config,
 		cfg.Wiki.ModelCallpoint != wikiCompileModelCallpoint ||
 		wikiNilDependency(d.Jobs) || wikiNilDependency(d.Owner) ||
 		wikiNilDependency(d.Runs) || wikiNilDependency(d.Objects) ||
-		d.CompletionRef == nil || d.ResultRefContractID == "" ||
-		d.ResultRefContractID != cfg.Wiki.ResultRefContractID ||
+		d.ResultRefContractID != app.WikiCompileResultRefContractID ||
+		cfg.Wiki.ResultRefContractID != app.WikiCompileResultRefContractID ||
 		d.ObjectBackend != cfg.Wiki.ObjectBackend {
 		return app.WikiCompileModelSession{}, errWikiCompileStartup
 	}
@@ -168,7 +167,8 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 	}
 	worker, err := app.NewWikiCompileWorker(app.WikiCompileWorkerConfig{
 		WorkerID: cfg.WorkerID, LeaseSeconds: cfg.LeaseSeconds,
-		CompletionRef: d.CompletionRef, ModelSession: frozen},
+		CompletionRef:       app.BuildWikiCompileResultRef,
+		ResultRefContractID: app.WikiCompileResultRefContractID, ModelSession: frozen},
 		d.Jobs, d.Owner, d.Runs, d.Objects, bundle)
 	if err != nil {
 		logger.ErrorContext(ctx, "Wiki worker assembly failed",
