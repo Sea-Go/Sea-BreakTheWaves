@@ -35,10 +35,11 @@ type Source interface {
 }
 
 type Consumer struct {
-	DB       *pgxpool.Pool
-	Source   Source
-	Binder   *app.FavoriteAuthorityBinder
-	Consumer string
+	DB          *pgxpool.Pool
+	Source      Source
+	Binder      *app.FavoriteAuthorityBinder
+	Consumer    string
+	V2Candidate *SubjectRefV2StorageCandidate
 }
 
 //go:embed schema.sql
@@ -84,6 +85,9 @@ type row struct {
 func (c *Consumer) RunOnce(ctx context.Context) (Result, error) {
 	var result Result
 	if c == nil || c.DB == nil || c.Source == nil || c.Binder == nil || c.Consumer != DefaultConsumer {
+		return result, ErrContract
+	}
+	if c.V2Candidate != nil && !c.V2Candidate.readyFor(c.DB) {
 		return result, ErrContract
 	}
 	batch, err := c.Source.ReadEvents(ctx, c.Consumer, Producer, 128)
@@ -209,7 +213,15 @@ func positiveDecimal(raw json.RawMessage) (string, error) {
 	return value, nil
 }
 
-func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row) (int64, error) {
+func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row) (committed int64, err error) {
+	if c.V2Candidate != nil {
+		ctx, stage, beginErr := c.V2Candidate.begin(ctx, "warehouse.favorite.subjectref_v2.ods",
+			"source_offset", batch.FromOffset)
+		if beginErr != nil {
+			return 0, beginErr
+		}
+		defer func() { c.V2Candidate.end(ctx, stage, err, committed) }()
+	}
 	tx, err := c.DB.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, err
@@ -229,9 +241,19 @@ func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row)
 	}
 	for _, r := range rows {
 		if r.item.Offset <= last {
-			var oldHash, oldEventID string
-			if err := tx.QueryRow(ctx, `SELECT source_event_hash,event_id FROM warehouse_favorite.ods_event WHERE producer=$1 AND source_offset=$2`, Producer, r.item.Offset).Scan(&oldHash, &oldEventID); err != nil || oldHash != r.item.InputHash || oldEventID != r.item.Event.EventID {
+			var oldHash, oldEventID, aid, tid, sid string
+			if err := tx.QueryRow(ctx, `SELECT source_event_hash,event_id,authority_id,tenant_id,subject_id
+				FROM warehouse_favorite.ods_event WHERE producer=$1 AND source_offset=$2 FOR SHARE`, Producer, r.item.Offset).
+				Scan(&oldHash, &oldEventID, &aid, &tid, &sid); err != nil || oldHash != r.item.InputHash || oldEventID != r.item.Event.EventID {
 				return 0, ErrContract
+			}
+			if c.V2Candidate != nil {
+				if aid != r.authorityID || tid != r.tenantID || sid != r.subjectID {
+					return 0, ErrContract
+				}
+				if err = c.V2Candidate.projectODS(ctx, tx, Producer, r.item.Offset, oldEventID, aid, tid, sid); err != nil {
+					return 0, err
+				}
 			}
 			continue
 		}
@@ -254,6 +276,12 @@ func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []row)
 			r.targetType, r.targetID, r.targetRevision, r.operation, r.predecessor, r.eventTime, r.availableAt, r.receivedAt)
 		if err != nil {
 			return 0, err
+		}
+		if c.V2Candidate != nil {
+			if err = c.V2Candidate.projectODS(ctx, tx, Producer, r.item.Offset, r.item.Event.EventID,
+				r.authorityID, r.tenantID, r.subjectID); err != nil {
+				return 0, err
+			}
 		}
 		last++
 	}

@@ -27,10 +27,11 @@ func InitializeCoverage(ctx context.Context, db *pgxpool.Pool) error {
 // It records the exact read-window evidence after ODS commit but before DC ACK.
 // If recording fails, ACK is withheld and the unchanged DC batch can replay.
 type CoverageConsumer struct {
-	DB     *pgxpool.Pool
-	Source Source
-	Binder *app.FavoriteAuthorityBinder
-	Limit  int
+	DB          *pgxpool.Pool
+	Source      Source
+	Binder      *app.FavoriteAuthorityBinder
+	Limit       int
+	V2Candidate *SubjectRefV2StorageCandidate
 }
 
 func (c *CoverageConsumer) RunOnce(ctx context.Context) (Result, error) {
@@ -38,7 +39,8 @@ func (c *CoverageConsumer) RunOnce(ctx context.Context) (Result, error) {
 		return Result{}, ErrContract
 	}
 	adapter := &coverageReadAdapter{source: c.Source, db: c.DB, limit: c.Limit}
-	return (&Consumer{DB: c.DB, Source: adapter, Binder: c.Binder, Consumer: DefaultConsumer}).RunOnce(ctx)
+	return (&Consumer{DB: c.DB, Source: adapter, Binder: c.Binder, Consumer: DefaultConsumer,
+		V2Candidate: c.V2Candidate}).RunOnce(ctx)
 }
 
 type coverageReadAdapter struct {
