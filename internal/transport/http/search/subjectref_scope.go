@@ -22,18 +22,25 @@ type signedSubjectV2 struct {
 }
 
 func (subject signedSubjectV2) legacySubject() (btwruntime.SubjectRef, bool) {
-	if subject.Issuer != rtwIdentityIssuer {
-		return btwruntime.SubjectRef{}, false
-	}
-	uid, err := strconv.ParseInt(subject.SubjectID, 10, 64)
-	if err != nil || uid <= 0 || strconv.FormatInt(uid, 10) != subject.SubjectID {
-		return btwruntime.SubjectRef{}, false
-	}
-	return btwruntime.SubjectRef{
+	legacy := btwruntime.SubjectRef{
 		AuthorityID: subject.Issuer,
 		TenantID:    legacyPlatformSlot,
 		SubjectID:   subject.SubjectID,
-	}, true
+	}
+	if !validLegacySubject(legacy) {
+		return btwruntime.SubjectRef{}, false
+	}
+	return legacy, true
+}
+
+// The v1 platform field is a fixed compatibility slot, not an organization.
+// Checking it after HMAC validation preserves the exact signed v1 bytes.
+func validLegacySubject(subject btwruntime.SubjectRef) bool {
+	if subject.AuthorityID != rtwIdentityIssuer || subject.TenantID != legacyPlatformSlot {
+		return false
+	}
+	uid, err := strconv.ParseInt(subject.SubjectID, 10, 64)
+	return err == nil && uid > 0 && strconv.FormatInt(uid, 10) == subject.SubjectID
 }
 
 func signedScopeAudience(payload []byte) string {

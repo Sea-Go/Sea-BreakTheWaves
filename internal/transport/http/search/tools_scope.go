@@ -191,6 +191,9 @@ func (s *SignedToolsScopeResolver) ResolveTools(_ context.Context, request *http
 		!validToolsID(payload.BudgetRef) || !constantTimeStringEqual(payload.SearchID, body.SearchID) {
 		return TrustedToolsScope{}, ErrScopeDenied
 	}
+	if !validLegacySubject(payload.Subject) {
+		return TrustedToolsScope{}, ErrScopeDenied
+	}
 	if _, err := payload.Subject.UserKey(); err != nil ||
 		strings.TrimSpace(payload.Subject.AuthorityID) == "" || strings.TrimSpace(payload.Subject.TenantID) == "" ||
 		strings.TrimSpace(payload.Subject.SubjectID) == "" ||
