@@ -64,6 +64,7 @@ const (
 	boolKind   literalKind = 'b'
 	numberKind literalKind = '0'
 	objectKind literalKind = '{'
+	arrayKind  literalKind = '['
 	gradeKind  literalKind = 'g'
 )
 
@@ -96,7 +97,11 @@ var judgmentKeysV1 = map[string]literalKind{
 // exactObject rejects omitted, extra or duplicate literal keys and mismatched
 // JSON types. A typed json.Unmarshal alone silently discards these mistakes.
 func exactObject(raw []byte, expected map[string]literalKind) error {
-	if len(raw) < 2 || len(raw) > 32<<10 {
+	return exactObjectSized(raw, 32<<10, expected)
+}
+
+func exactObjectSized(raw []byte, maxBytes int, expected map[string]literalKind) error {
+	if len(raw) < 2 || len(raw) > maxBytes {
 		return ErrContract
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -142,6 +147,8 @@ func matchKind(value []byte, kind literalKind) bool {
 		return value[0] >= '0' && value[0] <= '9'
 	case objectKind:
 		return value[0] == '{'
+	case arrayKind:
+		return value[0] == '['
 	case gradeKind:
 		return bytes.Equal(value, []byte("null")) || value[0] >= '0' && value[0] <= '9'
 	default:
