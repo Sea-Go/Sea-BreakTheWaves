@@ -188,7 +188,7 @@ func bindCommunityAuthority(source FactSourceEvidence, authority communityAuthor
 func validateCommunityPayload(event eventing.Event, authority communityAuthorityResponse, payload communityAuthorityPayload) error {
 	expectedSubject := "rtw.identity/" + authority.SubjectRef.Realm + "/" + authority.SubjectRef.SubjectID
 	uid, uidErr := strconv.ParseInt(authority.SubjectRef.SubjectID, 10, 64)
-	if authority.SubjectRef.Issuer != "rtw-user-center" || authority.SubjectRef.Realm != "platform" ||
+	if authority.SubjectRef.Issuer != "rtw.identity" || authority.SubjectRef.Realm != "platform" ||
 		uidErr != nil || uid <= 0 || strconv.FormatInt(uid, 10) != authority.SubjectRef.SubjectID ||
 		payload.SubjectRef != expectedSubject || payload.SchemaVersion != "rtw.community-fact.v1" ||
 		payload.EventID != event.EventID || payload.EventType != event.EventType || payload.Producer != event.Producer ||
@@ -233,20 +233,20 @@ func communitySemanticFact(event eventing.Event, authority communityAuthorityRes
 		sourceRef := "rtw.comment/" + payload.CommentID
 		switch event.EventType {
 		case "community.comment.created":
-			if payload.Operation != "create" || payload.SourceRef != sourceRef || event.EventID != sourceRef+"/created" ||
+			if payload.Operation != "create" || payload.SourceRef != sourceRef || event.EventID != "rtw.comment."+payload.CommentID+".created" ||
 				authority.PredecessorEventID != "" || payload.OldState != nil || payload.NewState != nil {
 				return usermodel.Event{}, fmt.Errorf("RTW comment create semantics: %w", ErrFactDeliveryContract)
 			}
 			fact.Action, fact.Predicate = usermodel.Assert, "comment"
 		case "community.comment.deleted":
-			if payload.Operation != "retract" || payload.SourceRef != sourceRef || event.EventID != sourceRef+"/deleted" ||
-				authority.PredecessorEventID != sourceRef+"/created" || payload.OldState != nil || payload.NewState != nil {
+			if payload.Operation != "retract" || payload.SourceRef != sourceRef || event.EventID != "rtw.comment."+payload.CommentID+".deleted" ||
+				authority.PredecessorEventID != "rtw.comment."+payload.CommentID+".created" || payload.OldState != nil || payload.NewState != nil {
 				return usermodel.Event{}, fmt.Errorf("RTW comment delete semantics: %w", ErrFactDeliveryContract)
 			}
 			fact.Action, fact.Predicate = usermodel.Retract, "comment"
 			fact.Supersedes = &usermodel.EventKey{Producer: event.Producer, EventID: authority.PredecessorEventID}
 		case "community.comment.interaction":
-			if payload.SourceRef != event.EventID || !strings.HasPrefix(event.EventID, "rtw.comment.interaction/") {
+			if payload.SourceRef != event.EventID || !strings.HasPrefix(event.EventID, "rtw.comment.interaction.") {
 				return usermodel.Event{}, fmt.Errorf("RTW comment interaction identity: %w", ErrFactDeliveryContract)
 			}
 			var err error
@@ -262,7 +262,7 @@ func communitySemanticFact(event eventing.Event, authority communityAuthorityRes
 		if event.EventType != "community.target.interaction" || payload.CommentID != "" || payload.VisibilityState != nil ||
 			payload.SearchEvidence != nil || payload.AggregateID != payload.TargetType+"/"+payload.TargetID ||
 			event.AggregateID != "like-state/"+authority.SubjectRef.SubjectID+"/"+payload.TargetType+"/"+payload.TargetID ||
-			payload.EventID != "rtw.like/"+payload.OperationID || payload.SourceRef != payload.EventID {
+			payload.EventID != "rtw.like."+payload.OperationID || payload.SourceRef != payload.EventID {
 			return usermodel.Event{}, fmt.Errorf("RTW target reaction authority fields: %w", ErrFactDeliveryContract)
 		}
 		var err error
