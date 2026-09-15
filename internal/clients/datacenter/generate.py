@@ -6,7 +6,8 @@ out = pathlib.Path(__file__).parent
 revision = subprocess.check_output(['git','-C',str(root),'rev-parse',sys.argv[2] if len(sys.argv)>2 else 'HEAD'],text=True).strip()
 def read(rel):return subprocess.check_output(['git','-C',str(root),'show',revision+':'+str(rel)])
 sources = {}
-for name, filename in [('representation','representation.go'), ('eventing','events.go'), ('jobs','jobs.go')]:
+for name, filename in [('representation','representation.go'), ('prediction','prediction.go'),
+                       ('eventing','events.go'), ('jobs','jobs.go')]:
     rel = pathlib.Path('contracts') / name / filename
     raw = read(rel)
     target = out / 'wire' / name / 'contract.gen.go'
