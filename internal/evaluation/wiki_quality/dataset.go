@@ -26,6 +26,8 @@ type CaseManifest struct {
 	EvaluationState         State        `json:"evaluation_state"`
 	NotEvaluableReason      string       `json:"not_evaluable_reason,omitempty"`
 	AuthorityEvidenceSHA256 string       `json:"authority_evidence_sha256,omitempty"`
+	FactCatalogRevisionID   string       `json:"fact_catalog_revision_id,omitempty"`
+	FactCatalogJCSSHA256    string       `json:"fact_catalog_jcs_sha256,omitempty"`
 }
 
 // FrozenCase holds immutable JCS byte artifacts. CaseSHA is the hash of this
@@ -68,7 +70,9 @@ func EvaluateCase(ctx context.Context, input Input,
 		Candidate: input.Candidate, PreviousAI: input.PreviousAI,
 		Review: review, Cost: input.Cost, EvaluationState: q.State,
 		NotEvaluableReason:      q.Reason,
-		AuthorityEvidenceSHA256: q.Receipt.AuthorityEvidenceSHA256}
+		AuthorityEvidenceSHA256: q.Receipt.AuthorityEvidenceSHA256,
+		FactCatalogRevisionID:   q.Receipt.FactCatalogRevisionID,
+		FactCatalogJCSSHA256:    q.Receipt.FactCatalogJCSSHA256}
 	_, identitySHA, err := JCS(manifest)
 	if err != nil {
 		return FrozenCase{}, err
@@ -118,11 +122,13 @@ type DatasetEntry struct {
 	FactIDs                 []string `json:"fact_ids"`
 	HumanReviewJCSSHA256    string   `json:"human_review_jcs_sha256"`
 	AuthorityEvidenceSHA256 string   `json:"authority_evidence_sha256,omitempty"`
+	FactCatalogRevisionID   string   `json:"fact_catalog_revision_id,omitempty"`
+	FactCatalogJCSSHA256    string   `json:"fact_catalog_jcs_sha256,omitempty"`
 	SourceProducer          string   `json:"source_producer,omitempty"`
 	SourceEventID           string   `json:"source_event_id,omitempty"`
 	RTWEventJCSSHA256       string   `json:"rtw_event_jcs_sha256,omitempty"`
 	DCOffset                string   `json:"dc_offset,omitempty"`
-	ReviewerUID             string   `json:"reviewer_uid,omitempty"`
+	RTWActorID              string   `json:"rtw_actor_id,omitempty"`
 	GradeSource             string   `json:"grade_source"`
 	WikiOriginKind          WikiKind `json:"wiki_origin_kind"`
 	ManifestSHA256          string   `json:"manifest_sha256"`
@@ -189,7 +195,10 @@ func FreezeDataset(revision string, cases []FrozenCase) (FrozenDataset, error) {
 		}
 		gradeSource := "synthetic_fixture"
 		if c.Manifest.Review.DataKind == HumanAdmin {
-			gradeSource = "rtw_human_event"
+			gradeSource = "unverified_human_claim"
+			if verifiedHumanCase(c) {
+				gradeSource = "rtw_human_event"
+			}
 		}
 		rtwEventSHA, dcOffset, sourceProducer, sourceEventID := "", "", "", ""
 		if provenance := c.Manifest.Review.SourceProvenance; provenance != nil {
@@ -202,9 +211,11 @@ func FreezeDataset(revision string, cases []FrozenCase) (FrozenDataset, error) {
 			RubricVersion:  c.Manifest.Review.RubricVersion,
 			FactIDs:        factIDs, HumanReviewJCSSHA256: reviewSHA,
 			AuthorityEvidenceSHA256: c.Manifest.AuthorityEvidenceSHA256,
+			FactCatalogRevisionID:   c.Manifest.FactCatalogRevisionID,
+			FactCatalogJCSSHA256:    c.Manifest.FactCatalogJCSSHA256,
 			SourceProducer:          sourceProducer, SourceEventID: sourceEventID,
 			RTWEventJCSSHA256: rtwEventSHA, DCOffset: dcOffset,
-			ReviewerUID: c.Manifest.Review.ReviewerUID, GradeSource: gradeSource,
+			RTWActorID: c.Manifest.Review.RTWActorID, GradeSource: gradeSource,
 			WikiOriginKind: c.Manifest.Target.Kind,
 			ManifestSHA256: c.ManifestSHA256, ReportSHA256: c.ReportSHA256,
 			EvaluationState: c.Report.State, DataKind: c.Manifest.Review.DataKind})
@@ -217,7 +228,29 @@ func FreezeDataset(revision string, cases []FrozenCase) (FrozenDataset, error) {
 	if err != nil {
 		return FrozenDataset{}, errors.Join(ErrDataset, err)
 	}
+	if _, err := DecodeDatasetManifest(raw, digest); err != nil {
+		return FrozenDataset{}, ErrDataset
+	}
 	return FrozenDataset{Manifest: manifest, JCS: raw, RootSHA256: digest}, nil
+}
+
+func verifiedHumanCase(c FrozenCase) bool {
+	provenance := c.Manifest.Review.SourceProvenance
+	return c.Manifest.Review.DataKind == HumanAdmin &&
+		c.Manifest.EvaluationState == Observed && c.Report.State == Observed &&
+		c.Manifest.Review.FactsComplete && c.Manifest.Review.LabelsComplete &&
+		len(c.Manifest.Review.Facts) > 0 &&
+		len(c.Manifest.Review.Judgments) == len(c.Manifest.Review.Facts) &&
+		provenance != nil && provenance.Producer == "ridethewind.knowledge" &&
+		provenance.EventID != "" && validHash(provenance.RTWEventJCSSHA256) &&
+		provenance.DCOffset != "" && c.Manifest.Review.RTWActorID != "" &&
+		validHash(c.Manifest.AuthorityEvidenceSHA256) &&
+		idPattern.MatchString(c.Manifest.FactCatalogRevisionID) &&
+		validHash(c.Manifest.FactCatalogJCSSHA256) &&
+		c.Manifest.FactCatalogJCSSHA256 != provenance.RTWEventJCSSHA256 &&
+		c.Report.FactCatalogRevisionID == c.Manifest.FactCatalogRevisionID &&
+		c.Report.FactCatalogJCSSHA256 == c.Manifest.FactCatalogJCSSHA256 &&
+		c.Report.AuthorityEvidenceSHA256 == c.Manifest.AuthorityEvidenceSHA256
 }
 
 // DecodeCaseManifest is for object-store/warehouse consumers. It verifies the
@@ -244,6 +277,17 @@ func DecodeCaseManifest(raw []byte, expectedSHA string) (CaseManifest, error) {
 	_, identitySHA, err := JCS(identity)
 	if err != nil || value.CaseID != "wiki-quality-"+identitySHA {
 		return CaseManifest{}, ErrDataset
+	}
+	if value.Review.DataKind == HumanAdmin && value.EvaluationState == Observed {
+		p := value.Review.SourceProvenance
+		if p == nil || !value.Review.FactsComplete || !value.Review.LabelsComplete ||
+			len(value.Review.Facts) == 0 || len(value.Review.Judgments) != len(value.Review.Facts) ||
+			!idPattern.MatchString(value.FactCatalogRevisionID) ||
+			!validHash(value.FactCatalogJCSSHA256) ||
+			value.FactCatalogJCSSHA256 == p.RTWEventJCSSHA256 ||
+			!validHash(value.AuthorityEvidenceSHA256) {
+			return CaseManifest{}, ErrDataset
+		}
 	}
 	return value, nil
 }
@@ -283,6 +327,8 @@ func DecodeDatasetManifest(raw []byte, expectedSHA string) (DatasetManifest, err
 			entry.RubricVersion != RubricVersion ||
 			!validHash(entry.HumanReviewJCSSHA256) ||
 			(entry.AuthorityEvidenceSHA256 != "" && !validHash(entry.AuthorityEvidenceSHA256)) ||
+			(entry.FactCatalogRevisionID != "" && !idPattern.MatchString(entry.FactCatalogRevisionID)) ||
+			(entry.FactCatalogJCSSHA256 != "" && !validHash(entry.FactCatalogJCSSHA256)) ||
 			(entry.SourceProducer != "" && entry.SourceProducer != "ridethewind.knowledge") ||
 			(entry.SourceEventID != "" && !idPattern.MatchString(entry.SourceEventID)) ||
 			(entry.RTWEventJCSSHA256 != "" && !validHash(entry.RTWEventJCSSHA256)) ||
@@ -291,8 +337,14 @@ func DecodeDatasetManifest(raw []byte, expectedSHA string) (DatasetManifest, err
 			(entry.DataKind == HumanAdmin && entry.EvaluationState == Observed &&
 				(entry.AuthorityEvidenceSHA256 == "" || entry.SourceProducer == "" ||
 					entry.SourceEventID == "" || entry.RTWEventJCSSHA256 == "" ||
-					entry.DCOffset == "" || entry.ReviewerUID == "")) ||
-			(entry.DataKind == HumanAdmin && entry.GradeSource != "rtw_human_event") ||
+					entry.DCOffset == "" || entry.RTWActorID == "" ||
+					entry.FactCatalogRevisionID == "" || entry.FactCatalogJCSSHA256 == "" ||
+					entry.FactCatalogJCSSHA256 == entry.RTWEventJCSSHA256 ||
+					len(entry.FactIDs) == 0)) ||
+			(entry.DataKind == HumanAdmin && entry.EvaluationState == Observed &&
+				entry.GradeSource != "rtw_human_event") ||
+			(entry.DataKind == HumanAdmin && entry.EvaluationState == NotEvaluable &&
+				entry.GradeSource != "unverified_human_claim") ||
 			(entry.DataKind == SyntheticFixture && entry.GradeSource != "synthetic_fixture") ||
 			(entry.WikiOriginKind != AIAccepted && entry.WikiOriginKind != ManualRevisionKind) ||
 			(entry.EvaluationState != Observed && entry.EvaluationState != NotEvaluable) ||

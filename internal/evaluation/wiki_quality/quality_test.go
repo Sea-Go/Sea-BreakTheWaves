@@ -28,19 +28,40 @@ func qualityFact(t *testing.T, id string, source Source, locator, quote, group s
 		ConflictGroup: group}
 }
 
+// Synthetic seam-only verifier: it is not a live RTW FactCatalog authority.
 type fixtureFactAuthority struct{ receipt AuthorityReceipt }
 
 func (f fixtureFactAuthority) Verify(context.Context, Scope, []Source, Review) (AuthorityReceipt, error) {
 	return f.receipt, nil
 }
 
+// Synthetic seam-only verifier: it is not a live DC Provider usage reader.
 type fixtureDCCostAuthority struct{}
 
 func (fixtureDCCostAuthority) Verify(context.Context, Scope, CostReceipt) error { return nil }
 
-func TestWikiQualityRealAuthorityAndDCCostRemainSeparate(t *testing.T) {
+func TestRTWActorIDIsHistoricalAdministratorClaimNotUserCenterUID(t *testing.T) {
+	for _, actor := range []string{"test-admin", "管理员甲"} {
+		input := qualityFixture(t)
+		input.Review.DataKind, input.Review.RTWActorID = HumanAdmin, actor
+		frozen, err := EvaluateCase(context.Background(), input, Verifiers{})
+		if err != nil || frozen.Report.State != NotEvaluable ||
+			frozen.Manifest.Review.RTWActorID != actor ||
+			frozen.Report.Reason != "rtw_event_or_dc_offset_missing" {
+			t.Fatalf("RTW JWT actor was mistaken for a canonical UC UID or approved: %+v %v",
+				frozen.Report, err)
+		}
+	}
 	input := qualityFixture(t)
-	input.Review.DataKind, input.Review.ReviewerUID = HumanAdmin, "rtw-admin-uid-1"
+	input.Review.DataKind, input.Review.RTWActorID = HumanAdmin, "test-admin\nforged"
+	if _, err := EvaluateCase(context.Background(), input, Verifiers{}); !errors.Is(err, ErrEvidence) {
+		t.Fatalf("RTW JWT actor control byte crossed historical identity boundary: %v", err)
+	}
+}
+
+func TestWikiQualitySyntheticVerifierSeamsKeepHumanClaimsAndDCCostSeparate(t *testing.T) {
+	input := qualityFixture(t)
+	input.Review.DataKind, input.Review.RTWActorID = HumanAdmin, "test-admin"
 	input.Review.SourceProvenance = &SourceProvenance{Producer: "ridethewind.knowledge",
 		EventID:           "evt_11111111-1111-4111-8111-111111111111",
 		RTWEventJCSSHA256: strings.Repeat("9", 64), DCOffset: "42"}
@@ -49,6 +70,26 @@ func TestWikiQualityRealAuthorityAndDCCostRemainSeparate(t *testing.T) {
 		without.Report.Reason != "rtw_human_authority_not_verified" ||
 		without.Report.RequiredCoverage.State != NotEvaluable {
 		t.Fatalf("self-declared human grade gained approval without RTW reader: %+v %v", without.Report, err)
+	}
+	unverifiedRoot, err := FreezeDataset("human-unverified-r1", []FrozenCase{without})
+	if err != nil || len(unverifiedRoot.Manifest.Entries) != 1 ||
+		unverifiedRoot.Manifest.Entries[0].GradeSource != "unverified_human_claim" ||
+		unverifiedRoot.Manifest.Entries[0].RTWActorID != "test-admin" {
+		t.Fatalf("not_evaluable human case masqueraded as verified RTW event: %+v %v",
+			unverifiedRoot.Manifest, err)
+	}
+	if _, err := DecodeDatasetManifest(unverifiedRoot.JCS, unverifiedRoot.RootSHA256); err != nil {
+		t.Fatalf("unverified human Dataset root reader rejected explicit claim state: %v", err)
+	}
+	forgedRoot := unverifiedRoot.Manifest
+	forgedRoot.Entries = append([]DatasetEntry(nil), forgedRoot.Entries...)
+	forgedRoot.Entries[0].GradeSource = "rtw_human_event"
+	forgedJCS, forgedSHA, err := JCS(forgedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeDatasetManifest(forgedJCS, forgedSHA); !errors.Is(err, ErrDataset) {
+		t.Fatalf("rehashed unverified human claim gained verified grade source: %v", err)
 	}
 	reviewSHA, err := reviewDigest(input)
 	if err != nil {
@@ -61,6 +102,8 @@ func TestWikiQualityRealAuthorityAndDCCostRemainSeparate(t *testing.T) {
 	receipt := AuthorityReceipt{ReviewJCSSHA256: reviewSHA,
 		SourceScopeJCSSHA256: sourceSHA, FactsComplete: true,
 		LabelsComplete: true, RevisionsQualified: true,
+		FactCatalogRevisionID:   "catalog-fixture-r1",
+		FactCatalogJCSSHA256:    strings.Repeat("8", 64),
 		AuthorityEvidenceSHA256: input.Review.SourceProvenance.RTWEventJCSSHA256,
 		RTWEventJCSSHA256:       input.Review.SourceProvenance.RTWEventJCSSHA256,
 		DCOffset:                input.Review.SourceProvenance.DCOffset}
@@ -71,14 +114,42 @@ func TestWikiQualityRealAuthorityAndDCCostRemainSeparate(t *testing.T) {
 		frozen.Report.State != NotEvaluable {
 		t.Fatalf("mismatched true DC source offset became human quality: %+v %v", frozen.Report, err)
 	}
+	singleEventOnly := receipt
+	singleEventOnly.FactCatalogRevisionID = ""
+	singleEventOnly.FactCatalogJCSSHA256 = singleEventOnly.RTWEventJCSSHA256
+	if frozen, err := EvaluateCase(context.Background(), input,
+		Verifiers{Facts: fixtureFactAuthority{receipt: singleEventOnly}}); err != nil ||
+		frozen.Report.State != NotEvaluable ||
+		frozen.Report.Reason != "rtw_human_authority_not_verified" {
+		t.Fatalf("one RTW judgment Event self-declared whole FactCatalog: %+v %v", frozen.Report, err)
+	}
 	good, err := EvaluateCase(context.Background(), input,
 		Verifiers{Facts: fixtureFactAuthority{receipt: receipt}})
 	if err != nil || good.Report.State != Observed ||
 		good.Report.AuthorityEvidenceSHA256 != receipt.AuthorityEvidenceSHA256 ||
+		good.Report.FactCatalogJCSSHA256 != receipt.FactCatalogJCSSHA256 ||
 		good.Report.Cost.State != NotEvaluable ||
 		good.Report.Cost.Reason != "dc_usage_authority_not_verified" ||
 		good.Report.Activation != "none" {
 		t.Fatalf("RTW human facts were mixed with unverified DC token counts: %+v %v", good.Report, err)
+	}
+	verifiedRoot, err := FreezeDataset("human-verified-r1", []FrozenCase{good})
+	if err != nil || verifiedRoot.Manifest.Entries[0].GradeSource != "rtw_human_event" ||
+		verifiedRoot.Manifest.Entries[0].AuthorityEvidenceSHA256 == "" ||
+		verifiedRoot.Manifest.Entries[0].FactCatalogRevisionID != receipt.FactCatalogRevisionID ||
+		verifiedRoot.Manifest.Entries[0].FactCatalogJCSSHA256 != receipt.FactCatalogJCSSHA256 {
+		t.Fatalf("qualified human event lost RTW authority provenance: %+v %v", verifiedRoot.Manifest, err)
+	}
+	forgedCatalog := verifiedRoot.Manifest
+	forgedCatalog.Entries = append([]DatasetEntry(nil), forgedCatalog.Entries...)
+	forgedCatalog.Entries[0].FactCatalogJCSSHA256 =
+		forgedCatalog.Entries[0].RTWEventJCSSHA256
+	forgedCatalogJCS, forgedCatalogSHA, err := JCS(forgedCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeDatasetManifest(forgedCatalogJCS, forgedCatalogSHA); !errors.Is(err, ErrDataset) {
+		t.Fatalf("single RTW Event SHA replaced independent full Catalog proof: %v", err)
 	}
 	withCost, err := EvaluateCase(context.Background(), input,
 		Verifiers{Facts: fixtureFactAuthority{receipt: receipt}, Cost: fixtureDCCostAuthority{}})
@@ -104,8 +175,10 @@ func qualityJudgment(t *testing.T, factID string, disposition Disposition,
 		if position < 0 {
 			t.Fatalf("fixture Wiki claim unavailable: %s", claim)
 		}
-		j.WikiByteStart, j.WikiByteEnd, j.WikiText =
+		j.WikiByteStart, j.WikiByteEnd, j.WikiClaimText =
 			position, position+len([]byte(claim)), claim
+		j.WikiClaimSHA256, j.WikiSpanProvenance =
+			Digest([]byte(claim)), DerivedFirstMatch
 	}
 	return j
 }
@@ -249,8 +322,8 @@ func TestWikiQualityComplementaryConflictCRLFAndManualDataset(t *testing.T) {
 			left.RootSHA256, err, rightErr)
 	}
 	// Golden values are pinned after the first red/green byte-level run.
-	const caseGolden = "6ceeda9bc97639684a9d2ea29a8f490130b9e209f8d3b3d08ad1ec54ff8e78a8"
-	const datasetGolden = "e995ec05366b6d910854a7d5f4ef0112e73822b85fc054f7b58fdacfa69efa2c"
+	const caseGolden = "086d450bf409c599705911f8a69360cfb7e85b1ce7b20808846af020123dc60f"
+	const datasetGolden = "84422bcb811b165136d47c97459ec27fc89c4826ca9cde0140a935b57299b6f5"
 	if first.ManifestSHA256 != caseGolden || left.RootSHA256 != datasetGolden {
 		t.Fatalf("quality JCS golden differs: case=%s dataset=%s", first.ManifestSHA256, left.RootSHA256)
 	}
@@ -360,6 +433,45 @@ func TestWikiQualityRejectsChangedRawSourceQuoteGradeAndOldBase(t *testing.T) {
 	manual.Scope.Hashes = base.Scope.Hashes
 	if _, err := EvaluateCase(context.Background(), manual, Verifiers{}); !errors.Is(err, ErrScope) {
 		t.Fatalf("manual Wiki revision inherited a different AI technical Job hash: %v", err)
+	}
+}
+
+func TestRTWV1WikiClaimSpanIsDerivedFirstMatchOnly(t *testing.T) {
+	base := qualityFixture(t) // The Wiki repeats the same fact in two paragraphs.
+	claim := base.Review.Judgments[4].WikiClaimText
+	first := bytes.Index([]byte(base.Target.Content), []byte(claim))
+	last := bytes.LastIndex([]byte(base.Target.Content), []byte(claim))
+	if first < 0 || last <= first {
+		t.Fatal("fixture no longer repeats the Wiki claim")
+	}
+	for _, trial := range []struct {
+		name   string
+		change func(*FactJudgment)
+	}{
+		{"second_occurrence", func(j *FactJudgment) {
+			j.WikiByteStart, j.WikiByteEnd = last, last+len([]byte(claim))
+		}},
+		{"false_human_signed", func(j *FactJudgment) {
+			j.WikiSpanProvenance = "human_signed"
+		}},
+		{"forged_signed_claim_sha", func(j *FactJudgment) {
+			j.WikiClaimSHA256 = strings.Repeat("0", 64)
+		}},
+	} {
+		t.Run(trial.name, func(t *testing.T) {
+			input := base
+			input.Review.Judgments = append([]FactJudgment(nil), base.Review.Judgments...)
+			trial.change(&input.Review.Judgments[4])
+			if _, err := EvaluateCase(context.Background(), input, Verifiers{}); !errors.Is(err, ErrEvidence) {
+				t.Fatalf("RTW v1 signed only text/SHA but derived Wiki position was spoofed: %v", err)
+			}
+		})
+	}
+	good, err := EvaluateCase(context.Background(), base, Verifiers{})
+	if err != nil || good.Report.State != Observed ||
+		good.Manifest.Review.Judgments[0].WikiSpanProvenance != DerivedFirstMatch ||
+		good.Manifest.Review.Judgments[0].WikiByteStart != first {
+		t.Fatalf("first-match derived Wiki byte span lost provenance: %+v %v", good.Report, err)
 	}
 }
 

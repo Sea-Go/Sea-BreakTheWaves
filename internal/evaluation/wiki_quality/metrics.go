@@ -86,6 +86,8 @@ type Report struct {
 	Reason                  string         `json:"reason,omitempty"`
 	EvidenceKind            DataKind       `json:"evidence_kind"`
 	AuthorityEvidenceSHA256 string         `json:"authority_evidence_sha256,omitempty"`
+	FactCatalogRevisionID   string         `json:"fact_catalog_revision_id,omitempty"`
+	FactCatalogJCSSHA256    string         `json:"fact_catalog_jcs_sha256,omitempty"`
 	FactCounts              FactCounts     `json:"fact_counts"`
 	GradeHistogram          []GradeCount   `json:"grade_histogram"`
 	RequiredCoverage        Fraction       `json:"required_coverage"`
@@ -232,6 +234,8 @@ func factMetrics(input Input, judgments map[string]FactJudgment,
 		return report
 	}
 	report.AuthorityEvidenceSHA256 = q.Receipt.AuthorityEvidenceSHA256
+	report.FactCatalogRevisionID = q.Receipt.FactCatalogRevisionID
+	report.FactCatalogJCSSHA256 = q.Receipt.FactCatalogJCSSHA256
 	groups := map[string]int{}
 	for _, fact := range sortedFacts(input.Review.Facts) {
 		judgment := judgments[fact.FactID]
