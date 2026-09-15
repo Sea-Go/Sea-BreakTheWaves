@@ -27,6 +27,9 @@ type SubjectRefV2Preflight struct {
 	DB       *pgxpool.Pool
 	Objects  CoverageObjectReader
 	S3Prefix string
+	// LocalTestNonce is provisioned by the separate disposable-DB test owner.
+	// Run is read-only without it; Apply/continuous writes require the marker.
+	LocalTestNonce string
 }
 
 type CoverageObjectReader interface {
@@ -95,6 +98,11 @@ func (p *SubjectRefV2Preflight) Run(ctx context.Context) (SubjectRefV2Report, er
 	if err != nil {
 		return SubjectRefV2Report{}, err
 	}
+	return p.assessSnapshot(ctx, snapshot), nil
+}
+
+func (p *SubjectRefV2Preflight) assessSnapshot(ctx context.Context,
+	snapshot preflightSnapshot) SubjectRefV2Report {
 	report := assessSubjectRefV2(snapshot)
 	if len(snapshot.publications) > 0 {
 		if p.Objects == nil || p.S3Prefix == "" {
@@ -105,7 +113,7 @@ func (p *SubjectRefV2Preflight) Run(ctx context.Context) (SubjectRefV2Report, er
 	}
 	sort.Slice(report.Findings, func(i, j int) bool { return report.Findings[i].Code < report.Findings[j].Code })
 	sort.Strings(report.VerifiedCoverageRoots)
-	return report, nil
+	return report
 }
 
 func (p *SubjectRefV2Preflight) readSnapshot(ctx context.Context) (preflightSnapshot, error) {
@@ -114,7 +122,24 @@ func (p *SubjectRefV2Preflight) readSnapshot(ctx context.Context) (preflightSnap
 	if err != nil {
 		return snapshot, fmt.Errorf("begin read-only favorite preflight: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(context.Background())
+	snapshot, err = p.readSnapshotInTx(ctx, tx)
+	if err != nil {
+		return snapshot, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return snapshot, fmt.Errorf("close read-only favorite snapshot: %w", err)
+	}
+	return snapshot, nil
+}
+
+// readSnapshotInTx is shared by the ordinary read-only report and the
+// locked apply transaction. Every database finding then refers to the exact
+// old rows that the additive DDL will project before that transaction commits.
+func (p *SubjectRefV2Preflight) readSnapshotInTx(ctx context.Context,
+	tx pgx.Tx) (preflightSnapshot, error) {
+	var snapshot preflightSnapshot
+	var err error
 	err = tx.QueryRow(ctx, `SELECT committed_offset FROM warehouse_favorite.consumer_cursor WHERE consumer=$1 AND producer=$2`, DefaultConsumer, Producer).Scan(&snapshot.cursor)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, fmt.Errorf("read favorite cursor: %w", err)
@@ -195,9 +220,6 @@ func (p *SubjectRefV2Preflight) readSnapshot(ctx context.Context) (preflightSnap
 		return snapshot, fmt.Errorf("iterate favorite subject receipts: %w", err)
 	}
 	rows.Close()
-	if err := tx.Commit(ctx); err != nil {
-		return snapshot, fmt.Errorf("close read-only favorite snapshot: %w", err)
-	}
 	return snapshot, nil
 }
 
