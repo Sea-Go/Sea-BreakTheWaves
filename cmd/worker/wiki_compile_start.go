@@ -34,6 +34,8 @@ type wikiCompileAuthorizedRuns interface {
 	CurrentNativeSession(context.Context) (wikiNativeSession, error)
 }
 
+// The caller owns these borrowed provider clients and closes their transports
+// after this worker stops. Per-job RunFactory.Open owns its Runner/Session.
 type wikiCompileStartDeps struct {
 	Jobs                app.WikiCompileJobClient
 	Owner               app.WikiCompileOwner
@@ -133,24 +135,52 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 		Output: output, Level: slog.LevelInfo, OTLPEndpoint: cfg.OTLPTracesURL,
 		SampleRatio: 1})
 	if err != nil {
+		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki telemetry startup failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "TELEMETRY_INIT_FAILED")
 		return err
 	}
+	var logger *slog.Logger
+	// Register final logging first so metric shutdown and Bundle.Close update
+	// resultErr before the terminal record is written.
+	defer func() {
+		if logger == nil {
+			return
+		}
+		if resultErr == nil {
+			logger.InfoContext(context.Background(), "Wiki compile worker stopped",
+				"event", "content.wiki_compile.stopped", "outcome", "succeeded")
+		} else {
+			logger.ErrorContext(context.Background(), "Wiki compile worker stopped with error",
+				"event", "content.wiki_compile.stopped", "outcome", "failed",
+				"error_code", "WORKER_STOPPED")
+		}
+	}()
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		resultErr = errors.Join(resultErr, bundle.Close(shutdown))
 	}()
+	logger, err = bundle.Logger("content", "application")
+	if err != nil {
+		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki logger startup failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "LOGGER_INIT_FAILED")
+		return err
+	}
 	if err := bundle.InstallGlobals(); err != nil {
+		logger.ErrorContext(ctx, "Wiki framework telemetry startup failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "FRAMEWORK_TELEMETRY_FAILED")
 		return err
 	}
 	worker, err := app.NewWikiCompileWorker(app.WikiCompileWorkerConfig{
 		WorkerID: cfg.WorkerID, LeaseSeconds: cfg.LeaseSeconds,
 		CompletionRef: d.CompletionRef}, d.Jobs, d.Owner, d.Runs, d.Objects, bundle)
 	if err != nil {
-		return err
-	}
-	logger, err := bundle.Logger("content", "application")
-	if err != nil {
+		logger.ErrorContext(ctx, "Wiki worker assembly failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "ASSEMBLY_FAILED")
 		return err
 	}
 	mux := http.NewServeMux()
@@ -159,6 +189,9 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 		ErrorLog: slog.NewLogLogger(logger.With("event", "content.wiki_compile.metrics_server").Handler(), slog.LevelError)}
 	listener, err := net.Listen("tcp", cfg.MetricsAddr)
 	if err != nil {
+		logger.ErrorContext(ctx, "Wiki metrics listener failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "METRICS_LISTEN_FAILED")
 		return fmt.Errorf("listen Wiki metrics: %w", err)
 	}
 	defer listener.Close()
