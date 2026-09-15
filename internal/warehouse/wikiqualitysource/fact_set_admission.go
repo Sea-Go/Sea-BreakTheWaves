@@ -21,8 +21,9 @@ type FactSetVerifier interface {
 	VerifyFactSetEvent(context.Context, eventing.Event, FactSetEventProof) error
 }
 
-// FactSetV1Verifier checks the fixed source payload. RTW's private GET has
-// already validated the actual historical Source/Wiki objects and eligibility.
+// FactSetV1Verifier checks the fixed frozen payload. RTW's private GET
+// rechecks historical Source/Wiki bytes and quote spans. Source eligibility
+// was checked at freeze time; historical reads do not requalify withdrawal.
 type FactSetV1Verifier struct{}
 
 func (FactSetV1Verifier) VerifyFactSetEvent(ctx context.Context, event eventing.Event,
