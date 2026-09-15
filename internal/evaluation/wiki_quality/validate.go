@@ -78,7 +78,8 @@ func validateInputShape(input Input) error {
 		}
 	} else if input.Target.Kind == ManualRevisionKind {
 		if scope.CompileID != "" || scope.ModelConfigurationID != "" ||
-			scope.PromptVersion != "" || input.Candidate != nil {
+			scope.PromptVersion != "" || input.Candidate != nil ||
+			scope.Hashes != (HashDomains{}) {
 			return ErrScope
 		}
 	} else {
