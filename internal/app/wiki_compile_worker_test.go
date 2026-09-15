@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -218,15 +219,20 @@ func (m *wikiWorkerFixedModel) GenerateContent(ctx context.Context, q *model.Req
 }
 
 type wikiWorkerRunFixture struct {
-	model    *wikiWorkerFixedModel
-	observed *telemetry.Bundle
+	model         *wikiWorkerFixedModel
+	observed      *telemetry.Bundle
+	overrideProof *WikiCompileModelSessionProof
+	afterRunProof *WikiCompileModelSessionProof
 }
 type wikiWorkerNativeRun struct {
-	runtime  *btwruntime.Runtime
-	sessions *inmemory.SessionService
+	runtime       *btwruntime.Runtime
+	sessions      *inmemory.SessionService
+	proof         WikiCompileModelSessionProof
+	afterRunProof *WikiCompileModelSessionProof
 }
 
-func (f wikiWorkerRunFixture) Open(_ context.Context, _ content.WikiCompileInput) (WikiCompileRun, error) {
+func (f wikiWorkerRunFixture) Open(_ context.Context, _ content.WikiCompileInput,
+	session WikiCompileModelSession) (WikiCompileRun, error) {
 	ag, err := content.NewWikiCompileGraphAgent(f.model)
 	if err != nil {
 		return nil, err
@@ -237,13 +243,33 @@ func (f wikiWorkerRunFixture) Open(_ context.Context, _ content.WikiCompileInput
 		_ = sessions.Close()
 		return nil, err
 	}
-	return &wikiWorkerNativeRun{runtime: r, sessions: sessions}, nil
+	proof := session.Proof()
+	if f.overrideProof != nil {
+		proof = *f.overrideProof
+	}
+	return &wikiWorkerNativeRun{runtime: r, sessions: sessions, proof: proof,
+		afterRunProof: f.afterRunProof}, nil
 }
+func (r *wikiWorkerNativeRun) ModelSessionProof() WikiCompileModelSessionProof { return r.proof }
 func (r *wikiWorkerNativeRun) Run(ctx context.Context, q btwruntime.Request, sink btwruntime.Sink) (btwruntime.Result, error) {
-	return r.runtime.Run(ctx, q, sink)
+	result, err := r.runtime.Run(ctx, q, sink)
+	if r.afterRunProof != nil {
+		r.proof = *r.afterRunProof
+	}
+	return result, err
 }
 func (r *wikiWorkerNativeRun) Close() error {
 	return errors.Join(r.runtime.Close(), r.sessions.Close())
+}
+
+func wikiWorkerFixtureSession(t *testing.T, account string, material byte) WikiCompileModelSession {
+	t.Helper()
+	token := "wh_access_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{material}, 32))
+	session, err := NewWikiCompileModelSession(account, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
 }
 
 func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T) {
@@ -271,6 +297,7 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 		t.Fatal(err)
 	}
 	defer observed.Close(context.Background())
+	frozen := wikiWorkerFixtureSession(t, "11111111-1111-4111-8111-111111111111", 0x44)
 	job, compile, revisions := wikiWorkerFixtureJob(t)
 	objects, err := artifacts.NewLocal(t.TempDir()) // One shared fixture store, never an RTW production URL.
 	if err != nil {
@@ -279,8 +306,14 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	owner := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: objects}
 	jobsClient := &wikiWorkerJobsFixture{job: job, owner: owner}
 	modelFixture := &wikiWorkerFixedModel{}
-	worker, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job.WorkerID, LeaseSeconds: 20},
-		jobsClient, owner, wikiWorkerRunFixture{modelFixture, observed}, objects, observed)
+	if _, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job.WorkerID,
+		LeaseSeconds: 20}, jobsClient, owner,
+		wikiWorkerRunFixture{model: modelFixture, observed: observed}, objects, observed); !errors.Is(err, ErrWikiCompileModelIdentity) || jobsClient.completes != 0 || owner.claims != 0 {
+		t.Fatalf("direct app assembly bypassed missing native session: %v", err)
+	}
+	worker, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, jobsClient, owner,
+		wikiWorkerRunFixture{model: modelFixture, observed: observed}, objects, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,9 +332,10 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	jobs2 := &wikiWorkerJobsFixture{job: job2, owner: owner2, lostComplete: true}
 	model2 := &wikiWorkerFixedModel{}
 	worker2, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job2.WorkerID, LeaseSeconds: 20,
+		ModelSession: frozen,
 		CompletionRef: func(context.Context, ridethewind.Compile, content.WikiCompileCandidate) (jobs.ResultRef, error) {
 			return ref, nil // Explicitly a test-only placeholder, not the RTW/DC wire contract.
-		}}, jobs2, owner2, wikiWorkerRunFixture{model2, observed}, objects, observed)
+		}}, jobs2, owner2, wikiWorkerRunFixture{model: model2, observed: observed}, objects, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,8 +354,9 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	owner3 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: tracked}
 	jobs3 := &wikiWorkerJobsFixture{job: job3, owner: owner3, cancelOnGet: 3}
 	model3 := &wikiWorkerFixedModel{}
-	worker3, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job3.WorkerID, LeaseSeconds: 20},
-		jobs3, owner3, wikiWorkerRunFixture{model3, observed}, tracked, observed)
+	worker3, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job3.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, jobs3, owner3,
+		wikiWorkerRunFixture{model: model3, observed: observed}, tracked, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,8 +373,9 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	owner4 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: badObjects}
 	jobs4 := &wikiWorkerJobsFixture{job: job4, owner: owner4}
 	model4 := &wikiWorkerFixedModel{answer: `{"title":"假知识","markdown":"body","source_refs":[{"revision_id":"source-r1","locator":"paragraph:99"}]}`}
-	worker4, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job4.WorkerID, LeaseSeconds: 20},
-		jobs4, owner4, wikiWorkerRunFixture{model4, observed}, badObjects, observed)
+	worker4, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job4.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, jobs4, owner4,
+		wikiWorkerRunFixture{model: model4, observed: observed}, badObjects, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,8 +392,9 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 		objects: oldObjects, supersedeOnRead: 2}
 	jobs5 := &wikiWorkerJobsFixture{job: job5, owner: owner5}
 	model5 := &wikiWorkerFixedModel{}
-	worker5, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job5.WorkerID, LeaseSeconds: 20},
-		jobs5, owner5, wikiWorkerRunFixture{model5, observed}, oldObjects, observed)
+	worker5, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job5.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, jobs5, owner5,
+		wikiWorkerRunFixture{model: model5, observed: observed}, oldObjects, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,12 +403,54 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 		owner5.accepts != 0 || jobs5.completes != 0 {
 		t.Fatalf("superseded Compile overwrote old Wiki generation: %+v %v", result, err)
 	}
+	// A session proof B is not interchangeable with startup's frozen account
+	// A, even if both look like valid DC native access tokens. The RTW claim
+	// can already exist; the exact assertion is zero model/objects/Accept/ACK.
+	job6 := job
+	job6.ID, job6.AttemptID = "job-6", "attempt-6"
+	otherSession := wikiWorkerFixtureSession(t, "22222222-2222-4222-8222-222222222222", 0x55)
+	otherProof := otherSession.Proof()
+	mismatchedObjects := &wikiWorkerTrackedObjects{store: objects}
+	owner6 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: mismatchedObjects}
+	jobs6 := &wikiWorkerJobsFixture{job: job6, owner: owner6}
+	model6 := &wikiWorkerFixedModel{}
+	worker6, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job6.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, jobs6, owner6,
+		wikiWorkerRunFixture{model: model6, observed: observed, overrideProof: &otherProof},
+		mismatchedObjects, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := worker6.ProcessClaim(context.Background(), job6); !errors.Is(err, ErrWikiCompileModelIdentity) ||
+		result.Accepted.State != "" || owner6.claims != 1 || model6.calls != 0 ||
+		mismatchedObjects.puts != 0 || owner6.accepts != 0 || jobs6.completes != 0 {
+		t.Fatalf("DC native account B escaped startup's model session A: %+v %v", result, err)
+	}
+	job7 := job
+	job7.ID, job7.AttemptID = "job-7", "attempt-7"
+	lateObjects := &wikiWorkerTrackedObjects{store: objects}
+	owner7 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: lateObjects}
+	jobs7 := &wikiWorkerJobsFixture{job: job7, owner: owner7}
+	model7 := &wikiWorkerFixedModel{}
+	worker7, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job7.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, jobs7, owner7,
+		wikiWorkerRunFixture{model: model7, observed: observed, afterRunProof: &otherProof},
+		lateObjects, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := worker7.ProcessClaim(context.Background(), job7); !errors.Is(err, ErrWikiCompileModelIdentity) ||
+		result.Accepted.State != "" || owner7.claims != 1 || model7.calls != 1 ||
+		lateObjects.puts != 0 || owner7.accepts != 0 || jobs7.completes != 0 {
+		t.Fatalf("changed model proof after Runner returned escaped into object/RTW/DC: %+v %v", result, err)
+	}
 	badJob := job
 	badJob.ID, badJob.InputHash = "job-malformed", strings.Repeat("0", 64)
 	badOwner := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: objects}
 	badJobs := &wikiWorkerJobsFixture{job: badJob, owner: badOwner}
-	badWorker, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: badJob.WorkerID, LeaseSeconds: 20},
-		badJobs, badOwner, wikiWorkerRunFixture{&wikiWorkerFixedModel{}, observed}, objects, observed)
+	badWorker, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: badJob.WorkerID,
+		LeaseSeconds: 20, ModelSession: frozen}, badJobs, badOwner,
+		wikiWorkerRunFixture{model: &wikiWorkerFixedModel{}, observed: observed}, objects, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +477,9 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	}
 	if !native || !bytes.Contains(logs.Bytes(), []byte(`"event":"content.wiki_compile.process.finished"`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"partial"`)) ||
-		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"rejected"`)) {
+		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"rejected"`)) ||
+		!bytes.Contains(logs.Bytes(), []byte(`"error_code":"MODEL_SESSION_MISMATCH"`)) ||
+		bytes.Contains(logs.Bytes(), []byte(frozen.NativeBearer())) {
 		t.Fatalf("Wiki worker lacked native Graph/structured partial stage: native=%t logs=%s", native, logs.Bytes())
 	}
 }
