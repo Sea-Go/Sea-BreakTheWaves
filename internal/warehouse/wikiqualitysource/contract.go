@@ -51,7 +51,15 @@ func futureFactCatalog(eventType string) bool {
 		strings.HasPrefix(eventType, "knowledge.wiki.fact-catalog.")
 }
 
+func factSetEvent(eventType string) bool { return eventType == FactSetFrozenV1 }
+
 func validateBatch(batch eventing.Batch) error {
+	return validateBatchWithFactSet(batch, false)
+}
+
+// Opening the v1 path is an explicit, separately configured consumer mode.
+// All other future FactCatalog versions remain fail-closed on this cursor.
+func validateBatchWithFactSet(batch eventing.Batch, enabled bool) error {
 	if batch.Consumer != DefaultConsumer || batch.Producer != Producer || batch.FromOffset < 1 ||
 		len(batch.Events) < 1 || len(batch.Events) > 128 ||
 		batch.ToOffset != batch.FromOffset+int64(len(batch.Events))-1 || !shaPattern.MatchString(batch.BatchHash) {
@@ -62,7 +70,7 @@ func validateBatch(batch eventing.Batch) error {
 			item.Event.EventID == "" || item.Event.EventType == "" || item.Event.SchemaVersion != 1 ||
 			!shaPattern.MatchString(item.InputHash) ||
 			((qualityFamily(item.Event.EventType) && !qualityEvent(item.Event.EventType)) ||
-				futureFactCatalog(item.Event.EventType)) {
+				(futureFactCatalog(item.Event.EventType) && (!enabled || !factSetEvent(item.Event.EventType)))) {
 			return ErrContract
 		}
 		raw, err := json.Marshal(item.Event)

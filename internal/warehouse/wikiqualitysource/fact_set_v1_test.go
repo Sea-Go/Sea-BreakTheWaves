@@ -116,3 +116,29 @@ func TestRTWFixedFactSetV1RejectsForgedScopeQuoteAndNestedLiterals(t *testing.T)
 		}
 	}
 }
+
+func TestFactSetConsumerModeOnlyAdmitsThePinnedV1Event(t *testing.T) {
+	event, _ := staticFactSetGolden(t)
+	batch, _, _ := testBatch(t)
+	batch.Events[0].Event = event
+	canonicalEvent, err := canonical(jsonEvent(t, event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch.Events[0].InputHash = digest(canonicalEvent)
+	resetBatchHash(t, &batch)
+	if !errors.Is(validateBatch(batch), ErrContract) ||
+		validateBatchWithFactSet(batch, true) != nil {
+		t.Fatal("FactSet v1 bypassed default-off or was rejected under configured mode")
+	}
+	batch.Events[0].Event.EventType = "knowledge.wiki.fact-set.frozen.v2"
+	canonicalEvent, err = canonical(jsonEvent(t, batch.Events[0].Event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch.Events[0].InputHash = digest(canonicalEvent)
+	resetBatchHash(t, &batch)
+	if !errors.Is(validateBatchWithFactSet(batch, true), ErrContract) {
+		t.Fatal("unknown FactSet event version became an accepted quality prefix")
+	}
+}
