@@ -17,35 +17,45 @@ import (
 func TestWikiCompileWorkerCancellationAckExactAttemptAndRecovery(t *testing.T) {
 	claimed, _, _ := wikiWorkerFixtureJob(t)
 	for _, tc := range []struct {
-		name      string
-		lostReply bool
-		conflict  bool
-		terminal  bool
-		want      error
+		name        string
+		lostReply   bool
+		conflict    bool
+		terminal    bool
+		autoExpire  bool
+		wantApplied int
+		want        error
 	}{
-		{name: "current-claimant-ack", want: ErrWikiCompileCancellationAcknowledged},
-		{name: "lost-ack-reply-get-terminal", lostReply: true, want: ErrWikiCompileCancellationAcknowledged},
-		{name: "concurrent-terminal-after-ack-conflict", conflict: true, terminal: true, want: ErrWikiCompileCancellationAcknowledged},
-		{name: "ack-conflict-still-requested", conflict: true, want: ErrWikiCompileCancelAckPending},
+		{name: "current-claimant-ack", wantApplied: 1, want: ErrWikiCompileCancelTerminalConfirmed},
+		{name: "lost-ack-reply-get-terminal", lostReply: true, wantApplied: 1, want: ErrWikiCompileCancelTerminalConfirmed},
+		{name: "auto-expire-before-ack-lock", autoExpire: true, want: ErrWikiCompileCancelTerminalConfirmed},
+		{name: "concurrent-terminal-after-ack-conflict", conflict: true, terminal: true, want: ErrWikiCompileCancelTerminalConfirmed},
+		{name: "ack-conflict-still-requested", conflict: true, want: ErrWikiCompileCancelTerminalPending},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			current := claimed
 			current.State, current.CancelVersion = "cancel_requested", claimed.CancelVersion+1
 			client := &wikiWorkerJobsFixture{job: current, lostAck: tc.lostReply,
-				rejectAck: tc.conflict}
+				rejectAck: tc.conflict, autoExpireBeforeAck: tc.autoExpire}
 			if tc.terminal {
 				client.terminalOnGet = 2 // DC Get converts an expired request or another same-attempt ACK.
 			}
 			worker := &WikiCompileWorker{jobs: client, config: WikiCompileWorkerConfig{WorkerID: claimed.WorkerID}}
-			if err := worker.currentJob(context.Background(), claimed); !errors.Is(err, tc.want) ||
-				client.acks != 1 || client.completes != 0 {
+			err := worker.currentJob(context.Background(), claimed)
+			if !errors.Is(err, tc.want) ||
+				client.acks != 1 || client.appliedAcks != tc.wantApplied || client.completes != 0 {
 				t.Fatalf("DC cancel confirmation was not fenced: err=%v jobs=%+v", err, client)
 			}
-			if tc.want == ErrWikiCompileCancellationAcknowledged &&
+			if tc.autoExpire {
+				outcome, code, _ := wikiCompileObservation(err)
+				if client.appliedAcks != 0 || outcome != "cancelled" || code != "DC_CANCELLED_CONFIRMED" {
+					t.Fatalf("auto expiry was attributed to Worker ACK: outcome=%s code=%s jobs=%+v", outcome, code, client)
+				}
+			}
+			if tc.want == ErrWikiCompileCancelTerminalConfirmed &&
 				(client.job.State != "cancelled" || client.job.CancelVersion != claimed.CancelVersion+1) {
 				t.Fatalf("terminal was not the same cancellation version: %+v", client.job)
 			}
-			if tc.want == ErrWikiCompileCancelAckPending && client.job.State != "cancel_requested" {
+			if tc.want == ErrWikiCompileCancelTerminalPending && client.job.State != "cancel_requested" {
 				t.Fatalf("conflicted ACK was mistaken for terminal: %+v", client.job)
 			}
 		})
@@ -135,7 +145,7 @@ func TestWikiCompileWorkerRealDCJobsCancellation(t *testing.T) {
 	if current, err := client.GetJob(ctx, claimed.ID); err != nil || current.State != "cancel_requested" {
 		t.Fatalf("foreign claimant altered real DC cancellation: %+v %v", current, err)
 	}
-	if err := worker.currentJob(ctx, claimed); !errors.Is(err, ErrWikiCompileCancellationAcknowledged) {
+	if err := worker.currentJob(ctx, claimed); !errors.Is(err, ErrWikiCompileCancelTerminalConfirmed) {
 		t.Fatalf("same claimant failed to ACK actual DC cancellation: %v", err)
 	}
 	terminal, err := client.GetJob(ctx, claimed.ID)
@@ -146,5 +156,50 @@ func TestWikiCompileWorkerRealDCJobsCancellation(t *testing.T) {
 	}
 	if err := worker.currentJob(ctx, claimed); !errors.Is(err, ErrWikiCompileFence) {
 		t.Fatalf("terminal DC job was acknowledged as a second logical action: %v", err)
+	}
+	// Actual DC Get lazily cancels an expired cancel_requested lease. Its ACK
+	// endpoint still returns 200 for the same already-terminal lease, proving
+	// why a nil HTTP reply cannot be labelled "Worker applied cancellation".
+	request.OperationID = "command:" + artifacts.Hash([]byte(claimed.ID+"/expiry"))
+	expiryReceipt, err := client.SubmitJob(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiring, err := client.ClaimJob(ctx, jobs.Claim{WorkerID: fixture.WorkerID,
+		JobType: WikiCompileJobType, ResourceProfile: wikiCompileResource, LeaseSeconds: 2})
+	if err != nil || expiring.ID != expiryReceipt.ID {
+		t.Fatalf("real DC did not claim expiry fixture: %+v %v", expiring, err)
+	}
+	expiryCancel, err := client.CancelJob(ctx, expiring.ID, jobs.Cancel{
+		OperationID:           "cancel:" + artifacts.Hash([]byte(expiring.ID)),
+		ExpectedCancelVersion: expiring.CancelVersion, Reason: "superseded"})
+	if err != nil || expiryCancel.TechnicalState != "cancel_requested" ||
+		expiryCancel.CancelVersion != expiring.CancelVersion+1 {
+		t.Fatalf("real DC expiry fixture did not request cancellation: %+v %v", expiryCancel, err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expiring.LeaseExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wait := time.Until(expiresAt.Add(100 * time.Millisecond)); wait > 0 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(wait):
+		}
+	}
+	autoTerminal, err := client.GetJob(ctx, expiring.ID)
+	if err != nil || autoTerminal.State != "cancelled" || autoTerminal.CancelVersion != expiryCancel.CancelVersion {
+		t.Fatalf("actual DC Get did not terminalize expired cancellation: %+v %v", autoTerminal, err)
+	}
+	ackAfterExpiry, err := client.AcknowledgeCancellation(ctx, expiring.ID, jobs.Lease{
+		WorkerID: expiring.WorkerID, AttemptID: expiring.AttemptID,
+		LeaseEpoch: expiring.LeaseEpoch, CancelVersion: expiryCancel.CancelVersion})
+	if err != nil || ackAfterExpiry.State != "cancelled" ||
+		ackAfterExpiry.UpdatedAt != autoTerminal.UpdatedAt {
+		t.Fatalf("DC existing-terminal ACK was mistaken for an applied transition: %+v %v", ackAfterExpiry, err)
+	}
+	if err := worker.currentJob(ctx, expiring); !errors.Is(err, ErrWikiCompileFence) {
+		t.Fatalf("worker did not reject already-expired cancellation lease: %v", err)
 	}
 }
