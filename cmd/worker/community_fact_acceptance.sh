@@ -4,6 +4,7 @@ set -euo pipefail
 community_root="$(cd "$(dirname "$0")/../.." && pwd)"
 community_dc_root="${SEA_DC_PLATFORM_ROOT:?set SEA_DC_PLATFORM_ROOT to the pinned DataCenter checkout}"
 community_rtw_root="${SEA_RTW_COMMUNITY_ROOT:?set SEA_RTW_COMMUNITY_ROOT to the RTW community delivery checkout}"
+community_expected_dc_sha="${SEA_COMMUNITY_EXPECTED_DC_SHA:?set SEA_COMMUNITY_EXPECTED_DC_SHA to the reviewed full DataCenter commit}"
 community_pg_bin="${COMMUNITY_PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 community_tmp="$(mktemp -d "${TMPDIR:-/tmp}/sea-community-facts.XXXXXX")"
 community_comment_ready="$community_tmp/comment-ready.json"
@@ -32,6 +33,15 @@ trap finish EXIT
 test -f "$community_dc_root/cmd/platform/main.go"
 test -f "$community_rtw_root/service/comment/rpc/cmd/fact-dispatch/main.go"
 test -f "$community_rtw_root/service/like/rpc/cmd/fact-dispatch/main.go"
+if [[ ! "$community_expected_dc_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  printf 'SEA_COMMUNITY_EXPECTED_DC_SHA must be a full lowercase commit SHA\n' >&2
+  exit 1
+fi
+community_actual_dc_sha="$(git -C "$community_dc_root" rev-parse HEAD)"
+if [[ "$community_actual_dc_sha" != "$community_expected_dc_sha" ]]; then
+  printf 'DataCenter HEAD does not match SEA_COMMUNITY_EXPECTED_DC_SHA\n' >&2
+  exit 1
+fi
 read -r community_pg_port community_dc_port community_comment_port community_like_port < <(python3 - <<'PY'
 import socket
 ports = []
@@ -242,7 +252,8 @@ jq -n --arg dc_sha "$(git -C "$community_dc_root" rev-parse HEAD)" \
     identity_wire_v2:{issuer:"rtw.identity",subject_id_source:"rtw-user-center-uid",realm_field:false,tenant_model:"none"},
     source_precision:{target_revision:null,revision_status:"unknown",search_evidence:false},
     consumer:{trpc_agent_go_graph:true,lost_ack_restart:true,synthetic_impressions:0}}' >"$community_tmp/report.json"
-jq -e '.outcome == "passed" and .datacenter_sha == "f59a676a3439f66122e0ec579cd22f030719e058" and
+jq -e --arg expected_dc_sha "$community_expected_dc_sha" \
+  '.outcome == "passed" and .datacenter_sha == $expected_dc_sha and
   .comment_events == 4 and .like_events == 2 and .identity_wire_v2.tenant_model == "none" and
   .consumer.trpc_agent_go_graph and .consumer.lost_ack_restart and .consumer.synthetic_impressions == 0' \
   "$community_tmp/report.json" >/dev/null
