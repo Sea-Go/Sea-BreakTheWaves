@@ -74,7 +74,10 @@ var errWikiNativeExternalRuntime = errors.New("private Wiki holder runtime diffe
 // The Holders marshal only flat string objects. Reject duplicate/unknown keys,
 // non-private files and trailing JSON before any Claim/model/object side effect.
 func wikiNativeExternalReadRuntime(path string, keys []string, target any) error {
-	info, err := os.Stat(path)
+	if !filepath.IsAbs(path) {
+		return errWikiNativeExternalRuntime
+	}
+	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 ||
 		info.Size() < 2 || info.Size() > 64<<10 {
 		return errWikiNativeExternalRuntime
@@ -151,6 +154,38 @@ func TestWikiNativeExternalRuntimeDecoderBoundary(t *testing.T) {
 			}
 		})
 	}
+	t.Run("relative-existing-runtime", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "private-runtime.json")
+		if err := os.WriteFile(path, base, 0600); err != nil {
+			t.Fatal(err)
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		relative, err := filepath.Rel(cwd, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got wikiNativeExternalRTWRuntime
+		if err := wikiNativeExternalReadRuntime(relative, wikiNativeExternalRTWKeys, &got); !errors.Is(err, errWikiNativeExternalRuntime) {
+			t.Fatalf("existing relative runtime bypassed absolute task-file boundary: %v", err)
+		}
+	})
+	t.Run("symlink-to-private-runtime", func(t *testing.T) {
+		root := t.TempDir()
+		target, alias := filepath.Join(root, "runtime.json"), filepath.Join(root, "linked-runtime.json")
+		if err := os.WriteFile(target, base, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, alias); err != nil {
+			t.Fatal(err)
+		}
+		var got wikiNativeExternalRTWRuntime
+		if err := wikiNativeExternalReadRuntime(alias, wikiNativeExternalRTWKeys, &got); !errors.Is(err, errWikiNativeExternalRuntime) {
+			t.Fatalf("symlink followed a private runtime outside Holder authority: %v", err)
+		}
+	})
 }
 
 func wikiNativeExternalLoopbackRoot(raw string, mustHaveV1 bool) (string, bool) {
@@ -306,10 +341,19 @@ func wikiNativeExternalProcessFinished(raw []byte) string {
 
 func wikiNativeExternalUsage(t *testing.T, path, configID, physicalModel string) {
 	t.Helper()
+	if !filepath.IsAbs(path) {
+		t.Fatal("DC Holder usage receipt path is not absolute")
+	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() &&
-			info.Mode().Perm() == 0600 {
+		info, err := os.Lstat(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("DC Holder usage receipt cannot be read")
+		}
+		if err == nil && (!info.Mode().IsRegular() || info.Mode().Perm() != 0600) {
+			t.Fatal("DC Holder usage receipt is not a private regular file")
+		}
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm() == 0600 {
 			break
 		}
 		if time.Now().After(deadline) {
