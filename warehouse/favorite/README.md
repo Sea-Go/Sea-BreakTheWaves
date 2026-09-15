@@ -52,3 +52,21 @@ warehouse/favorite/subjectref_preflight_acceptance.sh
 | `internal/warehouse/featurebaseline/favorite_candidate.go` | `FavoriteDWDRef` 固定 SHA，`verifyFavoriteDWD` 按完整旧主体与连续 offset 核对 | 候选/基线消费者另切，不把全局 offset 或旧 DWD hash 伪称新主体覆盖 |
 
 必须拒绝的反例：非规范 UID（零、前导零、溢出）；两个不同旧 slot 投影后占同一收藏或文件夹目标键；同一 manifest 下两个旧 receipt 投影到同一 issuer+UID；`through_offset` 超出已提交 ODS 或前缀缺口；原 EventSpec/收据/hash/offset 或 ODS 派生列不一致；assert/retract 前驱不属于同一旧 slot/目标/修订；旧 manifest 指向不同 index/batch、PG batch evidence 与对象字节不同、主体 receipt 指向不同 sparse 字节。不同旧 slot 即使被业务确认合法，也保持阻断并留在原 slot；本阶段不自动合并、不创建 v2 版本表，也不触碰 CH 行或分区。
+
+## SubjectRef v2 ClickHouse/dbt 新修订候选
+
+`landing_subjectref_v2_r1.sql`新建`ods_favorite_event_subjectref_v2_r1`，`dwd_favorite_transition_subjectref_v2_r1.sql`新建独立DWD；旧`landing.sql`、`dwd_favorite_transition.sql`、旧`subject_equals`及已归档ODS/DWD原字节都保持原版。新row合同是`contracts/ods-subjectref-v2-r1.schema.json`。本修订仅接受**原v1 EventSpec已在PG仓库核验、经受锁只读预检与官方sidecar Apply通过**的历史投影，不是RTW新v2 wire签发方案。PG owner输出sidecar映射JSONL，逐行包含原`producer/source_offset/event_id/authority_id/tenant_id/subject_id`锚和`issuer/subject_uid`；`projection_subjectref_v2_r1.project`用旧ODS原字节校验全量映射、规范正RTW UID、JCS来源hash及DC receipt，再产生带`origin_ods_sha256`的新JSONL。新ODS、新DWD只写不同revision目录和内容SHA URL；绝不覆盖旧对象或CH历史分区。`fixture_mapping`只能用于本机CH/dbt验收，不能充当官方PG导出。
+
+新DWD只读地`UNION ALL`两版，优先v2映射，再按`(producer,source_offset,event_id)`取**一条逻辑状态变化**。dbt新来源完整性测试拒绝同键hash/EventSpec/receipt/目标/时点冲突、错issuer/UID、错旧槽、缺旧锚与同offset异EventID；转换完整性用`subject_equals_v2`宏按`issuer+subject_uid`核前驱assert/retract。新宏仅属于本收藏dbt项目，跨项目公用宏与12个DWD/DWS/ADS/dataset模型须由各owner另切。`favorite_subjectref_v2_read`默认false，普通旧dbt build无新表依赖；候选构建显式置true且建入**新generation**，不能以数据身份迁移直接激活旧指针。dbt测试在候选generation失败则丢弃候选、旧读面继续，不将故障行静默过滤。
+
+隔离CH/dbt/S3复验命令（`--ods`取此前RTW→DC→PG真实隔离收藏源的冻结JSONL；本脚本的sidecar映射为显式fixture）：
+
+```sh
+/path/to/locked/runtime/.venv/bin/python warehouse/favorite/acceptance_subjectref_v2_r1.py \
+  --runtime /path/to/locked/runtime --output /path/to/new/evidence \
+  --ods /path/to/frozen/ods.jsonl
+```
+
+脚本在本机新CH/S3跑旧版构建→新表+新DWD构建，核旧ODS DDL/旧DWD**逐字节**不变、v1/v2两表示只算两次assert/retract、S3新URL字节和hash；另造标明synthetic的两UID同favorite/folder/target四版SQL夹具核主体隔离。错误issuer/UID、错原锚、坏EventSpec/receipt在投影前拒，CH同源hash冲突令dbt source test失败。这是本机真实CH/dbt运行的**候选读面L2**，并非第二UID真实RTW来源，也非PG sidecar→CH同次真实链；报告明确写`mapping_source=explicit_test_fixture_not_PG_export`。
+
+正式交接由PG/数据owner先只读盘点生产`system.tables`、`SHOW CREATE`、现存依赖视图与水位，再在已通过生产全量原字节预检及官方Apply的同一冻结offset窗导出PG sidecar、旧ODS原字节和源对象SHA。每个`producer+source_offset`核原DC ACK和PG cursor已提交；缺映射、异常旧slot、哈希冲突或旧对象不可读时停止候选。新CH表按源offset单调写入，新generation dbt build/test通过后对账旧DWD SHA、逐版状态、两主体同目标归属与历史分区字节，再由Coverage、FeatureBaseline、Dataset、Serving owner分别签新工件revision。新`sample_id`/manifest/Parquet revision必须以新row合同和来源SHA另生成，旧sample_id和活动指针不动。生产读开关默认关闭，水位落后或对账失败则只停止**后续**新候选读取，仍以旧DWD读；已有v2对象原hash保留供核对。生产catalog、全12跨项目模型、旧coverage/featurebaseline消费切换、训练样本和Serving CAS均不由本切片签收。
