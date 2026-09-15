@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,12 @@ func TestFastMediumPolicyIsOptionalVersionedAndStrictlyBounded(t *testing.T) {
 		{name: "unbounded_model_output", body: `{"version":"low","fast_low":{"max_batches":1,"max_subqueries":1,"top_k_per_lane":8,"max_evidence":4,"wall_time":"5s"},"fast_medium":{"version":"medium","max_batches":1,"max_subqueries":3,"top_k_per_lane":8,"max_evidence":6,"wall_time":"15s","planner_max_output_tokens":0}}`},
 		{name: "unbounded_wall", body: `{"version":"low","fast_low":{"max_batches":1,"max_subqueries":1,"top_k_per_lane":8,"max_evidence":4,"wall_time":"5s"},"fast_medium":{"version":"medium","max_batches":1,"max_subqueries":3,"top_k_per_lane":8,"max_evidence":6,"wall_time":"31s","planner_max_output_tokens":128}}`},
 		{name: "extra_key", body: valid[:len(valid)-1] + `,"allow_detailed":true}`},
+		{name: "medium_then_null", body: valid[:len(valid)-1] + `,"fast_medium":null}`},
+		{name: "medium_then_unicode_alias_null", body: valid[:len(valid)-1] + `,"\u0066ast_medium":null}`},
+		{name: "unicode_medium_root", body: strings.Replace(valid, `"fast_medium":`, `"\u0066ast_medium":`, 1)},
+		{name: "single_null_medium", body: `{"version":"local-fast-low-v1","fast_low":{"max_batches":1,"max_subqueries":1,"top_k_per_lane":8,"max_evidence":4,"wall_time":"5s"},"fast_medium":null}`},
+		{name: "nested_duplicate_version", body: strings.Replace(valid, `"version":"local-fast-medium-v1","max_batches":`, `"version":"local-fast-medium-v1","version":"another-medium-v1","max_batches":`, 1)},
+		{name: "nested_unicode_alias", body: strings.Replace(valid, `"version":"local-fast-medium-v1","max_batches":`, `"version":"local-fast-medium-v1","\u0076ersion":"another-medium-v1","max_batches":`, 1)},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			if err := os.WriteFile(values["BTW_SEARCH_POLICY_FILE"], []byte(scenario.body), 0600); err != nil {
