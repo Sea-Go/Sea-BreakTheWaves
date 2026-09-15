@@ -45,11 +45,12 @@ type WikiCompileOwner interface {
 // DC-authorized model for a frozen logical Compile. The technical jobs token
 // is not an identity for DC's native app-user model Gateway.
 type WikiCompileRunFactory interface {
-	Open(context.Context, content.WikiCompileInput) (WikiCompileRun, error)
+	Open(context.Context, content.WikiCompileInput, WikiCompileModelSession) (WikiCompileRun, error)
 }
 
 type WikiCompileRun interface {
 	Run(context.Context, runtime.Request, runtime.Sink) (runtime.Result, error)
+	ModelSessionProof() WikiCompileModelSessionProof
 	Close() error
 }
 
@@ -62,6 +63,7 @@ type WikiCompileWorkerConfig struct {
 	WorkerID      string
 	LeaseSeconds  int
 	CompletionRef WikiCompileCompletionRef
+	ModelSession  WikiCompileModelSession
 }
 
 type WikiCompileResult struct {
@@ -86,6 +88,9 @@ type WikiCompileWorker struct {
 func NewWikiCompileWorker(cfg WikiCompileWorkerConfig, jobs WikiCompileJobClient,
 	owner WikiCompileOwner, runs WikiCompileRunFactory, objects artifacts.Store,
 	observed *telemetry.Bundle) (*WikiCompileWorker, error) {
+	if !cfg.ModelSession.valid() {
+		return nil, ErrWikiCompileModelIdentity
+	}
 	if cfg.WorkerID == "" || cfg.LeaseSeconds < 5 || cfg.LeaseSeconds > 3600 ||
 		nilDependency(jobs) || nilDependency(owner) || nilDependency(runs) ||
 		nilDependency(objects) || observed == nil || !observed.Installed() || observed.Closed() {
@@ -291,6 +296,8 @@ func wikiCompileObservation(err error) (string, string, error) {
 		return "partial", "DC_COMPLETION_CONTRACT_PENDING", ErrWikiCompileTechnicalPending
 	case errors.Is(err, ErrWikiCompileAcceptPending):
 		return "partial", "RTW_ACCEPT_OUTCOME_UNKNOWN", ErrWikiCompileAcceptPending
+	case errors.Is(err, ErrWikiCompileModelIdentity):
+		return "rejected", "MODEL_SESSION_MISMATCH", ErrWikiCompileModelIdentity
 	case errors.Is(err, ErrWikiCompileJobContract), errors.Is(err, ErrWikiCompileSource),
 		errors.Is(err, ErrWikiCompileFence), errors.Is(err, ErrWikiCompileLease):
 		return "rejected", "SOURCE_OR_FENCE_REJECTED", ErrWikiCompileJobContract
@@ -360,9 +367,13 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 	if err != nil || !sameWikiCompileTicket(claimed, claim) || !sameWikiCompileLease(claimed, job) {
 		return result, ErrWikiCompileFence
 	}
-	run, err := w.runs.Open(ctx, input)
+	run, err := w.runs.Open(ctx, input, w.config.ModelSession)
 	if err != nil || nilDependency(run) {
 		return result, ErrWikiCompileRun
+	}
+	if run.ModelSessionProof() != w.config.ModelSession.Proof() {
+		_ = run.Close()
+		return result, ErrWikiCompileModelIdentity
 	}
 	closed := false
 	defer func() {
@@ -395,6 +406,9 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 	})
 	closeErr := run.Close()
 	closed = true
+	if run.ModelSessionProof() != w.config.ModelSession.Proof() {
+		return result, ErrWikiCompileModelIdentity
+	}
 	if runErr != nil || closeErr != nil || !runReceipt.Completed || graphDone != 1 ||
 		candidate.CompileID != remote.CompileId || candidate.AttemptID != job.AttemptID ||
 		candidate.LeaseEpoch != job.LeaseEpoch || candidate.CancelVersion != job.CancelVersion {
