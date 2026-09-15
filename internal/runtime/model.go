@@ -12,7 +12,9 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
 
-// ModelConfig addresses DC's OpenAI-compatible chat gateway by call point.
+// ModelConfig addresses DC's legacy OpenAI-compatible chat gateway by model
+// name. NewModel does not sign a registered CallPoint or idempotency budget;
+// Wiki compilation must use NewWikiCompileCallPointModel instead.
 // Representation requests have a distinct typed client, never this chat model.
 type ModelConfig struct {
 	BaseURL    string
