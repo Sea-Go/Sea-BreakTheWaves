@@ -319,6 +319,89 @@ func TestWikiCompileNativeGraphRejectsModelForgeryThroughEOF(t *testing.T) {
 	}
 }
 
+// RTW paragraph:N locators skip whitespace-only blocks but preserve each
+// nonempty source block. A leading four-space Markdown code block must reach
+// the model with its indentation; its hash remains over the original CRLF bytes.
+func TestWikiCompileGraphPreservesRTWCodeBlockParagraphBytes(t *testing.T) {
+	const original = "    代码首行  \r\n    保留缩进第二行  \r\n\r\n \t \r\n\r\n尾段保留空格  "
+	const firstParagraph = "    代码首行  \n    保留缩进第二行  "
+	const secondParagraph = "尾段保留空格  "
+	input := wikiCompileFixtureInput()
+	input.SourceIDs = []string{"source-code-r1"}
+	input.Sources = []WikiCompileSource{{RevisionID: "source-code-r1", Kind: "source",
+		Title: "保留Markdown代码", Content: original, SHA256: artifacts.Hash([]byte(original))}}
+	const proposal = `{"title":"代码来源页","markdown":"# 代码来源页\n保留来源原文。","source_refs":[{"revision_id":"source-code-r1","locator":"paragraph:1"},{"revision_id":"source-code-r1","locator":"paragraph:2"}]}`
+	m := &wikiCompileFixtureModel{onCall: func(_ context.Context, q *model.Request) (string, error) {
+		var pack struct {
+			Sources []struct {
+				RevisionID string `json:"revision_id"`
+				Hash       string `json:"content_hash"`
+				Paragraphs []struct {
+					Locator string `json:"locator"`
+					Text    string `json:"text"`
+				} `json:"paragraphs"`
+			} `json:"fixed_source_pack"`
+		}
+		found := false
+		for _, message := range q.Messages {
+			if message.Role == model.RoleUser && json.Unmarshal([]byte(message.Content), &pack) == nil {
+				found = true
+			}
+		}
+		if !found || len(pack.Sources) != 1 || pack.Sources[0].RevisionID != "source-code-r1" ||
+			pack.Sources[0].Hash != artifacts.Hash([]byte(original)) || len(pack.Sources[0].Paragraphs) != 2 ||
+			pack.Sources[0].Paragraphs[0].Locator != "paragraph:1" ||
+			pack.Sources[0].Paragraphs[0].Text != firstParagraph ||
+			pack.Sources[0].Paragraphs[1].Locator != "paragraph:2" ||
+			pack.Sources[0].Paragraphs[1].Text != secondParagraph {
+			return "", fmt.Errorf("RTW original paragraph bytes drifted in native Graph prompt: %+v", pack)
+		}
+		return proposal, nil
+	}}
+	sessions := inmemory.NewSessionService()
+	defer sessions.Close()
+	events := runWikiCompileFixture(t, context.Background(), input, m, sessions)
+	var candidate WikiCompileCandidate
+	var graphDone, runnerDone int
+	for _, e := range events {
+		if e.IsTerminalError() {
+			t.Fatalf("source-preserving Wiki Graph failed: %+v", e.Error)
+		}
+		if e.IsRunnerCompletion() {
+			runnerDone++
+		}
+		got, done, err := WikiCompileCandidateFromCompletion(e, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done {
+			graphDone++
+			candidate = got
+		}
+	}
+	if graphDone != 1 || runnerDone != 1 || m.calls.Load() != 1 ||
+		!reflect.DeepEqual(candidate.SourceRefs, []WikiCompileSourceRef{{"source-code-r1", "paragraph:1"},
+			{"source-code-r1", "paragraph:2"}}) ||
+		candidate.ContentSHA256 != artifacts.Hash([]byte(candidate.Markdown)) {
+		t.Fatalf("RTW paragraph refs did not survive native Runner EOF: graph=%d runner=%d candidate=%+v",
+			graphDone, runnerDone, candidate)
+	}
+	for _, bad := range []string{
+		strings.Replace(proposal, `"paragraph:2"`, `"paragraph:3"`, 1),
+		strings.Replace(proposal, `"paragraph:1"`, `"paragraph:0"`, 1),
+	} {
+		if _, err := ParseWikiCompileCandidate(bad, input); !errors.Is(err, ErrWikiCompileContract) {
+			t.Fatalf("unavailable RTW code-source locator became candidate: %v", err)
+		}
+	}
+	wrongSHA := input
+	wrongSHA.Sources = append([]WikiCompileSource(nil), input.Sources...)
+	wrongSHA.Sources[0].SHA256 = artifacts.Hash([]byte(strings.ReplaceAll(original, "\r\n", "\n")))
+	if _, err := WikiCompileRunOption(wrongSHA); !errors.Is(err, ErrWikiCompileContract) {
+		t.Fatalf("normalized content hash displaced original RTW bytes: %v", err)
+	}
+}
+
 func TestWikiCompileCanceledModelDoesNotProduceCandidate(t *testing.T) {
 	input := wikiCompileFixtureInput()
 	entered := make(chan struct{})
