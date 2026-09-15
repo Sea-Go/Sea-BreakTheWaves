@@ -1,0 +1,64 @@
+package wikiqualitysource
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/eventing"
+)
+
+var ErrFactSetUnconfigured = errors.New("warehouse fact-set original authority or verifier unconfigured")
+
+// FactSetAuthority belongs to RTW's private immutable Event read surface.
+// DataCenter is separately responsible for its event InputHash and offset.
+type FactSetAuthority interface {
+	ReadFactSetEvent(context.Context, string) (FactSetEventProof, error)
+}
+
+type FactSetVerifier interface {
+	VerifyFactSetEvent(context.Context, eventing.Event, FactSetEventProof) (FactSetV1, error)
+}
+
+// FactSetV1Verifier checks the fixed source payload. RTW's private GET has
+// already validated the actual historical Source/Wiki objects and eligibility.
+type FactSetV1Verifier struct{}
+
+func (FactSetV1Verifier) VerifyFactSetEvent(ctx context.Context, event eventing.Event,
+	proof FactSetEventProof) (FactSetV1, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return FactSetV1{}, ErrContract
+	}
+	return ParseFactSetV1(event, proof.EventJSON, proof.FactSetJCSSHA256)
+}
+
+// verifyFactSetDC proves that the original RTW Event, the DC Event copy and
+// its technical input hash denote the same whole JCS bytes. FactSet payload
+// JCS is a third domain and cannot substitute for DC's whole-event InputHash.
+func verifyFactSetDC(event eventing.Event, proof FactSetEventProof, inputHash string) error {
+	if !factSetEvent(event.EventType) || !shaPattern.MatchString(inputHash) ||
+		!shaPattern.MatchString(proof.EventRawSHA256) ||
+		!shaPattern.MatchString(proof.EventJCSSHA256) ||
+		!shaPattern.MatchString(proof.FactSetJCSSHA256) ||
+		digest(proof.EventJSON) != proof.EventRawSHA256 {
+		return ErrContract
+	}
+	sourceJCS, err := canonical(proof.EventJSON)
+	if err != nil || digest(sourceJCS) != proof.EventJCSSHA256 ||
+		proof.EventJCSSHA256 != inputHash {
+		return ErrContract
+	}
+	dcRaw, err := json.Marshal(event)
+	if err != nil {
+		return ErrContract
+	}
+	dcJCS, err := canonical(dcRaw)
+	if err != nil || !bytes.Equal(sourceJCS, dcJCS) {
+		return ErrContract
+	}
+	if _, err := ParseFactSetV1(event, proof.EventJSON, proof.FactSetJCSSHA256); err != nil {
+		return err
+	}
+	return nil
+}
