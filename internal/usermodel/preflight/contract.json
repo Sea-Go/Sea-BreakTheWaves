@@ -1,0 +1,2497 @@
+{
+  "catalog": {
+    "tables": [
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "event_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "impression_id",
+            "not_null": false,
+            "type": "text"
+          },
+          {
+            "name": "activated_version",
+            "not_null": true,
+            "type": "bigint"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id)",
+            "kind": "f",
+            "name": "usermodel_active_facts_authority_id_tenant_id_subject_id_p_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "ref_table": "usermodel_events"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, producer, event_id)",
+            "kind": "p",
+            "name": "usermodel_active_facts_pkey"
+          }
+        ],
+        "name": "usermodel_active_facts",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "name": "usermodel_active_facts_pkey"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "impression_id"
+            ],
+            "name": "usermodel_active_impression_uq",
+            "predicate": "(impression_id IS NOT NULL)"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "event_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "impression_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "source_evidence_ref",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "linked_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "default": "now()",
+            "name": "linked_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "revoked_version",
+            "not_null": false,
+            "type": "bigint"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id)",
+            "kind": "f",
+            "name": "usermodel_attributions_authority_id_tenant_id_subject_id_p_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "ref_table": "usermodel_events"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, producer, event_id)",
+            "kind": "p",
+            "name": "usermodel_attributions_pkey"
+          }
+        ],
+        "name": "usermodel_attributions",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "name": "usermodel_attributions_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "manifest_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "source_offset",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "event_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "input_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "normalized_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "accepted_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "row_body",
+            "not_null": true,
+            "type": "jsonb"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "accepted_version"
+            ],
+            "definition": "CHECK ((accepted_version > 0))",
+            "kind": "c",
+            "name": "usermodel_coverage_event_accepted_version_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id)",
+            "kind": "f",
+            "name": "usermodel_coverage_event_authority_id_tenant_id_subject_id_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "ref_table": "usermodel_events"
+          },
+          {
+            "columns": [
+              "manifest_sha256"
+            ],
+            "definition": "FOREIGN KEY (manifest_sha256) REFERENCES usermodel_coverage_prefix(manifest_sha256)",
+            "kind": "f",
+            "name": "usermodel_coverage_event_manifest_sha256_fkey",
+            "ref_columns": [
+              "manifest_sha256"
+            ],
+            "ref_table": "usermodel_coverage_prefix"
+          },
+          {
+            "columns": [
+              "manifest_sha256",
+              "source_offset"
+            ],
+            "definition": "PRIMARY KEY (manifest_sha256, source_offset)",
+            "kind": "p",
+            "name": "usermodel_coverage_event_pkey"
+          },
+          {
+            "columns": [
+              "source_offset"
+            ],
+            "definition": "CHECK ((source_offset > 0))",
+            "kind": "c",
+            "name": "usermodel_coverage_event_source_offset_check"
+          }
+        ],
+        "name": "usermodel_coverage_event",
+        "unique": [
+          {
+            "columns": [
+              "manifest_sha256",
+              "source_offset"
+            ],
+            "name": "usermodel_coverage_event_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "manifest_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "binding_policy_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "through_offset",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "event_index_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "batch_evidence_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "ref_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "verified_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "manifest_sha256"
+            ],
+            "definition": "PRIMARY KEY (manifest_sha256)",
+            "kind": "p",
+            "name": "usermodel_coverage_prefix_pkey"
+          },
+          {
+            "columns": [
+              "through_offset"
+            ],
+            "definition": "CHECK (((through_offset > 0) AND (through_offset <= '9007199254740991'::bigint)))",
+            "kind": "c",
+            "name": "usermodel_coverage_prefix_through_offset_check"
+          }
+        ],
+        "name": "usermodel_coverage_prefix",
+        "unique": [
+          {
+            "columns": [
+              "manifest_sha256"
+            ],
+            "name": "usermodel_coverage_prefix_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "manifest_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "receipt_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "sparse_index_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "event_count",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "ref_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "verified_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "event_count"
+            ],
+            "definition": "CHECK ((event_count >= 0))",
+            "kind": "c",
+            "name": "usermodel_coverage_subject_event_count_check"
+          },
+          {
+            "columns": [
+              "manifest_sha256"
+            ],
+            "definition": "FOREIGN KEY (manifest_sha256) REFERENCES usermodel_coverage_prefix(manifest_sha256)",
+            "kind": "f",
+            "name": "usermodel_coverage_subject_manifest_sha256_fkey",
+            "ref_columns": [
+              "manifest_sha256"
+            ],
+            "ref_table": "usermodel_coverage_prefix"
+          },
+          {
+            "columns": [
+              "manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "PRIMARY KEY (manifest_sha256, authority_id, tenant_id, subject_id)",
+            "kind": "p",
+            "name": "usermodel_coverage_subject_pkey"
+          }
+        ],
+        "name": "usermodel_coverage_subject",
+        "unique": [
+          {
+            "columns": [
+              "manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "name": "usermodel_coverage_subject_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "revision",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "generation",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "artifact_url",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "artifact_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "schema_version",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "status",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "spec_version",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "spec_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "prefix_manifest_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "subject_receipt_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "through_offset",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "input_state_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "as_of",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "available_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "candidate_raw",
+            "not_null": true,
+            "type": "bytea"
+          },
+          {
+            "name": "candidate_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "accepted_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "input_state_version"
+            ],
+            "definition": "CHECK ((input_state_version >= 0))",
+            "kind": "c",
+            "name": "usermodel_covered_baselines_v2_input_state_version_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, revision)",
+            "kind": "p",
+            "name": "usermodel_covered_baselines_v2_pkey"
+          },
+          {
+            "columns": [
+              "revision"
+            ],
+            "definition": "CHECK ((revision > 0))",
+            "kind": "c",
+            "name": "usermodel_covered_baselines_v2_revision_check"
+          },
+          {
+            "columns": [
+              "schema_version"
+            ],
+            "definition": "CHECK ((schema_version = 'sea.user-feature-baseline.covered.v2'::text))",
+            "kind": "c",
+            "name": "usermodel_covered_baselines_v2_schema_version_check"
+          },
+          {
+            "columns": [
+              "status"
+            ],
+            "definition": "CHECK ((status = 'accepted_historical_default_off'::text))",
+            "kind": "c",
+            "name": "usermodel_covered_baselines_v2_status_check"
+          },
+          {
+            "columns": [
+              "through_offset"
+            ],
+            "definition": "CHECK (((through_offset > 0) AND (through_offset <= '9007199254740991'::bigint)))",
+            "kind": "c",
+            "name": "usermodel_covered_baselines_v2_through_offset_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "generation"
+            ],
+            "definition": "UNIQUE (authority_id, tenant_id, subject_id, generation)",
+            "kind": "u",
+            "name": "usermodel_covered_baselines_v_authority_id_tenant_id_subjec_key"
+          },
+          {
+            "columns": [
+              "prefix_manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (prefix_manifest_sha256, authority_id, tenant_id, subject_id) REFERENCES usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_covered_baselines_v_prefix_manifest_sha256_autho_fkey",
+            "ref_columns": [
+              "manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_coverage_subject"
+          }
+        ],
+        "name": "usermodel_covered_baselines_v2",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "name": "usermodel_covered_baselines_v2_pkey"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "generation"
+            ],
+            "name": "usermodel_covered_baselines_v_authority_id_tenant_id_subjec_key"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "bundle_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "snapshot_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "pair_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "space_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "encoder_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "pair_feature_spec_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "bundle_raw_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "bundle_raw",
+            "not_null": true,
+            "type": "bytea"
+          },
+          {
+            "name": "bundle_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "name": "status",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "default": "now()",
+            "name": "created_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, snapshot_id) REFERENCES usermodel_covered_snapshots_v2(authority_id, tenant_id, subject_id, snapshot_id)",
+            "kind": "f",
+            "name": "usermodel_covered_bundle_cand_authority_id_tenant_id_subje_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "ref_table": "usermodel_covered_snapshots_v2"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id",
+              "pair_id"
+            ],
+            "definition": "UNIQUE (authority_id, tenant_id, subject_id, snapshot_id, pair_id)",
+            "kind": "u",
+            "name": "usermodel_covered_bundle_cand_authority_id_tenant_id_subjec_key"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "bundle_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, bundle_id)",
+            "kind": "p",
+            "name": "usermodel_covered_bundle_candidates_v2_pkey"
+          },
+          {
+            "columns": [
+              "status"
+            ],
+            "definition": "CHECK ((status = 'candidate_default_off'::text))",
+            "kind": "c",
+            "name": "usermodel_covered_bundle_candidates_v2_status_check"
+          }
+        ],
+        "name": "usermodel_covered_bundle_candidates_v2",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id",
+              "pair_id"
+            ],
+            "name": "usermodel_covered_bundle_cand_authority_id_tenant_id_subjec_key"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "bundle_id"
+            ],
+            "name": "usermodel_covered_bundle_candidates_v2_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "snapshot_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "baseline_revision",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "baseline_artifact_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "prefix_manifest_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "subject_receipt_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "spec_version",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "spec_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "input_state_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "snapshot_raw_sha256",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "snapshot_raw",
+            "not_null": true,
+            "type": "bytea"
+          },
+          {
+            "name": "snapshot_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "name": "status",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "default": "now()",
+            "name": "created_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "baseline_revision"
+            ],
+            "definition": "CHECK ((baseline_revision > 0))",
+            "kind": "c",
+            "name": "usermodel_covered_snapshots_v2_baseline_revision_check"
+          },
+          {
+            "columns": [
+              "input_state_version"
+            ],
+            "definition": "CHECK ((input_state_version >= 0))",
+            "kind": "c",
+            "name": "usermodel_covered_snapshots_v2_input_state_version_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, snapshot_id)",
+            "kind": "p",
+            "name": "usermodel_covered_snapshots_v2_pkey"
+          },
+          {
+            "columns": [
+              "status"
+            ],
+            "definition": "CHECK ((status = 'historical_default_off'::text))",
+            "kind": "c",
+            "name": "usermodel_covered_snapshots_v2_status_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "baseline_revision"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, baseline_revision) REFERENCES usermodel_covered_baselines_v2(authority_id, tenant_id, subject_id, revision)",
+            "kind": "f",
+            "name": "usermodel_covered_snapshots_v_authority_id_tenant_id_subje_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "ref_table": "usermodel_covered_baselines_v2"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "baseline_revision"
+            ],
+            "definition": "UNIQUE (authority_id, tenant_id, subject_id, baseline_revision)",
+            "kind": "u",
+            "name": "usermodel_covered_snapshots_v_authority_id_tenant_id_subjec_key"
+          },
+          {
+            "columns": [
+              "prefix_manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (prefix_manifest_sha256, authority_id, tenant_id, subject_id) REFERENCES usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_covered_snapshots_v_prefix_manifest_sha256_autho_fkey",
+            "ref_columns": [
+              "manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_coverage_subject"
+          }
+        ],
+        "name": "usermodel_covered_snapshots_v2",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "name": "usermodel_covered_snapshots_v2_pkey"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "baseline_revision"
+            ],
+            "name": "usermodel_covered_snapshots_v_authority_id_tenant_id_subjec_key"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "event_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "normalized_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "event_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "name": "action",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "semantic_kind",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "occurred_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "observed_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "default": "now()",
+            "name": "received_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "source_partition",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "source_sequence",
+            "not_null": false,
+            "type": "bigint"
+          },
+          {
+            "name": "supersedes_producer",
+            "not_null": false,
+            "type": "text"
+          },
+          {
+            "name": "supersedes_event_id",
+            "not_null": false,
+            "type": "text"
+          },
+          {
+            "name": "status",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "initial_status",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "initial_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "accepted_version",
+            "not_null": false,
+            "type": "bigint"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "action"
+            ],
+            "definition": "CHECK ((action = ANY (ARRAY['assert'::text, 'correct'::text, 'retract'::text])))",
+            "kind": "c",
+            "name": "usermodel_events_action_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_events_authority_id_tenant_id_subject_id_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_subject_state"
+          },
+          {
+            "columns": [
+              "supersedes_producer",
+              "supersedes_event_id"
+            ],
+            "definition": "CHECK (((supersedes_producer IS NULL) = (supersedes_event_id IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_events_check"
+          },
+          {
+            "columns": [
+              "action",
+              "supersedes_event_id"
+            ],
+            "definition": "CHECK (((action = 'assert'::text) = (supersedes_event_id IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_events_check1"
+          },
+          {
+            "columns": [
+              "initial_status"
+            ],
+            "definition": "CHECK ((initial_status = ANY (ARRAY['accepted'::text, 'pending_dependency'::text])))",
+            "kind": "c",
+            "name": "usermodel_events_initial_status_check"
+          },
+          {
+            "columns": [
+              "initial_version"
+            ],
+            "definition": "CHECK ((initial_version >= 0))",
+            "kind": "c",
+            "name": "usermodel_events_initial_version_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, producer, event_id)",
+            "kind": "p",
+            "name": "usermodel_events_pkey"
+          },
+          {
+            "columns": [
+              "source_sequence"
+            ],
+            "definition": "CHECK (((source_sequence IS NULL) OR (source_sequence > 0)))",
+            "kind": "c",
+            "name": "usermodel_events_source_sequence_check"
+          },
+          {
+            "columns": [
+              "status"
+            ],
+            "definition": "CHECK ((status = ANY (ARRAY['accepted'::text, 'pending_dependency'::text])))",
+            "kind": "c",
+            "name": "usermodel_events_status_check"
+          }
+        ],
+        "name": "usermodel_events",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "source_partition",
+              "source_sequence"
+            ],
+            "name": "usermodel_event_position_uq",
+            "predicate": "(source_sequence IS NOT NULL)"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "event_id"
+            ],
+            "name": "usermodel_events_pkey"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "supersedes_producer",
+              "supersedes_event_id"
+            ],
+            "name": "usermodel_successor_uq",
+            "predicate": "(supersedes_event_id IS NOT NULL)"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "revision",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "generation",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "spec_version",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "spec_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "baseline_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "baseline_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "accepted_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "generation"
+            ],
+            "definition": "UNIQUE (authority_id, tenant_id, subject_id, generation)",
+            "kind": "u",
+            "name": "usermodel_feature_baselines_authority_id_tenant_id_subject__key"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_feature_baselines_authority_id_tenant_id_subject_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_subject_state"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, revision)",
+            "kind": "p",
+            "name": "usermodel_feature_baselines_pkey"
+          },
+          {
+            "columns": [
+              "revision"
+            ],
+            "definition": "CHECK ((revision > 0))",
+            "kind": "c",
+            "name": "usermodel_feature_baselines_revision_check"
+          }
+        ],
+        "name": "usermodel_feature_baselines",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "generation"
+            ],
+            "name": "usermodel_feature_baselines_authority_id_tenant_id_subject__key"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "name": "usermodel_feature_baselines_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "revision",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "default": "now()",
+            "name": "changed_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, revision) REFERENCES usermodel_feature_baselines(authority_id, tenant_id, subject_id, revision)",
+            "kind": "f",
+            "name": "usermodel_feature_heads_authority_id_tenant_id_subject_id__fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "ref_table": "usermodel_feature_baselines"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id)",
+            "kind": "p",
+            "name": "usermodel_feature_heads_pkey"
+          }
+        ],
+        "name": "usermodel_feature_heads",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "name": "usermodel_feature_heads_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "snapshot_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "snapshot_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "created_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_feature_snapshot_ve_authority_id_tenant_id_subje_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_subject_state"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, snapshot_id)",
+            "kind": "p",
+            "name": "usermodel_feature_snapshot_versions_pkey"
+          }
+        ],
+        "name": "usermodel_feature_snapshot_versions",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "name": "usermodel_feature_snapshot_versions_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "state_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "spec_version",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "spec_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "baseline_revision",
+            "not_null": false,
+            "type": "bigint"
+          },
+          {
+            "name": "as_of",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "available_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "snapshot_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "built_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_feature_snapshots_authority_id_tenant_id_subject_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_subject_state"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id)",
+            "kind": "p",
+            "name": "usermodel_feature_snapshots_pkey"
+          },
+          {
+            "columns": [
+              "state_version"
+            ],
+            "definition": "CHECK ((state_version >= 0))",
+            "kind": "c",
+            "name": "usermodel_feature_snapshots_state_version_check"
+          }
+        ],
+        "name": "usermodel_feature_snapshots",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "name": "usermodel_feature_snapshots_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "definition_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "definition_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "definition_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "created_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "definition_version"
+            ],
+            "definition": "CHECK ((definition_version > 0))",
+            "kind": "c",
+            "name": "usermodel_ontology_definitions_definition_version_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "definition_version"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, definition_version)",
+            "kind": "p",
+            "name": "usermodel_ontology_definitions_pkey"
+          }
+        ],
+        "name": "usermodel_ontology_definitions",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "definition_version"
+            ],
+            "name": "usermodel_ontology_definitions_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "definition_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "default": "now()",
+            "name": "activated_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "definition_version"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, definition_version) REFERENCES usermodel_ontology_definitions(authority_id, tenant_id, definition_version)",
+            "kind": "f",
+            "name": "usermodel_ontology_heads_authority_id_tenant_id_definition_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "definition_version"
+            ],
+            "ref_table": "usermodel_ontology_definitions"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id)",
+            "kind": "p",
+            "name": "usermodel_ontology_heads_pkey"
+          }
+        ],
+        "name": "usermodel_ontology_heads",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id"
+            ],
+            "name": "usermodel_ontology_heads_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "definition_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "state_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "as_of",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "next_change_at",
+            "not_null": false,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "projection_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "rebuilt_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "definition_version"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, definition_version) REFERENCES usermodel_ontology_definitions(authority_id, tenant_id, definition_version)",
+            "kind": "f",
+            "name": "usermodel_ontology_projection_authority_id_tenant_id_defin_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "definition_version"
+            ],
+            "ref_table": "usermodel_ontology_definitions"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "kind": "f",
+            "name": "usermodel_ontology_projection_authority_id_tenant_id_subje_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_subject_state"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id)",
+            "kind": "p",
+            "name": "usermodel_ontology_projections_pkey"
+          },
+          {
+            "columns": [
+              "state_version"
+            ],
+            "definition": "CHECK ((state_version >= 0))",
+            "kind": "c",
+            "name": "usermodel_ontology_projections_state_version_check"
+          }
+        ],
+        "name": "usermodel_ontology_projections",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "name": "usermodel_ontology_projections_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "identity": "a",
+            "name": "outbox_id",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "state_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "event_type",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "event_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "payload",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "created_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "delivered_at",
+            "not_null": false,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "state_version"
+            ],
+            "definition": "UNIQUE (authority_id, tenant_id, subject_id, state_version)",
+            "kind": "u",
+            "name": "usermodel_outbox_authority_id_tenant_id_subject_id_state_ve_key"
+          },
+          {
+            "columns": [
+              "outbox_id"
+            ],
+            "definition": "PRIMARY KEY (outbox_id)",
+            "kind": "p",
+            "name": "usermodel_outbox_pkey"
+          }
+        ],
+        "name": "usermodel_outbox",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "state_version"
+            ],
+            "name": "usermodel_outbox_authority_id_tenant_id_subject_id_state_ve_key"
+          },
+          {
+            "columns": [
+              "outbox_id"
+            ],
+            "name": "usermodel_outbox_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "bundle_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "pair_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "space_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "feature_snapshot_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "bundle_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "created_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "feature_snapshot_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, feature_snapshot_id) REFERENCES usermodel_feature_snapshot_versions(authority_id, tenant_id, subject_id, snapshot_id)",
+            "kind": "f",
+            "name": "usermodel_serving_bundles_authority_id_tenant_id_subject_i_fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "snapshot_id"
+            ],
+            "ref_table": "usermodel_feature_snapshot_versions"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "bundle_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, bundle_id)",
+            "kind": "p",
+            "name": "usermodel_serving_bundles_pkey"
+          }
+        ],
+        "name": "usermodel_serving_bundles",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "bundle_id"
+            ],
+            "name": "usermodel_serving_bundles_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "pair_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "bundle_id",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "state",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "approval_ref",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "approval_revision",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "name": "pointer_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "default": "now()",
+            "name": "changed_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "approval_revision"
+            ],
+            "definition": "CHECK ((approval_revision > 0))",
+            "kind": "c",
+            "name": "usermodel_serving_pointers_approval_revision_check"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "bundle_id"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, bundle_id) REFERENCES usermodel_serving_bundles(authority_id, tenant_id, subject_id, bundle_id)",
+            "kind": "f",
+            "name": "usermodel_serving_pointers_authority_id_tenant_id_subject__fkey",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "bundle_id"
+            ],
+            "ref_table": "usermodel_serving_bundles"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "pair_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, pair_id)",
+            "kind": "p",
+            "name": "usermodel_serving_pointers_pkey"
+          },
+          {
+            "columns": [
+              "pointer_version"
+            ],
+            "definition": "CHECK ((pointer_version > 0))",
+            "kind": "c",
+            "name": "usermodel_serving_pointers_pointer_version_check"
+          },
+          {
+            "columns": [
+              "state"
+            ],
+            "definition": "CHECK ((state = ANY (ARRAY['active'::text, 'disabled'::text])))",
+            "kind": "c",
+            "name": "usermodel_serving_pointers_state_check"
+          }
+        ],
+        "name": "usermodel_serving_pointers",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "pair_id"
+            ],
+            "name": "usermodel_serving_pointers_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "external_subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "default": "now()",
+            "name": "first_bound_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "external_subject_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, external_subject_id)",
+            "kind": "p",
+            "name": "usermodel_subject_bindings_pkey"
+          }
+        ],
+        "name": "usermodel_subject_bindings",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "external_subject_id"
+            ],
+            "name": "usermodel_subject_bindings_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "default": "0",
+            "name": "state_version",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "default": "now()",
+            "name": "updated_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id)",
+            "kind": "p",
+            "name": "usermodel_subject_state_pkey"
+          },
+          {
+            "columns": [
+              "state_version"
+            ],
+            "definition": "CHECK ((state_version >= 0))",
+            "kind": "c",
+            "name": "usermodel_subject_state_state_version_check"
+          }
+        ],
+        "name": "usermodel_subject_state",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "name": "usermodel_subject_state_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "external_subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "event_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "normalized_hash",
+            "not_null": true,
+            "type": "character(64)"
+          },
+          {
+            "name": "event_body",
+            "not_null": true,
+            "type": "jsonb"
+          },
+          {
+            "default": "now()",
+            "name": "received_at",
+            "not_null": true,
+            "type": "timestamp with time zone"
+          },
+          {
+            "name": "bound_subject_id",
+            "not_null": false,
+            "type": "text"
+          },
+          {
+            "name": "bound_version",
+            "not_null": false,
+            "type": "bigint"
+          },
+          {
+            "name": "bound_status",
+            "not_null": false,
+            "type": "text"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "bound_subject_id",
+              "bound_version"
+            ],
+            "definition": "CHECK (((bound_subject_id IS NULL) = (bound_version IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_unmapped_events_check"
+          },
+          {
+            "columns": [
+              "bound_subject_id",
+              "bound_status"
+            ],
+            "definition": "CHECK (((bound_subject_id IS NULL) = (bound_status IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_unmapped_events_check1"
+          },
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "external_subject_id",
+              "producer",
+              "event_id"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, external_subject_id, producer, event_id)",
+            "kind": "p",
+            "name": "usermodel_unmapped_events_pkey"
+          }
+        ],
+        "name": "usermodel_unmapped_events",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "external_subject_id",
+              "producer",
+              "event_id"
+            ],
+            "name": "usermodel_unmapped_events_pkey"
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "name": "authority_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "tenant_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "subject_id",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "producer",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "name": "source_partition",
+            "not_null": true,
+            "type": "text"
+          },
+          {
+            "default": "0",
+            "name": "contiguous_sequence",
+            "not_null": true,
+            "type": "bigint"
+          },
+          {
+            "default": "0",
+            "name": "max_seen_sequence",
+            "not_null": true,
+            "type": "bigint"
+          }
+        ],
+        "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "source_partition"
+            ],
+            "definition": "PRIMARY KEY (authority_id, tenant_id, subject_id, producer, source_partition)",
+            "kind": "p",
+            "name": "usermodel_watermarks_pkey"
+          }
+        ],
+        "name": "usermodel_watermarks",
+        "unique": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "producer",
+              "source_partition"
+            ],
+            "name": "usermodel_watermarks_pkey"
+          }
+        ]
+      }
+    ]
+  },
+  "source_sha256": "fdb6615e728a8a0714cb8b5c491199fa67b0e1d84f8f9d8facbb1f5545e4ab97"
+}
