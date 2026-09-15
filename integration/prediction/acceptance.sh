@@ -11,9 +11,12 @@ evidence=$1
 mkdir -m 700 "$evidence"
 
 dc_commit=5702d3b22ccde706cc9e5661cc0aaee0514acf3a
-actual_dc=$(git -C "$SEA_DC_ROOT" rev-parse HEAD)
-[ "$actual_dc" = "$dc_commit" ] || {
-	printf '%s\n' "DataCenter checkout must be exactly $dc_commit, got $actual_dc" >&2
+
+# Read only the pinned commit through git archive; the developer's current
+# checkout may advance or contain unrelated work without changing this run.
+resolved_dc=$(git -C "$SEA_DC_ROOT" rev-parse "$dc_commit^{commit}")
+[ "$resolved_dc" = "$dc_commit" ] || {
+	printf '%s\n' "DataCenter pinned commit is unavailable: $dc_commit" >&2
 	exit 2
 }
 btw_commit=$(git -C "$root" rev-parse HEAD)
