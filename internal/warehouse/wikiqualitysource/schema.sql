@@ -25,3 +25,14 @@ CREATE TABLE IF NOT EXISTS warehouse_wiki_quality.ods_event (
   CHECK ((status = 'technical_skip' AND authority_event_json IS NULL AND authority_event_sha256 IS NULL)
       OR (status = 'quality_verified' AND authority_event_json IS NOT NULL AND authority_event_sha256 IS NOT NULL))
 );
+
+-- ODS source events are append-only. Replay checks the frozen rows and may
+-- advance the cursor; it cannot rewrite the RTW/DC original evidence.
+CREATE OR REPLACE FUNCTION warehouse_wiki_quality.reject_ods_rewrite() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Wiki quality ODS source row is immutable';
+END $$;
+DROP TRIGGER IF EXISTS wiki_quality_ods_immutable ON warehouse_wiki_quality.ods_event;
+CREATE TRIGGER wiki_quality_ods_immutable BEFORE UPDATE OR DELETE ON warehouse_wiki_quality.ods_event
+FOR EACH ROW EXECUTE FUNCTION warehouse_wiki_quality.reject_ods_rewrite();

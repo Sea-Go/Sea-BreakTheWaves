@@ -231,6 +231,14 @@ func TestIndependentRealPGQualityCursorStopsWithoutRubricAndReplaysAfterLostACK(
  WHERE consumer=$1`, DefaultConsumer).Scan(&cursor); err != nil || cursor != 3 {
 		t.Fatalf("independent committed cursor=%d %v", cursor, err)
 	}
+	if _, err := pool.Exec(ctx, `UPDATE warehouse_wiki_quality.ods_event
+ SET event_type='knowledge.wiki.quality.judged.v2' WHERE source_offset=2`); err == nil {
+		t.Fatal("frozen ODS quality source was rewritten")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM warehouse_wiki_quality.ods_event
+ WHERE source_offset=2`); err == nil {
+		t.Fatal("frozen ODS quality source was deleted")
+	}
 	modified := source.receipts[batch.Events[1].Event.EventID]
 	modified.ReceiptID = "forged-receipt"
 	source.receipts[modified.EventID] = modified
