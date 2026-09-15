@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"sync"
 	"time"
 
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
@@ -36,13 +38,28 @@ type AcceptedRootHistory interface {
 	List(context.Context, btwruntime.SubjectRef, string) ([]AcceptedRootTurn, error)
 }
 
+// AcceptedRootLookup is an optional exact AnswerID read. A durable history
+// owner implements it when a worker may retry a lost response directly. An
+// absent turn is distinct from an unavailable or malformed owner response.
+// Existing histories without this capability keep their original behavior.
+type AcceptedRootLookup interface {
+	Get(context.Context, btwruntime.SubjectRef, string, string) (AcceptedRootTurn, bool, error)
+}
+
 // RootSessionBoundary owns private per-attempt framework Sessions. Failed or
 // unvalidated model/Graph events never reach the accepted history interface.
 // The provided history and telemetry are borrowed; Close never closes them.
 type RootSessionBoundary struct {
-	root     *RootSummarizer
-	attempts *inmemory.SessionService
-	history  AcceptedRootHistory
+	root      *RootSummarizer
+	attempts  *inmemory.SessionService
+	history   AcceptedRootHistory
+	mu        sync.Mutex
+	closed    bool
+	next      uint64
+	active    map[uint64]context.CancelFunc
+	activeWG  sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func NewRootSessionBoundary(d *Delivery, m model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
@@ -77,7 +94,28 @@ func newRootSessionBoundary(d *Delivery, m, plannerModel model.Model, history Ac
 		_ = attempts.Close()
 		return nil, err
 	}
-	return &RootSessionBoundary{root: root, attempts: attempts, history: history}, nil
+	return &RootSessionBoundary{root: root, attempts: attempts, history: history,
+		active: make(map[uint64]context.CancelFunc)}, nil
+}
+
+func (b *RootSessionBoundary) beginAttempt(parent context.Context) (context.Context, func(), error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil, nil, btwruntime.ErrClosed
+	}
+	ctx, cancel := context.WithCancel(parent)
+	b.next++
+	id := b.next
+	b.active[id] = cancel
+	b.activeWG.Add(1)
+	return ctx, func() {
+		cancel()
+		b.mu.Lock()
+		delete(b.active, id)
+		b.mu.Unlock()
+		b.activeWG.Done()
+	}, nil
 }
 
 // Summarize executes the existing single Runner/Graph in a fresh private
@@ -91,6 +129,16 @@ func (b *RootSessionBoundary) Summarize(ctx context.Context, q SummaryRequest) (
 	if err := validateRootSummaryRequest(q); err != nil {
 		return failed, err
 	}
+	if err := ctx.Err(); err != nil {
+		return failed, err
+	}
+	var done func()
+	var err error
+	ctx, done, err = b.beginAttempt(ctx)
+	if err != nil {
+		return failed, err
+	}
+	defer done()
 	if b.root.fastMedium != nil && q.Search.Depth == Fast && q.Search.Intelligence == Medium {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, b.root.fastMedium.WallTime)
@@ -99,6 +147,28 @@ func (b *RootSessionBoundary) Summarize(ctx context.Context, q SummaryRequest) (
 	user, err := q.Subject.UserKey()
 	if err != nil {
 		return failed, err
+	}
+	if lookup, ok := b.history.(AcceptedRootLookup); ok {
+		committed, found, err := lookup.Get(ctx, q.Subject, q.SessionID, q.AnswerID)
+		if err != nil {
+			return failed, fmt.Errorf("look up accepted search turn: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return failed, err
+		}
+		if found {
+			// A same-key retry has to reproduce the entire fixed request, not
+			// merely the search ID or answer ID. The product owner also verifies
+			// its immutable operation hash and current citation state.
+			if !reflect.DeepEqual(committed.Request, q) || !validRootSummaryResult(committed.Result, q) {
+				return failed, ErrAcceptedHistory
+			}
+			owned, err := cloneAcceptedRootTurn(committed)
+			if err != nil {
+				return failed, fmt.Errorf("copy accepted search turn: %w", err)
+			}
+			return owned.Result, nil
+		}
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -186,12 +256,29 @@ func (b *RootSessionBoundary) Close() error {
 	if b == nil {
 		return nil
 	}
-	var errs []error
-	if b.root != nil {
-		errs = append(errs, b.root.Close())
-	}
-	if b.attempts != nil {
-		errs = append(errs, b.attempts.Close())
-	}
-	return errors.Join(errs...)
+	b.closeOnce.Do(func() {
+		b.mu.Lock()
+		b.closed = true
+		cancels := make([]context.CancelFunc, 0, len(b.active))
+		for _, cancel := range b.active {
+			cancels = append(cancels, cancel)
+		}
+		b.mu.Unlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
+		var errs []error
+		if b.root != nil {
+			errs = append(errs, b.root.Close())
+		}
+		// The Runner waits for its stream, but an accepted-history Commit can
+		// still be active after that stream ends. Borrowed history must finish
+		// before the private Session service is closed and Close returns.
+		b.activeWG.Wait()
+		if b.attempts != nil {
+			errs = append(errs, b.attempts.Close())
+		}
+		b.closeErr = errors.Join(errs...)
+	})
+	return b.closeErr
 }
