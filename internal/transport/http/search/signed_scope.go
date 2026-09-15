@@ -41,6 +41,23 @@ type signedScope struct {
 	ExpiresAtUnix          int64                 `json:"expires_at_unix"`
 }
 
+// signedScopeV2 preserves the v1 scope's ordered fields and fixed snapshot,
+// changing only audience and the two-field SubjectRef. It is consumer-only:
+// RideTheWind has not started issuing this scope version.
+type signedScopeV2 struct {
+	Audience               string                `json:"aud"`
+	Subject                signedSubjectV2       `json:"subject_ref"`
+	SessionID              string                `json:"session_id"`
+	SearchID               string                `json:"search_id"`
+	AnswerID               string                `json:"answer_id"`
+	Snapshot               searchdomain.Snapshot `json:"snapshot"`
+	AllowPartial           bool                  `json:"allow_partial"`
+	AllowLowerIntelligence bool                  `json:"allow_lower_intelligence"`
+	RequestHash            string                `json:"request_hash"`
+	IssuedAtUnix           int64                 `json:"issued_at_unix"`
+	ExpiresAtUnix          int64                 `json:"expires_at_unix"`
+}
+
 // SignedScopeResolver accepts only a single RTW-issued HMAC scope header. Its
 // key is copied at construction; callers own key loading and rotation.
 type SignedScopeResolver struct {
@@ -82,18 +99,42 @@ func (s *SignedScopeResolver) ResolveSearch(_ context.Context, r *http.Request, 
 		return TrustedScope{}, ErrScopeDenied
 	}
 	var payload signedScope
-	decoder := json.NewDecoder(bytes.NewReader(payloadBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&payload); err != nil || decoder.Decode(new(any)) != io.EOF {
-		return TrustedScope{}, ErrScopeDenied
-	}
-	canonical, err := json.Marshal(payload)
-	if err != nil || !bytes.Equal(canonical, payloadBytes) {
-		// Also rejects omitted fields, duplicate keys and noncanonical JSON.
-		return TrustedScope{}, ErrScopeDenied
+	switch signedScopeAudience(payloadBytes) {
+	case searchScopeAudienceV2:
+		var wire signedScopeV2
+		decoder := json.NewDecoder(bytes.NewReader(payloadBytes))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&wire); err != nil || decoder.Decode(new(any)) != io.EOF {
+			return TrustedScope{}, ErrScopeDenied
+		}
+		canonical, err := json.Marshal(wire)
+		if err != nil || !bytes.Equal(canonical, payloadBytes) {
+			return TrustedScope{}, ErrScopeDenied
+		}
+		subject, ok := wire.Subject.legacySubject()
+		if !ok {
+			return TrustedScope{}, ErrScopeDenied
+		}
+		payload = signedScope{Audience: wire.Audience, Subject: subject, SessionID: wire.SessionID,
+			SearchID: wire.SearchID, AnswerID: wire.AnswerID, Snapshot: wire.Snapshot,
+			AllowPartial: wire.AllowPartial, AllowLowerIntelligence: wire.AllowLowerIntelligence,
+			RequestHash: wire.RequestHash, IssuedAtUnix: wire.IssuedAtUnix, ExpiresAtUnix: wire.ExpiresAtUnix}
+	default:
+		// The original v1 decoder and byte comparison remain unchanged.
+		decoder := json.NewDecoder(bytes.NewReader(payloadBytes))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil || decoder.Decode(new(any)) != io.EOF {
+			return TrustedScope{}, ErrScopeDenied
+		}
+		canonical, err := json.Marshal(payload)
+		if err != nil || !bytes.Equal(canonical, payloadBytes) {
+			// Also rejects omitted fields, duplicate keys and noncanonical JSON.
+			return TrustedScope{}, ErrScopeDenied
+		}
 	}
 	now := s.now().Unix()
-	if payload.Audience != searchScopeAudience || payload.IssuedAtUnix > now+maxScopeClockSkewSeconds ||
+	if (payload.Audience != searchScopeAudience && payload.Audience != searchScopeAudienceV2) ||
+		payload.IssuedAtUnix > now+maxScopeClockSkewSeconds ||
 		payload.IssuedAtUnix < now-maxScopeTTLSeconds ||
 		payload.ExpiresAtUnix <= now || payload.ExpiresAtUnix <= payload.IssuedAtUnix ||
 		payload.ExpiresAtUnix-payload.IssuedAtUnix > maxScopeTTLSeconds {
