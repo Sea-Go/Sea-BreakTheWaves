@@ -239,7 +239,10 @@ def main() -> None:
     ch_process = s3_process = None
     try:
         ch_process, endpoint = start_clickhouse(runtime / "clickhouse", output / "clickhouse")
-        s3_process, s3_prefix = start_s3(runtime / "weed", output / "seaweed")
+        # This isolated instance reserves 1GiB before becoming read-only;
+        # SeaweedFS's default 1% of a large host volume would exceed its
+        # remaining free space despite our three 100MiB test-volume limit.
+        s3_process, s3_prefix = start_s3(runtime / "weed", output / "seaweed", min_free_space="1GiB")
         source, publication = run_go(output, s3_prefix)
         rows = verify_ods(source)
         coverage = verify_coverage(publication)

@@ -8,7 +8,7 @@ from pathlib import Path
 from local_server import free_port
 
 
-def start(binary, root):
+def start(binary, root, min_free_space=None):
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=False)
     data = root / 'data'
@@ -18,6 +18,10 @@ def start(binary, root):
     command = [str(Path(binary).resolve()), 'server', '-ip=127.0.0.1', '-ip.bind=127.0.0.1',
                f'-dir={data}', '-filer', '-s3', '-master.volumeSizeLimitMB=100', '-volume.max=3',
                '-master.telemetry=false', '-volume.preStopSeconds=0']
+    if min_free_space is not None:
+        if min_free_space != '1GiB':
+            raise ValueError('unsupported isolated SeaweedFS reserve')
+        command.append(f'-volume.minFreeSpace={min_free_space}')
     command.extend(f'-{name}.port={ports[name]}' for name in ('master', 'volume', 'filer', 's3'))
     command.extend(f'-{name}.port.grpc={ports[name + "_grpc"]}' for name in ('master', 'volume', 'filer', 's3'))
     with (root / 'process.log').open('wb') as log:
