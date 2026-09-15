@@ -167,6 +167,9 @@ func TestSyntheticAndCrossTenantRowsBlockProjection(t *testing.T) {
 	if first.L1 == 0 || first.L2 == 0 {
 		t.Fatal("negative fixture did not block L1 and L2")
 	}
+	if first.TotalRows != 13 || len(first.TableRows) != 23 {
+		t.Fatal("negative fixture scoped table row scan changed")
+	}
 	if findingCount(first, "invalid_legacy_subject", "usermodel_subject_state") != 7 {
 		t.Fatal("canonical positive int64 boundary was not enforced")
 	}
@@ -183,7 +186,7 @@ func TestSyntheticAndCrossTenantRowsBlockProjection(t *testing.T) {
 	if before != after {
 		t.Fatal("preflight changed fixture rows")
 	}
-	t.Logf("negative fixture reportSHA=%s liveCatalogSHA=%s L1=%d L2=%d L3=%d", first.ReportSHA256, first.LiveCatalogSHA256, first.L1, first.L2, first.L3)
+	t.Logf("negative fixture reportSHA=%s liveCatalogSHA=%s rows=%d L1=%d L2=%d L3=%d", first.ReportSHA256, first.LiveCatalogSHA256, first.TotalRows, first.L1, first.L2, first.L3)
 }
 
 func hasRule(r Report, prefix string) bool {
