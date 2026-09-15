@@ -23,10 +23,12 @@ var errWikiCompileStartup = errors.New("Wiki compile worker lacks signed model, 
 type wikiCompileAuthorizedRuns interface {
 	app.WikiCompileRunFactory
 	CurrentNativeSession(context.Context) (app.WikiCompileModelSession, error)
+	BindTelemetry(*telemetry.Bundle) error
+	Close() error
 }
 
-// The caller owns these borrowed provider clients and closes their transports
-// after this worker stops. Per-job RunFactory.Open owns its Runner/Session.
+// The caller owns borrowed provider clients and closes their transports after
+// this worker stops. This entry owns Runs.Close; Open owns each Runner/Session.
 type wikiCompileStartDeps struct {
 	Jobs                app.WikiCompileJobClient
 	Owner               app.WikiCompileOwner
@@ -112,6 +114,23 @@ func serveWikiCompile(ctx context.Context, cfg config, output io.Writer) error {
 	return serveWikiCompileWithDeps(ctx, cfg, output, wikiCompileStartDeps{})
 }
 
+func wikiCloseRunsBeforeTelemetry(ctx context.Context, cfg config, output io.Writer,
+	runs wikiCompileAuthorizedRuns) error {
+	if wikiNilDependency(runs) {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	err := runs.Close()
+	if err != nil {
+		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki native Factory close failed before telemetry",
+			"event", "content.wiki_compile.factory_close_failed", "outcome", "failed",
+			"error_code", "NATIVE_FACTORY_CLOSE_FAILED")
+	}
+	return err
+}
+
 func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 	d wikiCompileStartDeps) (resultErr error) {
 	frozen, err := wikiCompileStartupSession(ctx, cfg, d)
@@ -119,7 +138,8 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki compile worker startup denied",
 			"event", "content.wiki_compile.start_rejected", "outcome", "rejected",
 			"error_code", "SIGNED_DEPENDENCIES_MISSING")
-		return errWikiCompileStartup
+		return errors.Join(errWikiCompileStartup,
+			wikiCloseRunsBeforeTelemetry(ctx, cfg, output, d.Runs))
 	}
 	bundle, err := telemetry.New(ctx, telemetry.Config{Service: workerService(cfg),
 		Environment: cfg.Environment, Version: cfg.Version, InstanceID: cfg.InstanceID,
@@ -129,7 +149,8 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki telemetry startup failed",
 			"event", "content.wiki_compile.start_failed", "outcome", "failed",
 			"error_code", "TELEMETRY_INIT_FAILED")
-		return err
+		return errors.Join(err,
+			wikiCloseRunsBeforeTelemetry(ctx, cfg, output, d.Runs))
 	}
 	var logger *slog.Logger
 	// Register final logging first so metric shutdown and Bundle.Close update
@@ -152,6 +173,22 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 		defer cancel()
 		resultErr = errors.Join(resultErr, bundle.Close(shutdown))
 	}()
+	// Go defers run LIFO: metrics shutdown (registered later) -> Factory.Close
+	// -> Bundle.Close -> final stopped JSON. Native runners/nodes/sinks cannot
+	// outlive the framework telemetry they still use.
+	defer func() {
+		closeCtx, stage, stageErr := bundle.Begin(context.Background(), "content",
+			"content.wiki_compile.factory_close")
+		closeErr := d.Runs.Close()
+		if stageErr == nil {
+			if closeErr == nil {
+				stage.End(closeCtx, "succeeded", "", nil)
+			} else {
+				stage.End(closeCtx, "failed", "NATIVE_FACTORY_CLOSE_FAILED", closeErr)
+			}
+		}
+		resultErr = errors.Join(resultErr, stageErr, closeErr)
+	}()
 	logger, err = bundle.Logger("content", "application")
 	if err != nil {
 		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki logger startup failed",
@@ -165,6 +202,21 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 			"error_code", "FRAMEWORK_TELEMETRY_FAILED")
 		return err
 	}
+	bindCtx, bindStage, err := bundle.Begin(ctx, "content", "content.wiki_compile.factory_bind")
+	if err != nil {
+		logger.ErrorContext(ctx, "Wiki native Factory bind stage failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "NATIVE_FACTORY_BIND_FAILED")
+		return err
+	}
+	if err := d.Runs.BindTelemetry(bundle); err != nil {
+		bindStage.End(bindCtx, "failed", "NATIVE_FACTORY_BIND_FAILED", err)
+		logger.ErrorContext(bindCtx, "Wiki native Factory bind failed",
+			"event", "content.wiki_compile.start_failed", "outcome", "failed",
+			"error_code", "NATIVE_FACTORY_BIND_FAILED")
+		return err
+	}
+	bindStage.End(bindCtx, "succeeded", "", nil)
 	worker, err := app.NewWikiCompileWorker(app.WikiCompileWorkerConfig{
 		WorkerID: cfg.WorkerID, LeaseSeconds: cfg.LeaseSeconds,
 		CompletionRef:       app.BuildWikiCompileResultRef,
