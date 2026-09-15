@@ -23,17 +23,39 @@ type ToolsExecutor interface {
 	Search(context.Context, searchdomain.ToolRunRequest) (searchdomain.SearchResult, error)
 }
 
+// ToolsProfilePreflight is required by the optional medium route so a missing
+// policy or signed downgrade returns 503 before the framework Runner starts.
+type ToolsProfilePreflight interface {
+	PreflightProfile(context.Context, searchdomain.Request) error
+}
+
 type toolsHandler struct {
-	resolver ToolsScopeResolver
-	executor ToolsExecutor
-	observed *telemetry.Bundle
+	resolver      ToolsScopeResolver
+	executor      ToolsExecutor
+	observed      *telemetry.Bundle
+	mediumEnabled bool
 }
 
 func NewToolsHandler(resolver ToolsScopeResolver, executor ToolsExecutor, observed *telemetry.Bundle) (http.Handler, error) {
+	return newToolsHandler(resolver, executor, observed, false)
+}
+
+// NewToolsHandlerWithFastMedium is an explicit opt-in for one additional
+// product profile. The original constructor remains fast/low only.
+func NewToolsHandlerWithFastMedium(resolver ToolsScopeResolver, executor ToolsExecutor,
+	observed *telemetry.Bundle) (http.Handler, error) {
+	if _, ok := executor.(ToolsProfilePreflight); !ok {
+		return nil, ErrInvalidRequest
+	}
+	return newToolsHandler(resolver, executor, observed, true)
+}
+
+func newToolsHandler(resolver ToolsScopeResolver, executor ToolsExecutor, observed *telemetry.Bundle,
+	mediumEnabled bool) (http.Handler, error) {
 	if nilDependency(resolver) || nilDependency(executor) || observed == nil || !observed.Installed() || observed.Closed() {
 		return nil, ErrInvalidRequest
 	}
-	h := &toolsHandler{resolver: resolver, executor: executor, observed: observed}
+	h := &toolsHandler{resolver: resolver, executor: executor, observed: observed, mediumEnabled: mediumEnabled}
 	return otelhttp.NewHandler(h, "search.tools", otelhttp.WithSpanNameFormatter(func(_ string, _ *http.Request) string {
 		return "POST " + ToolsRoute
 	})), nil
@@ -135,9 +157,10 @@ func (h *toolsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	stage.SetAttributes(slog.String("operation_id", operationID), slog.String("search_id", searchID),
 		slog.String("release_id", scope.Snapshot.ReleaseID), slog.Int64("generation", scope.Snapshot.Generation),
 		slog.String("publication_revision", scope.Snapshot.PublicationRevision))
-	// The production process currently has exactly the local-exact fast/low
-	// policy. A signed request for other profiles is explicit unavailability.
-	if body.Depth != searchdomain.Fast || body.Intelligence != searchdomain.Low {
+	// The medium candidate is independent of the existing Summary policy.
+	// Unsupported signed profiles must never reach a Reader or Agent.
+	if body.Depth != searchdomain.Fast || body.Intelligence != searchdomain.Low &&
+		(body.Intelligence != searchdomain.Medium || !h.mediumEnabled) {
 		status, outcome, code = http.StatusServiceUnavailable, "rejected", "TOOLS_PROFILE_UNAVAILABLE"
 		cause = searchdomain.ErrUnavailable
 		writeToolsError(w, status, code)
@@ -149,6 +172,16 @@ func (h *toolsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Search: searchdomain.Request{Query: body.Query, Depth: body.Depth, Intelligence: body.Intelligence,
 			AllowPartial: scope.AllowPartial, AllowLowerIntelligence: scope.AllowLowerIntelligence,
 			Snapshot: copySnapshot(scope.Snapshot)}}
+	if body.Intelligence == searchdomain.Medium {
+		if err := h.executor.(ToolsProfilePreflight).PreflightProfile(ctx, q.Search); err != nil {
+			status, outcome, code = toolsRunError(err)
+			cause = err
+			if ctx.Err() == nil {
+				writeToolsError(w, status, code)
+			}
+			return
+		}
+	}
 	found, err := h.executor.Search(ctx, q)
 	if err != nil {
 		status, outcome, code = toolsRunError(err)
@@ -211,7 +244,7 @@ func projectToolsResult(found searchdomain.SearchResult, q searchdomain.ToolRunR
 		pack.Status == "complete" && len(pack.Gaps) != 0 {
 		return out, ErrInvalidResult
 	}
-	if pack.Profile.EffectiveIntelligence != q.Search.Intelligence && !q.Search.AllowLowerIntelligence {
+	if pack.Profile.EffectiveIntelligence != q.Search.Intelligence {
 		return out, ErrInvalidResult
 	}
 	out = ToolsResponse{SearchID: q.SearchID, Status: pack.Status, StopReason: pack.StopReason,
