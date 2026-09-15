@@ -104,14 +104,14 @@ func (c *predictionFixtureCaller) count(key string) int {
 }
 
 func predictionCandidateTestConfig() PredictionCandidateConfig {
-	return PredictionCandidateConfig{Enabled: true, Model: "recommend-engagement",
+	return PredictionCandidateConfig{SyntheticEvaluationEnabled: true, Model: "recommend-engagement",
 		ConfigurationID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ArtifactSHA256: strings.Repeat("a", 64),
 		FeatureContractID: "engagement-features.v1", PairID: "sea.recommend.pair.fixture",
 		SpaceID: "sea.recommend.space.fixture"}
 }
 
 func predictionCandidateTestRequest(logicalCall string) PredictionCandidateRequest {
-	return PredictionCandidateRequest{Subject: PredictionSubject{Issuer: "rtw-user-center", Realm: "platform", UID: "synthetic-user-1"},
+	return PredictionCandidateRequest{Subject: PredictionSubject{Issuer: "rtw.identity", SubjectID: "1001"},
 		Features:    SyntheticPredictionFeatures{Source: "synthetic_typed_fixture", UserInterest: 0.2, ItemQuality: 0.1},
 		LogicalCall: logicalCall}
 }
@@ -144,8 +144,7 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 	directRequest := predictionCandidateTestRequest("prediction-direct-0001")
 	direct, err := useCase.BuildCandidate(context.Background(), directRequest)
 	if err != nil || !validPredictionCandidate(direct) || direct.Status != "candidate_default_off" ||
-		direct.BusinessActivation != "none" || direct.UserTower.Attempts != 2 || direct.ItemTower.Attempts != 1 ||
-		direct.Ranker.Attempts != 1 || direct.Features.Source != "synthetic_typed_fixture" {
+		direct.BusinessActivation != "none" || direct.Features.Source != "synthetic_typed_fixture" {
 		t.Fatalf("default-off typed candidate=%+v err=%v", direct, err)
 	}
 	if caller.count(directRequest.LogicalCall+".user") != 2 || caller.count(directRequest.LogicalCall+".item") != 1 ||

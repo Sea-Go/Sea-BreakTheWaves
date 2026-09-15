@@ -178,8 +178,11 @@ func (r *PredictionGraphRuntime) Run(ctx context.Context, request PredictionGrap
 	var candidate PredictionCandidate
 	var completions int
 	result, err := r.runtime.Run(ctx, btwruntime.Request{
+		// Runtime still owns the v1 three-slot session key. The middle value is
+		// one fixed compatibility slot, never read from the v2 request. Global
+		// dual-read/migration belongs to the separate SubjectRef migration.
 		Subject: btwruntime.SubjectRef{AuthorityID: request.Candidate.Subject.Issuer,
-			TenantID: request.Candidate.Subject.Realm, SubjectID: request.Candidate.Subject.UID},
+			TenantID: "platform", SubjectID: request.Candidate.Subject.SubjectID},
 		SessionID: request.SessionID, RunID: request.RunID,
 		Message: model.NewUserMessage("build_prediction_candidate"), Options: []agent.RunOption{option},
 	}, func(_ context.Context, event *event.Event) error {

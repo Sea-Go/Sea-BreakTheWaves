@@ -3,10 +3,12 @@ package datacenter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/prediction"
@@ -45,17 +47,30 @@ func TestPredictionClientPinsLogicalKeyAndValidatesResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var mu sync.Mutex
+	keys := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
+		mu.Lock()
+		keys[key]++
+		attempt := keys[key]
+		mu.Unlock()
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/predictions" ||
 			r.Header.Get("Authorization") != "Bearer native-subject-token" ||
-			(key != "prediction-logical-call-0001" && key != "prediction-logical-call-0002") {
+			(key != "prediction-logical-call-0001" && key != "prediction-logical-call-0002" &&
+				key != "prediction-logical-call-0003") {
 			t.Errorf("request contract drift method=%s path=%s headers=%v", r.Method, r.URL.Path, r.Header)
 		}
 		body, _ := io.ReadAll(r.Body)
 		var actual prediction.Request
 		if err := prediction.Decode(body, &actual); err != nil || actual.ConfigurationID != q.ConfigurationID || actual.PairID != q.PairID {
 			t.Errorf("typed request drift: %+v %v", actual, err)
+		}
+		if key == "prediction-logical-call-0003" && attempt == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":"prediction outcome is unknown"}`)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(raw)
@@ -71,6 +86,21 @@ func TestPredictionClientPinsLogicalKeyAndValidatesResponse(t *testing.T) {
 	}
 	if _, err := client.Predict(context.Background(), q, "short"); err == nil {
 		t.Fatal("invalid logical call key reached DataCenter")
+	}
+	if _, err := client.Predict(context.Background(), q, "prediction-logical-call-0003"); !errors.Is(err, ErrPredictionOutcomeUnknown) {
+		t.Fatalf("503 unknown response was not recoverable: %v", err)
+	} else {
+		var status *httpclient.HTTPError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("503 recovery lost HTTP receipt: %v", err)
+		}
+	}
+	recovered, err := client.Predict(context.Background(), q, "prediction-logical-call-0003")
+	mu.Lock()
+	recoveryCalls := keys["prediction-logical-call-0003"]
+	mu.Unlock()
+	if err != nil || recovered.Response.ModelCallID != response.ModelCallID || recoveryCalls != 2 {
+		t.Fatalf("same-key 503 recovery result=%+v calls=%d err=%v", recovered, recoveryCalls, err)
 	}
 	response.SpaceID = "wrong-space"
 	raw, _ = json.Marshal(response)
