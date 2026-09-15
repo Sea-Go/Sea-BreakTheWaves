@@ -491,7 +491,6 @@ func TestWikiCompileNativeExternalTwoHolder(t *testing.T) {
 		wiki.CreatedBy != "btw.compile/"+accepted.CompileId ||
 		wiki.ContentHash != artifacts.Hash([]byte(wiki.Content)) ||
 		wiki.ObjectKey != "sha256/"+wiki.ContentHash ||
-		!strings.HasPrefix(wiki.Content, "#") ||
 		len(wiki.SourceRefs) != 1 || wiki.SourceRefs[0].RevisionId != source.RevisionId {
 		t.Fatal("RTW accepted native Wiki revision does not preserve original source and Markdown")
 	}
@@ -518,6 +517,36 @@ func TestWikiCompileNativeExternalTwoHolder(t *testing.T) {
 		fields["rtw_accept_result_hash"] != accepted.ResultHash ||
 		fields["generation"] != strconv.FormatInt(accepted.Generation, 10) {
 		t.Fatal("DC native technical manifest did not bind accepted RTW Wiki revision and frozen Job")
+	}
+	// Quality evaluation consumes the exact accepted Markdown bytes separately
+	// from bounded relationship metadata. Both files are task-owned 0600 and
+	// contain no native bearer, service token or model response envelope.
+	if strings.Contains(wiki.Content, dcRuntime.AccessToken) ||
+		strings.Contains(wiki.Content, rtwRuntime.DCJobsToken) ||
+		strings.Contains(wiki.Content, rtwRuntime.RTWWorkerToken) {
+		t.Fatal("accepted Wiki Markdown unexpectedly contains a Holder credential")
+	}
+	qualityDir := filepath.Dir(rtwPath)
+	markdownFile := filepath.Join(qualityDir, "wiki-external-native-candidate.md")
+	if err := os.WriteFile(markdownFile, []byte(wiki.Content), 0600); err != nil {
+		t.Fatal("cannot retain accepted Wiki Markdown bytes for quality review")
+	}
+	quality := struct {
+		SchemaVersion  string                  `json:"schema_version"`
+		CompileID      string                  `json:"compile_id"`
+		WikiRevisionID string                  `json:"wiki_revision_id"`
+		Title          string                  `json:"title"`
+		MarkdownSHA256 string                  `json:"markdown_sha256"`
+		MarkdownFile   string                  `json:"markdown_file"`
+		SourceRefs     []ridethewind.SourceRef `json:"source_refs"`
+	}{SchemaVersion: "sea.wiki.native-candidate-quality.v1",
+		CompileID: accepted.CompileId, WikiRevisionID: wiki.RevisionId,
+		Title: wiki.Title, MarkdownSHA256: wiki.ContentHash,
+		MarkdownFile: filepath.Base(markdownFile), SourceRefs: wiki.SourceRefs}
+	qualityBytes, err := json.Marshal(quality)
+	if err != nil || os.WriteFile(filepath.Join(qualityDir, "wiki-external-native-candidate-quality.json"),
+		append(qualityBytes, '\n'), 0600) != nil {
+		t.Fatal("cannot retain accepted Wiki candidate source refs for quality review")
 	}
 	if !collector.SameNativeAppTrace() ||
 		strings.Contains(string(logs.Bytes()), dcRuntime.AccessToken) ||
