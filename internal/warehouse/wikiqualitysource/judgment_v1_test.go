@@ -140,6 +140,24 @@ func jsonEvent(t *testing.T, event eventing.Event) []byte {
 	return raw
 }
 
+func TestCompleteFactCatalogFutureEventCannotBecomeTechnicalSkip(t *testing.T) {
+	for _, family := range []string{
+		"knowledge.wiki.fact-set.frozen.v1", "knowledge.wiki.fact-catalog.frozen.v1",
+	} {
+		batch, _, _ := testBatch(t)
+		batch.Events[0].Event.EventType = family
+		encoded, err := canonical(jsonEvent(t, batch.Events[0].Event))
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch.Events[0].InputHash = digest(encoded)
+		resetBatchHash(t, &batch)
+		if !errors.Is(validateBatch(batch), ErrContract) {
+			t.Fatalf("future complete FactCatalog source %s became a skip before its contract froze", family)
+		}
+	}
+}
+
 func TestPinnedV1GoldenThroughRealPGIndependentODSAndACK(t *testing.T) {
 	dsn := os.Getenv("WIKI_QUALITY_SOURCE_TEST_DSN")
 	if dsn == "" {

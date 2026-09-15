@@ -40,10 +40,15 @@ func canonical(raw []byte) ([]byte, error) {
 
 func qualityEvent(eventType string) bool { return eventType == Judged }
 
-// Unknown quality versions cannot pass as technical skips. Other events of
-// this shared producer still occupy real DC offsets in this consumer's ODS.
+// Unknown quality versions and future complete FactCatalog events cannot pass
+// as technical skips. Other events retain real producer offsets in this ODS.
 func qualityFamily(eventType string) bool {
 	return strings.HasPrefix(eventType, "knowledge.wiki.quality.")
+}
+
+func futureFactCatalog(eventType string) bool {
+	return strings.HasPrefix(eventType, "knowledge.wiki.fact-set.") ||
+		strings.HasPrefix(eventType, "knowledge.wiki.fact-catalog.")
 }
 
 func validateBatch(batch eventing.Batch) error {
@@ -56,7 +61,8 @@ func validateBatch(batch eventing.Batch) error {
 		if item.Offset != batch.FromOffset+int64(i) || item.Event.Producer != Producer ||
 			item.Event.EventID == "" || item.Event.EventType == "" || item.Event.SchemaVersion != 1 ||
 			!shaPattern.MatchString(item.InputHash) ||
-			(qualityFamily(item.Event.EventType) && !qualityEvent(item.Event.EventType)) {
+			((qualityFamily(item.Event.EventType) && !qualityEvent(item.Event.EventType)) ||
+				futureFactCatalog(item.Event.EventType)) {
 			return ErrContract
 		}
 		raw, err := json.Marshal(item.Event)
