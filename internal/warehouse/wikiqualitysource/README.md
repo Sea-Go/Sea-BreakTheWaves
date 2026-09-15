@@ -1,6 +1,6 @@
 # Wiki 质量评阅来源 ODS
 
-RTW Knowledge 的 `producer=ridethewind.knowledge` 与 Wiki、搜索判定、发布事件共用 DataCenter 的连续 offset。本包使用自己的 `btw-warehouse-wiki-quality` consumer 与 PG 游标，完整保留每条 DataCenter EventSpec 的 JCS、输入哈希和技术收据；非质量事件显式标记 `technical_skip`，不会计作人审 Fact。未知 `knowledge.wiki.quality.*` 版本一律拒绝，不跳过。
+RTW Knowledge 的 `producer=ridethewind.knowledge` 与 Wiki、搜索判定、发布事件共用 DataCenter 的连续 offset。本包使用自己的 `btw-warehouse-wiki-quality` consumer 与 PG 游标，完整保留每条 DataCenter EventSpec 的 JCS、输入哈希和技术收据；非质量事件显式标记 `technical_skip`，不会计作人审 Fact。未知 `knowledge.wiki.quality.*` 版本一律拒绝。将来的完整事实目录事件若属 `knowledge.wiki.fact-set.*` 或 `knowledge.wiki.fact-catalog.*`，在RTW生产者/数仓消费者冻结一致的类型与原Event读口前也阻断整个批次，不能跳过目录后把零散评阅冒作完整标签。
 
 RTW 开发源 `feat/wiki-quality-human-judgment-20260916@6865022` 已固定 `knowledge.wiki.quality.judged.v1` 的九键外层 Event、三十二键单 Fact payload、原 Event 不含末尾 LF 的 SHA、RFC 8785 JCS SHA 与 Worker 私有 GET；`V1Verifier` 按该源 Golden 精确核缺漏/重复字段、版本、FactID、原引文 SHA 和自身 byte span、AI/人工修订、0–3/undetermined、来源撤回和历史重判。RTW 私有 GET 还按其不可变 Source/Wiki 对象复核当时引用。接纳时必须同时配置原字节 Authority 与正式 Verifier：先核 RTW 原 byte SHA，再核 RTW/DC 整 Event JCS 和 DC input hash，最后验 payload，才能写 `quality_verified`；缺席时整批在 PG 与 DC ACK 前拒绝。测试夹具 `syntheticVerifier` 仅证明事务行为，不能替代 RTW 真实评阅业务源。
 
