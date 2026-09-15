@@ -1,6 +1,6 @@
 # RTW 签发的 BTW 搜索 API
 
-`go run ./cmd/api` 是 `/v1/search/summary` 和 `/v1/search/tools/search` 的正式进程入口，目前**仅允许隔离环境中的 `local-exact` + `fast/low`**。它使用 RTW 的签名范围、当前人工发布状态、同版原文/耐久引用/已接纳答案 HTTP 合同，使用 DataCenter 的 typed representation API 为本地三路 exact 索引编码查询；有证据时总结入口由显式配置的 OpenAI 兼容模型经 tRPC-Agent-Go v1.8.1 单根 Graph/Runner 总结，Tools 入口只返回证据包、耐久引用收据和本次用量。非 `fast/low` Tools 请求明确返回 503。
+`go run ./cmd/api` 是 `/v1/search/summary` 和 `/v1/search/tools/search` 的正式进程入口，仅在隔离环境使用 `local-exact`。默认产品档位为 `fast/low`；策略文件显式配置 `fast_medium` 后，Summary 可在本机运行 `fast/medium` 候选。Tools 的 `fast/medium` 候选还需独立启用开关，未启用或缺策略时返回 503。它使用 RTW 的签名范围、当前人工发布状态、同版原文/耐久引用/已接纳答案 HTTP 合同，使用 DataCenter 的 typed representation API 为本地三路 exact 索引编码查询；有证据时总结入口由显式配置的 OpenAI 兼容模型经 tRPC-Agent-Go v1.8.1 单根 Graph/Runner 总结，Tools 入口只返回证据包、耐久引用收据和本次用量。候选的跨服务验收见 [快搜中档 Tools 交接](FAST_MEDIUM_TOOLS_ACCEPTANCE.md)。
 
 进程缺任何必填项或配置文件非法时退出，既不会启动监听，也不会提供测试模型/假索引。`GET /livez` 只表明进程存活；单独回环地址的 `GET /metrics` 暴露统一 OTel/Prometheus 指标。依赖的实际可用性在请求执行中检测，`/livez` 不证明 DC/RTW/模型、索引或 Collector 可用。SIGINT/SIGTERM 后先停止 HTTP，再关闭 Root Runner 与 telemetry。服务仅监听显式回环 IP；正式远程流量应由受控 RTW 代理在同机转发，当前不提供公网部署模式。
 
@@ -16,7 +16,8 @@
 | `BTW_SEARCH_MODEL_URL`, `BTW_SEARCH_MODEL_KEY`, `BTW_SEARCH_MODEL_NAME` | 真实 OpenAI 兼容模型 URL、令牌和固定模型名；建议 URL 指向 DC 网关的 `/v1` |
 | `BTW_ARTIFACT_DIR` | 已有本地内容寻址索引工件目录，与构建 worker 共享；本进程绝不构建/发布索引 |
 | `BTW_SEARCH_INDEX_FILE` | 与 `cmd/worker` 的三路 `indexSettings` 相同的严格 JSON：`dense`、`sparse`、`multivector`；document/query 配置需与已发布工件一致 |
-| `BTW_SEARCH_POLICY_FILE` | 只含 `version` 与 `fast_low` 的严格 JSON，示例如下 |
+| `BTW_SEARCH_POLICY_FILE` | 必含 `version` 与 `fast_low`，可增加版本独立、严格字面键的 `fast_medium` 对象；下方是低档示例 |
+| `BTW_SEARCH_FAST_MEDIUM_TOOLS` | 可不设置，默认关闭；仅字面量 `enabled` 且策略有显式 `fast_medium` 时放行 `fast/medium/tools` 本机候选 |
 | `BTW_SEARCH_MAX_QUOTE_RUNES` | 单次可交付引用的总原文字符预算，1–4096 |
 | `BTW_SEARCH_HTTP_TIMEOUT` | RTW/DC 调用超时，1–95 秒；搜索本身另受 policy `wall_time` 控制 |
 | `BTW_OTLP_TRACES_URL` | OTLP HTTP traces 完整 URL，例如 `http://127.0.0.1:4318/v1/traces` |
@@ -37,4 +38,4 @@
 }
 ```
 
-`fast/low` 只按原问题做一批固定查询。总结入口保持原有签发降级合同；Tools 入口在本模式只接纳显式 `fast/low`。Tools HTTP 请求由 RTW 持久父操作签发，BTW 验单值 `X-Sea-Search-Tools-Scope`、规范 body/hash、有效期与原始快照 hash 后才进入原生 Graph/Runner；返回裸 `ToolSearchResult`，不返回模型总结或进程内父预算。RTW PG 负责累计扣减和回查。本模式不承诺详搜、多轮规划、重排、高智能效果或公开 SSE。索引构建/发布的目录和权限保持在 Worker/RTW；进程只读取已有工件，只有 RTW 当前发布中仍有效的修订可形成引用。RTW/模型/Collector 的跨进程验收及生产 Milvus/对象存储仍需单独完成，见 [验收记录](ACCEPTANCE.md)。
+`fast/low` 只按原问题做一批固定查询。显式中档 Tools 在原生 Graph 中先执行一次无 Tool 规划，服务端校验一至两条新查询后仍只做一个三路批次，RTW 接纳同版引用后返回裸 `ToolSearchResult`；搜索 Tool 不生成最终总结或进程内父预算。Tools HTTP 请求由 RTW 持久父操作签发，BTW 验单值 `X-Sea-Search-Tools-Scope`、规范 body/hash、有效期与原始快照 hash 后才进入原生 Graph/Runner。RTW PG 负责累计扣减和回查。本模式不承诺详搜、多轮规划、重排、高智能效果或公开 SSE。索引构建/发布的目录和权限保持在 Worker/RTW；进程只读取已有工件，只有 RTW 当前发布中仍有效的修订可形成引用。RTW/模型/Collector 的跨进程验收及生产 Milvus/对象存储仍需单独完成，见 [验收记录](ACCEPTANCE.md)。
