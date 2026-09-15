@@ -286,6 +286,14 @@ func (s *Store) ReconcilePending(ctx context.Context, subject SubjectRef) (count
 	if !subject.valid() {
 		return 0, ErrInvalid
 	}
+	var v2 SubjectRefV2
+	if s.v2Candidate {
+		var err error
+		v2, err = subject.v2Projection()
+		if err != nil {
+			return 0, err
+		}
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -299,6 +307,11 @@ func (s *Store) ReconcilePending(ctx context.Context, subject SubjectRef) (count
 	}
 	if err != nil {
 		return 0, err
+	}
+	if s.v2Candidate {
+		if err := insertV2Projection(ctx, tx, subject, v2); err != nil {
+			return 0, dbErr(err)
+		}
 	}
 	rows, err := tx.Query(ctx, `SELECT e.event_body,e.normalized_hash FROM usermodel_events e
 		JOIN usermodel_events p ON p.authority_id=e.authority_id AND p.tenant_id=e.tenant_id AND p.subject_id=e.subject_id

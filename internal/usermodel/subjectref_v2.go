@@ -108,6 +108,19 @@ func (s *Store) beginV2(ctx context.Context, event string, v2 SubjectRefV2) (con
 }
 
 func insertV2Projection(ctx context.Context, tx pgx.Tx, old SubjectRef, v2 SubjectRefV2) error {
+	// Append, binding, recovery and explicit backfill all acquire the parent
+	// subject lock before the sidecar uniqueness/FK locks. A reversed order
+	// can deadlock against an Append already holding the parent FOR UPDATE.
+	var stateVersion int64
+	err := tx.QueryRow(ctx, `SELECT state_version FROM usermodel_subject_state
+		WHERE authority_id=$1 AND tenant_id=$2 AND subject_id=$3 FOR UPDATE`,
+		old.AuthorityID, old.TenantID, old.SubjectID).Scan(&stateVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
 	command, err := tx.Exec(ctx, `INSERT INTO usermodel_subjectref_v2_projection
 		(legacy_authority_id,legacy_tenant_id,legacy_subject_id,issuer,subject_id)
 		SELECT $1,$2,$3,$4,$5 FROM usermodel_subject_state

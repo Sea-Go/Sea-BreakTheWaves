@@ -494,6 +494,9 @@ func (s *Store) ParkUnmapped(ctx context.Context, ref UnmappedRef, input Event) 
 		input.Subject.AuthorityID != ref.AuthorityID || input.Subject.TenantID != ref.TenantID {
 		return Receipt{}, ErrInvalid
 	}
+	if s.v2Candidate && (ref.AuthorityID != subjectRefV2Issuer || ref.TenantID != subjectRefV1Slot) {
+		return Receipt{}, ErrInvalid
+	}
 	_, hash, body, err := normalized(input, false)
 	if err != nil {
 		return Receipt{}, err
@@ -535,6 +538,14 @@ func (s *Store) BindUnmapped(ctx context.Context, ref UnmappedRef, key EventKey,
 	defer func() { finish(ctx, stage, err, receipt.Replay, receipt.Status) }()
 	if !ref.valid() || !key.valid() || !subject.valid() || subject.AuthorityID != ref.AuthorityID || subject.TenantID != ref.TenantID {
 		return Receipt{}, ErrInvalid
+	}
+	var v2 SubjectRefV2
+	if s.v2Candidate {
+		var err error
+		v2, err = subject.v2Projection()
+		if err != nil {
+			return Receipt{}, err
+		}
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -590,6 +601,11 @@ func (s *Store) BindUnmapped(ctx context.Context, ref UnmappedRef, key EventKey,
 	} else {
 		receipt = Receipt{Subject: subject, EventKey: key, NormalizedHash: hash, Status: *boundStatus, StateVersion: *boundVersion, Replay: true}
 	}
+	if s.v2Candidate {
+		if err := insertV2Projection(ctx, tx, subject, v2); err != nil {
+			return Receipt{}, dbErr(err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Receipt{}, err
 	}
@@ -607,6 +623,14 @@ func (s *Store) LinkImpression(ctx context.Context, subject SubjectRef, key Even
 	if !subject.valid() || !key.valid() || !token.MatchString(impressionID) || !token.MatchString(evidenceRef) {
 		return 0, ErrInvalid
 	}
+	var v2 SubjectRefV2
+	if s.v2Candidate {
+		var err error
+		v2, err = subject.v2Projection()
+		if err != nil {
+			return 0, err
+		}
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -619,6 +643,11 @@ func (s *Store) LinkImpression(ctx context.Context, subject SubjectRef, key Even
 	}
 	if err != nil {
 		return 0, err
+	}
+	if s.v2Candidate {
+		if err := insertV2Projection(ctx, tx, subject, v2); err != nil {
+			return 0, dbErr(err)
+		}
 	}
 	var kind, status, action string
 	var behaviorBody []byte
