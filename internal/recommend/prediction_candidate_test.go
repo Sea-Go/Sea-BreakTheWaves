@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/prediction"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 )
@@ -37,10 +39,49 @@ func (e *predictionTestExporter) snapshot() []sdktrace.ReadOnlySpan {
 }
 
 type predictionFixtureCaller struct {
-	mu           sync.Mutex
-	calls        map[string]int
-	unknownFirst bool
-	mutate       func(*prediction.Response)
+	mu             sync.Mutex
+	calls          map[string]int
+	unknownFirst   bool
+	inflightSecond bool
+	mutate         func(*prediction.Response)
+}
+
+type predictionPendingCaller struct {
+	mode    string
+	entered chan struct{}
+	calls   int
+}
+
+type predictionResumeCaller struct {
+	mu      sync.Mutex
+	seen    map[string]int
+	fixture *predictionFixtureCaller
+}
+
+func (c *predictionResumeCaller) Predict(ctx context.Context, request prediction.Request, key string) (datacenter.PredictionResult, error) {
+	c.mu.Lock()
+	if c.seen == nil {
+		c.seen = map[string]int{}
+	}
+	c.seen[key]++
+	attempt := c.seen[key]
+	c.mu.Unlock()
+	if request.Task == prediction.UserTower && attempt <= 3 {
+		return datacenter.PredictionResult{}, datacenter.ErrPredictionInFlight
+	}
+	return c.fixture.Predict(ctx, request, key)
+}
+
+func (c *predictionPendingCaller) Predict(ctx context.Context, _ prediction.Request, _ string) (datacenter.PredictionResult, error) {
+	c.calls++
+	if c.entered != nil && c.calls == 1 {
+		close(c.entered)
+	}
+	if c.mode == "cancel" {
+		<-ctx.Done()
+		return datacenter.PredictionResult{}, ctx.Err()
+	}
+	return datacenter.PredictionResult{}, datacenter.ErrPredictionInFlight
 }
 
 func (c *predictionFixtureCaller) Predict(_ context.Context, request prediction.Request,
@@ -54,6 +95,9 @@ func (c *predictionFixtureCaller) Predict(_ context.Context, request prediction.
 	c.mu.Unlock()
 	if c.unknownFirst && strings.HasSuffix(key, ".user") && attempt == 1 {
 		return datacenter.PredictionResult{}, datacenter.ErrPredictionOutcomeUnknown
+	}
+	if c.inflightSecond && strings.HasSuffix(key, ".user") && attempt == 2 {
+		return datacenter.PredictionResult{}, datacenter.ErrPredictionInFlight
 	}
 	input := request.Input[0]
 	output := prediction.Output{ID: input.ID}
@@ -136,7 +180,7 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 	if err := observed.InstallGlobals(); err != nil {
 		t.Fatal(err)
 	}
-	caller := &predictionFixtureCaller{unknownFirst: true}
+	caller := &predictionFixtureCaller{unknownFirst: true, inflightSecond: true}
 	useCase, err := NewPredictionCandidateUseCase(predictionCandidateTestConfig(), caller, observed)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +191,7 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 		direct.BusinessActivation != "none" || direct.Features.Source != "synthetic_typed_fixture" {
 		t.Fatalf("default-off typed candidate=%+v err=%v", direct, err)
 	}
-	if caller.count(directRequest.LogicalCall+".user") != 2 || caller.count(directRequest.LogicalCall+".item") != 1 ||
+	if caller.count(directRequest.LogicalCall+".user") != 3 || caller.count(directRequest.LogicalCall+".item") != 1 ||
 		caller.count(directRequest.LogicalCall+".ranker") != 1 {
 		t.Fatalf("logical call recovery changed keys: %+v", caller.calls)
 	}
@@ -189,6 +233,100 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 			}
 		})
 	}
+
+	pendingCaller := &predictionPendingCaller{mode: "inflight"}
+	pendingCase, err := NewPredictionCandidateUseCase(predictionCandidateTestConfig(), pendingCaller, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingSessions := inmemory.NewSessionService()
+	pendingGraph, err := NewPredictionGraphRuntime("recommend-prediction-pending", pendingCase, pendingSessions, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingCtx, pendingParent := observed.Tracer().Start(context.Background(), "prediction.pending.root")
+	pendingTrace := pendingParent.SpanContext().TraceID()
+	pending, pendingErr := pendingGraph.Run(pendingCtx, PredictionGraphRequest{
+		Candidate: predictionCandidateTestRequest("prediction-pending-0001"), SessionID: "prediction-pending-session",
+		RunID: "prediction-pending-run"})
+	pendingParent.End()
+	if !errors.Is(pendingErr, datacenter.ErrPredictionInFlight) || pending.ID != "" || pendingCaller.calls != 3 {
+		t.Fatalf("persistent DC lease became candidate: %+v err=%v attempts=%d", pending, pendingErr, pendingCaller.calls)
+	}
+	if err := pendingGraph.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := pendingSessions.Close(); err != nil {
+		t.Error(err)
+	}
+	resumeCaller := &predictionResumeCaller{fixture: &predictionFixtureCaller{}}
+	resumeCase, err := NewPredictionCandidateUseCase(predictionCandidateTestConfig(), resumeCaller, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumeSessions := inmemory.NewSessionService()
+	resumeGraph, err := NewPredictionGraphRuntime("recommend-prediction-resume", resumeCase, resumeSessions, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedRequest := predictionCandidateTestRequest("prediction-caller-owned-0001")
+	first, firstErr := resumeGraph.Run(context.Background(), PredictionGraphRequest{Candidate: ownedRequest,
+		SessionID: "prediction-caller-owned-first", RunID: "prediction-caller-owned-run-1"})
+	if !errors.Is(firstErr, datacenter.ErrPredictionInFlight) || first.ID != "" {
+		t.Fatalf("first caller-owned run published active lease: %+v %v", first, firstErr)
+	}
+	second, secondErr := resumeGraph.Run(context.Background(), PredictionGraphRequest{Candidate: ownedRequest,
+		SessionID: "prediction-caller-owned-second", RunID: "prediction-caller-owned-run-2"})
+	if secondErr != nil || !validPredictionCandidate(second) || second.BusinessActivation != "none" ||
+		resumeCaller.seen[ownedRequest.LogicalCall+".user"] != 4 ||
+		resumeCaller.seen[ownedRequest.LogicalCall+".item"] != 1 ||
+		resumeCaller.seen[ownedRequest.LogicalCall+".ranker"] != 1 {
+		t.Fatalf("caller-owned same-key Graph resume failed: %+v seen=%v err=%v", second, resumeCaller.seen, secondErr)
+	}
+	if err := resumeGraph.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := resumeSessions.Close(); err != nil {
+		t.Error(err)
+	}
+
+	cancelCaller := &predictionPendingCaller{mode: "cancel", entered: make(chan struct{})}
+	cancelCase, err := NewPredictionCandidateUseCase(predictionCandidateTestConfig(), cancelCaller, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelSessions := inmemory.NewSessionService()
+	cancelGraph, err := NewPredictionGraphRuntime("recommend-prediction-cancel", cancelCase, cancelSessions, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelCtx, cancelRun := context.WithCancel(context.Background())
+	cancelCtx, cancelParent := observed.Tracer().Start(cancelCtx, "prediction.cancel.root")
+	cancelTrace := cancelParent.SpanContext().TraceID()
+	cancelledDone := make(chan error, 1)
+	go func() {
+		_, err := cancelGraph.Run(cancelCtx, PredictionGraphRequest{
+			Candidate: predictionCandidateTestRequest("prediction-cancel-0001"), SessionID: "prediction-cancel-session",
+			RunID: "prediction-cancel-run"})
+		cancelledDone <- err
+	}()
+	select {
+	case <-cancelCaller.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel test did not enter Graph prediction node")
+	}
+	cancelRun()
+	if cancelErr := <-cancelledDone; !errors.Is(cancelErr, context.Canceled) {
+		t.Fatalf("cancelled Graph run did not preserve cancellation: %v", cancelErr)
+	}
+	cancelParent.End()
+	if err := cancelGraph.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := cancelSessions.Close(); err != nil {
+		t.Error(err)
+	}
+
 	metrics := httptest.NewRecorder()
 	observed.MetricsHandler().ServeHTTP(metrics, httptest.NewRequest("GET", "/metrics", nil))
 	if !strings.Contains(metrics.Body.String(), "trpc_agent_go_agent_") ||
@@ -199,9 +337,35 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	spanNames := map[string]bool{}
+	nativeFailure := map[string]bool{"pending_function": false, "cancel_function": false,
+		"pending_agent": false, "cancel_agent": false}
 	for _, span := range exporter.snapshot() {
 		spanNames[span.Name()] = true
+		if span.InstrumentationScope().Name != "trpc.agent.go" || span.Status().Code != codes.Error {
+			continue
+		}
+		kind := ""
+		switch span.Name() {
+		case "workflow execute_function_node build_prediction_candidate":
+			kind = "function"
+		case "invoke_agent recommend_prediction_candidate":
+			kind = "agent"
+		default:
+			continue
+		}
+		switch span.SpanContext().TraceID() {
+		case pendingTrace:
+			nativeFailure["pending_"+kind] = true
+		case cancelTrace:
+			nativeFailure["cancel_"+kind] = true
+		}
 	}
+	for name, observed := range nativeFailure {
+		if !observed {
+			t.Fatalf("native Graph span hid %s outcome: %v", name, nativeFailure)
+		}
+	}
+	t.Logf("native tRPC pending/cancel agent and function span statuses: %v", nativeFailure)
 	for _, name := range []string{"recommend.prediction_candidate", "recommend.prediction_call",
 		"runtime.run", "invoke_agent recommend_prediction_candidate",
 		"workflow execute_graph recommend_prediction_candidate",
@@ -210,6 +374,7 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 			t.Fatalf("missing prediction/tRPC span %q: %v", name, spanNames)
 		}
 	}
+	var pendingLog bool
 	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
 		var record map[string]any
 		if err := json.Unmarshal(line, &record); err != nil {
@@ -222,5 +387,13 @@ func TestPredictionCandidateDefaultsOffAndRunsThroughTRPCGraph(t *testing.T) {
 				}
 			}
 		}
+		if record["event"] == "recommend.prediction_call.finished" && record["outcome"] == "partial" &&
+			record["error_code"] == "DC_PREDICTION_INFLIGHT" && record["retryable"] == true &&
+			record["attempts"] == float64(3) {
+			pendingLog = true
+		}
+	}
+	if !pendingLog || !strings.Contains(metrics.Body.String(), `sea_btw_operations_total{component="recommend",outcome="partial"}`) {
+		t.Fatal("inflight Graph failed without a retryable partial observation")
 	}
 }
