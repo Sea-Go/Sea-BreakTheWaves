@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS warehouse_community.coverage_prefix (
   manifest_url text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (producer, generation),
-  UNIQUE (producer, manifest_sha256)
+  UNIQUE (producer, manifest_sha256),
+  CHECK (event_index_sha256 ~ '^[a-f0-9]{64}$'),
+  CHECK (batch_evidence_sha256 ~ '^[a-f0-9]{64}$'),
+  CHECK (manifest_sha256 ~ '^[a-f0-9]{64}$')
 );
 
 CREATE TABLE IF NOT EXISTS warehouse_community.coverage_subject (
@@ -24,5 +27,8 @@ CREATE TABLE IF NOT EXISTS warehouse_community.coverage_subject (
   receipt_sha256 char(64) NOT NULL,
   receipt_url text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (producer, prefix_manifest_sha256, issuer, subject_id)
+  PRIMARY KEY (producer, prefix_manifest_sha256, issuer, subject_id),
+  CHECK (prefix_manifest_sha256 ~ '^[a-f0-9]{64}$'),
+  CHECK (sparse_index_sha256 ~ '^[a-f0-9]{64}$'),
+  CHECK (receipt_sha256 ~ '^[a-f0-9]{64}$')
 );

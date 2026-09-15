@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -129,17 +130,22 @@ func (p *CoveragePublisher) Publish(ctx context.Context, through int64, generati
 	p.Logger.InfoContext(ctx, "community coverage publication started", "event", "warehouse.community.coverage.started",
 		"producer", p.Stream.Producer, "through_offset", through, "generation", generation)
 	defer func() {
-		outcome, code := "succeeded", ""
+		outcome, code, level := "succeeded", "", slog.LevelInfo
 		if resultErr != nil {
-			outcome, code = "failed", "COVERAGE_PUBLISH_FAILED"
+			outcome, code, level = "failed", "COVERAGE_PUBLISH_FAILED", slog.LevelError
 			if errors.Is(resultErr, ErrContract) || errors.Is(resultErr, ErrCoverageConflict) {
-				outcome, code = "rejected", "COVERAGE_CONTRACT_MISMATCH"
+				outcome, code, level = "rejected", "COVERAGE_CONTRACT_MISMATCH", slog.LevelWarn
 			}
 		}
-		p.Logger.InfoContext(ctx, "community coverage publication finished",
-			"event", "warehouse.community.coverage.finished", "outcome", outcome,
-			"duration_ms", float64(time.Since(started).Microseconds())/1000, "error_code", code,
-			"producer", p.Stream.Producer, "through_offset", through, "subject_count", len(output.Subjects))
+		attrs := []slog.Attr{slog.String("event", "warehouse.community.coverage.finished"), slog.String("outcome", outcome),
+			slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000),
+			slog.String("producer", p.Stream.Producer), slog.Int64("through_offset", through),
+			slog.Int("subject_count", len(output.Subjects))}
+		if resultErr != nil {
+			attrs = append(attrs, slog.String("error_code", code), slog.String("error_type", fmt.Sprintf("%T", resultErr)),
+				slog.String("error_message", resultErr.Error()))
+		}
+		p.Logger.LogAttrs(ctx, level, "community coverage publication finished", attrs...)
 	}()
 	rows, batches, err := p.readFrozen(ctx, through)
 	if err != nil {
