@@ -257,8 +257,9 @@ func (b *Bundle) Begin(ctx context.Context, component, event string, attrs ...sl
 var spanField = map[string]bool{
 	"request_id": true, "operation_id": true, "run_id": true, "session_id": true,
 	"job_id": true, "build_id": true, "module_id": true, "release_id": true,
-	"revision_id": true, "generation": true, "attempt_id": true,
-	"lease_epoch": true, "cancel_version": true, "configuration_id": true, "representation_contract_id": true,
+	"revision_id": true, "generation": true, "attempt_id": true, "search_id": true,
+	"publication_revision": true,
+	"lease_epoch":          true, "cancel_version": true, "configuration_id": true, "representation_contract_id": true,
 	"representation_space": true, "lane": true,
 }
 
@@ -278,6 +279,16 @@ func spanAttrs(attrs []slog.Attr) []attribute.KeyValue {
 		}
 	}
 	return result
+}
+
+// SetAttributes binds identifiers learned after a stage starts to the same
+// application span. Only the fixed spanField allowlist is accepted, so a
+// caller cannot accidentally attach query text, model bodies or credentials.
+func (s *Stage) SetAttributes(attrs ...slog.Attr) {
+	if s == nil || s.finished.Load() {
+		return
+	}
+	s.span.SetAttributes(spanAttrs(attrs)...)
 }
 
 func (s *Stage) End(ctx context.Context, outcome, errorCode string, cause error, attrs ...slog.Attr) {

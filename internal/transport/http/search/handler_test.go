@@ -293,19 +293,55 @@ func TestHTTPHandlerFrameworkRootAndPublicProjection(t *testing.T) {
 	if err := bundle.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	spans := make(map[string]sdktrace.ReadOnlySpan)
-	for _, span := range exporter.snapshot() {
-		spans[span.Name()] = span
+	allSpans := exporter.snapshot()
+	var appSpan sdktrace.ReadOnlySpan
+	for _, span := range allSpans {
+		if span.Name() != "search.http.summary" {
+			continue
+		}
+		for _, item := range span.Attributes() {
+			if item.Key == "search_id" && item.Value.AsString() == scope.SearchID {
+				appSpan = span
+			}
+		}
 	}
-	httpSpan, appSpan, runtimeSpan, agentSpan := spans["POST "+Route], spans["search.http.summary"],
-		spans["runtime.run"], spans["invoke_agent search_summary_root"]
+	var httpSpan, runtimeSpan, agentSpan sdktrace.ReadOnlySpan
+	if appSpan != nil {
+		for _, span := range allSpans {
+			if span.SpanContext().TraceID() != appSpan.SpanContext().TraceID() {
+				continue
+			}
+			switch span.Name() {
+			case "POST " + Route:
+				httpSpan = span
+			case "runtime.run":
+				runtimeSpan = span
+			case "invoke_agent search_summary_root":
+				agentSpan = span
+			}
+		}
+	}
 	if httpSpan == nil || appSpan == nil || runtimeSpan == nil || agentSpan == nil ||
 		appSpan.Parent().SpanID() != httpSpan.SpanContext().SpanID() ||
 		runtimeSpan.Parent().SpanID() != appSpan.SpanContext().SpanID() ||
 		agentSpan.Parent().SpanID() != runtimeSpan.SpanContext().SpanID() ||
 		agentSpan.InstrumentationScope().Name != "trpc.agent.go" ||
 		httpSpan.SpanContext().TraceID() != agentSpan.SpanContext().TraceID() {
-		t.Fatalf("HTTP→application→Runtime→framework Agent ancestry missing: %v", spans)
+		t.Fatalf("HTTP→application→Runtime→framework Agent ancestry missing: %v", allSpans)
+	}
+	attributes := map[string]any{}
+	for _, item := range appSpan.Attributes() {
+		attributes[string(item.Key)] = item.Value.AsInterface()
+	}
+	if attributes["search_id"] != scope.SearchID || attributes["operation_id"] != scope.AnswerID ||
+		attributes["release_id"] != scope.Snapshot.ReleaseID ||
+		attributes["generation"] != scope.Snapshot.Generation ||
+		attributes["publication_revision"] != scope.Snapshot.PublicationRevision {
+		t.Fatalf("signed scope missing from application span: %+v", attributes)
+	}
+	service, ok := agentSpan.Resource().Set().Value("service.name")
+	if !ok || service.AsString() != "btw-search-http-fixture" {
+		t.Fatalf("framework span service identity = %v, %t", service, ok)
 	}
 	if !strings.Contains(logs.String(), `"event":"search.http.summary.finished"`) ||
 		!strings.Contains(logs.String(), `"search_id":"`+scope.SearchID+`"`) ||
