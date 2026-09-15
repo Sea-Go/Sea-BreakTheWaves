@@ -219,11 +219,43 @@ func putFavoriteV2Object(t *testing.T, target string, body []byte) {
 	}
 }
 
+// Keep the frozen EventSpec/receipt at RTW's nanosecond precision while the
+// PostgreSQL timestamptz fields and official ExportODS retain microseconds.
+// This is still an isolated authority HTTP fixture, not a real RTW account.
+func favoriteV2NanosecondSource(t *testing.T, source *coverageFixture) {
+	t.Helper()
+	const eventTime = "2026-09-15T00:00:00.123456789Z"
+	const receivedAt = "2026-09-15T00:00:01.987654321Z"
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	item := &source.items[0]
+	var payload map[string]any
+	if err := json.Unmarshal(item.Event.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["event_time"], payload["available_at"] = eventTime, eventTime
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.Event.Payload = body
+	item.Event.OccurredAt = eventTime
+	canonical, err := coverageCanonical(item.Event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.InputHash = coverageHash(canonical)
+	receipt := source.receipts[item.Event.EventID]
+	receipt.InputHash, receipt.ReceivedAt = item.InputHash, receivedAt
+	source.receipts[item.Event.EventID] = receipt
+}
+
 func TestFavoriteSubjectRefV2StorageContinuousWritersAndFrozenArtifacts(t *testing.T) {
 	ctx := context.Background()
 	db := favoriteV2TestDB(t)
 	objects, objectAt := favoriteV2Objects(t)
 	source := newCoverageFixture()
+	favoriteV2NanosecondSource(t, source)
 	binder := favoriteV2Authority(t, source)
 	consumer := CoverageConsumer{DB: db, Source: source, Binder: binder, Limit: 128}
 	publisher := CoveragePublisher{DB: db, Source: source, Binder: binder, S3Prefix: objects.URL}
@@ -256,6 +288,12 @@ func TestFavoriteSubjectRefV2StorageContinuousWritersAndFrozenArtifacts(t *testi
 	oldODS, err := ExportODS(ctx, db)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(oldODS, []byte("2026-09-15T00:00:00.123456789Z")) ||
+		!bytes.Contains(oldODS, []byte("2026-09-15T00:00:00.123456Z")) ||
+		!bytes.Contains(oldODS, []byte("2026-09-15T00:00:01.987654321Z")) ||
+		!bytes.Contains(oldODS, []byte("2026-09-15T00:00:01.987654Z")) {
+		t.Fatal("official PG ExportODS did not preserve immutable nanos and projected microseconds")
 	}
 	oldManifest := objectAt(newURLPath(t, g3.ManifestURL))
 	oldSubjectReceipt := objectAt(newURLPath(t, s1.ReceiptURL))
