@@ -63,16 +63,16 @@ func TestNativeProjectionRejectsUnownedOrWrongEngineRuntimeBeforeSDK(t *testing.
 func TestNativeProjectionReceiptUsesFormalAPIPhysicalConfigKeys(t *testing.T) {
 	p := &realNativeProjector{runtime: realNativeRuntime{Endpoint: "127.0.0.1:19530",
 		EnginePackageSHA256: strings.Repeat("a", 64)},
-		setting: realNativeSettings{SchemaVersion: "sea.search.native-milvus.v1",
-			Engine: "lite", Namespace: "native_fixed",
+		setting: realNativeSettings{SchemaVersion: "sea.search.native-backends.v2",
+			Engine: "lite", Namespace: "native_fixed", SparseBackend: "frozen_ip_postings",
 			Dense:       realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64},
 			MultiVector: realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64}}}
 	receipt := p.Receipt()
 	var root map[string]json.RawMessage
-	if json.Unmarshal(receipt.Settings, &root) != nil || len(root) != 5 {
+	if json.Unmarshal(receipt.Settings, &root) != nil || len(root) != 6 {
 		t.Fatal("native projection produced a different formal API physical config root")
 	}
-	for _, key := range []string{"schema_version", "engine", "namespace", "dense", "multivector"} {
+	for _, key := range []string{"schema_version", "engine", "namespace", "sparse_backend", "dense", "multivector"} {
 		if len(root[key]) == 0 {
 			t.Fatalf("formal native config literal %s missing", key)
 		}

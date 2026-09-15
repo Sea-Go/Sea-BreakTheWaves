@@ -44,6 +44,7 @@ type realNativeSettings struct {
 	SchemaVersion string         `json:"schema_version"`
 	Engine        string         `json:"engine"`
 	Namespace     string         `json:"namespace"`
+	SparseBackend string         `json:"sparse_backend"`
 	Dense         realNativeHNSW `json:"dense"`
 	MultiVector   realNativeHNSW `json:"multivector"`
 }
@@ -108,10 +109,11 @@ func newRealNativeProjector(ctx context.Context, runtimePath, buildID string,
 	if err != nil || objects == nil || encoder == nil || buildID == "" {
 		return nil, errors.New("test native projection requires the fixed runtime, build and typed DC gate")
 	}
-	setting := realNativeSettings{SchemaVersion: "sea.search.native-milvus.v1",
+	setting := realNativeSettings{SchemaVersion: "sea.search.native-backends.v2",
 		Engine: "lite", Namespace: "native_" + artifacts.Hash([]byte(buildID))[:12],
-		Dense:       realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64},
-		MultiVector: realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64}}
+		SparseBackend: "frozen_ip_postings",
+		Dense:         realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64},
+		MultiVector:   realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64}}
 	client, err := milvusclient.New(ctx, &milvusclient.ClientConfig{Address: runtime.Endpoint})
 	if err != nil {
 		return nil, fmt.Errorf("connect isolated native Lite: %w", err)
@@ -125,8 +127,10 @@ func newRealNativeProjector(ctx context.Context, runtimePath, buildID string,
 		closeClient()
 		return nil, err
 	}
-	sLane, err := sparse.NewMilvus(objects, encoder, sConfig, client,
-		sparse.MilvusConfig{Namespace: setting.Namespace, Engine: "native-lite"})
+	// The frozen Sparse shard already persists weighted postings. Lite 3.2.1
+	// ranks SPARSE_INVERTED_INDEX with BM25, so it cannot own this learned-IP
+	// candidate lane even when the official Milvus server can.
+	sLane, err := sparse.New(objects, encoder, sConfig)
 	if err != nil {
 		closeClient()
 		return nil, err
