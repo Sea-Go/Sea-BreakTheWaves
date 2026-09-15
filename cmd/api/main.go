@@ -220,7 +220,14 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	toolsBoundary, err = searchdomain.NewToolRunBoundary(delivery, bundle)
+	if cfg.FastMediumTools {
+		plannerModel := gatewayModel{name: cfg.ModelName, url: cfg.ModelURL, key: cfg.ModelKey, stage: "plan"}
+		toolsBoundary, err = searchdomain.NewToolRunBoundaryWithFastMedium(delivery, plannerModel, bundle,
+			searchdomain.FastMediumModelLimits{MaxOutputTokens: cfg.FastMedium.PlannerMaxOutputTokens,
+				WallTime: cfg.FastMedium.WallTime})
+	} else {
+		toolsBoundary, err = searchdomain.NewToolRunBoundary(delivery, bundle)
+	}
 	if err != nil {
 		return fmt.Errorf("construct tool search graph: %w", err)
 	}
@@ -228,7 +235,12 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	toolsHandler, err := searchhttp.NewToolsHandler(toolsResolver, toolsBoundary, bundle)
+	var toolsHandler http.Handler
+	if cfg.FastMediumTools {
+		toolsHandler, err = searchhttp.NewToolsHandlerWithFastMedium(toolsResolver, toolsBoundary, bundle)
+	} else {
+		toolsHandler, err = searchhttp.NewToolsHandler(toolsResolver, toolsBoundary, bundle)
+	}
 	if err != nil {
 		return err
 	}
@@ -258,11 +270,15 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if cfg.FastMedium != nil {
 		supportedProfile = "fast.low,fast.medium.summary"
 	}
+	toolsSupportedProfile := "fast.low"
+	if cfg.FastMediumTools {
+		toolsSupportedProfile = "fast.low,fast.medium.tools"
+	}
 	logger.InfoContext(ctx, "search API started", "event", "search.api.started", "outcome", "succeeded",
 		"api_addr", apiListener.Addr().String(), "metrics_addr", metricsListener.Addr().String(),
 		"backend", "local-exact", "supported_profile", supportedProfile,
 		"representation_max_in_flight", cfg.RepresentationMaxInFlight,
-		"tools_supported_profile", "fast.low",
+		"tools_supported_profile", toolsSupportedProfile,
 		"tools_route", searchhttp.ToolsRoute)
 	select {
 	case <-ctx.Done():

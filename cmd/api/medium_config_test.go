@@ -57,3 +57,29 @@ func TestFastMediumPolicyIsOptionalVersionedAndStrictlyBounded(t *testing.T) {
 		})
 	}
 }
+
+func TestFastMediumToolsRequiresAnIndependentExplicitSwitch(t *testing.T) {
+	values := testEnv(t)
+	if cfg, err := loadConfig(envMap(values)); err != nil || cfg.FastMediumTools {
+		t.Fatalf("low-only default enabled medium Tools: %+v %v", cfg, err)
+	}
+	values["BTW_SEARCH_FAST_MEDIUM_TOOLS"] = "enabled"
+	if _, err := loadConfig(envMap(values)); err == nil {
+		t.Fatal("medium Tools switch without a policy was accepted")
+	}
+	policy := `{"version":"local-fast-low-v1","fast_low":{"max_batches":1,"max_subqueries":1,"top_k_per_lane":8,"max_evidence":4,"wall_time":"5s"},"fast_medium":{"version":"local-fast-medium-v1","max_batches":1,"max_subqueries":3,"top_k_per_lane":8,"max_evidence":6,"wall_time":"15s","planner_max_output_tokens":128}}`
+	if err := os.WriteFile(values["BTW_SEARCH_POLICY_FILE"], []byte(policy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := loadConfig(envMap(values)); err != nil || !cfg.FastMediumTools || cfg.FastMedium == nil {
+		t.Fatalf("explicit medium Tools policy/switch rejected: %+v %v", cfg, err)
+	}
+	values["BTW_SEARCH_FAST_MEDIUM_TOOLS"] = ""
+	if cfg, err := loadConfig(envMap(values)); err != nil || cfg.FastMediumTools || cfg.FastMedium == nil {
+		t.Fatalf("medium Summary policy silently enabled Tools: %+v %v", cfg, err)
+	}
+	values["BTW_SEARCH_FAST_MEDIUM_TOOLS"] = "true"
+	if _, err := loadConfig(envMap(values)); err == nil {
+		t.Fatal("ambiguous medium Tools switch was accepted")
+	}
+}

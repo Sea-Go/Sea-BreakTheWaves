@@ -37,6 +37,7 @@ type config struct {
 	Indexes                          indexSettings
 	Policy                           searchdomain.Policy
 	FastMedium                       *fastMediumConfig
+	FastMediumTools                  bool
 	MaxQuoteRunes                    int
 	RepresentationMaxInFlight        int
 }
@@ -169,6 +170,17 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		c.FastMedium = &fastMediumConfig{Version: medium.Version, WallTime: mediumWall,
 			PlannerMaxOutputTokens: medium.PlannerMaxOutputTokens}
+	}
+	switch getenv("BTW_SEARCH_FAST_MEDIUM_TOOLS") {
+	case "":
+		// Existing deployments stay fast/low Tools even with a medium Summary policy.
+	case "enabled":
+		if c.FastMedium == nil {
+			return c, errors.New("BTW_SEARCH_FAST_MEDIUM_TOOLS requires an explicit fast_medium policy")
+		}
+		c.FastMediumTools = true
+	default:
+		return c, errors.New("BTW_SEARCH_FAST_MEDIUM_TOOLS must be unset or enabled")
 	}
 	return c, nil
 }
