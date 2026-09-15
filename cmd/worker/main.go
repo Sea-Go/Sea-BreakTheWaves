@@ -41,6 +41,8 @@ func run() int {
 		event := "content.worker.configuration_failed"
 		if isFactJobType(cfg.JobType) {
 			event = "usermodel.worker.configuration_failed"
+		} else if cfg.JobType == app.WikiCompileJobType {
+			event = "content.wiki_compile.configuration_failed"
 		}
 		bootstrapLogger(os.Stderr, cfg).ErrorContext(ctx, "worker configuration rejected",
 			"event", event, "outcome", "failed", "error_code", "WORKER_CONFIG_INVALID",
@@ -50,6 +52,8 @@ func run() int {
 	serveMode := serve
 	if isFactJobType(cfg.JobType) {
 		serveMode = serveFactConsumer
+	} else if cfg.JobType == app.WikiCompileJobType {
+		serveMode = serveWikiCompile
 	}
 	if err := serveMode(ctx, cfg, os.Stderr); err != nil {
 		return 1
@@ -92,6 +96,8 @@ func workerService(cfg config) string {
 		return "sea-btw-comment-fact-worker"
 	case likeFactJobType:
 		return "sea-btw-like-fact-worker"
+	case app.WikiCompileJobType:
+		return "sea-btw-wiki-compile-worker"
 	}
 	if cfg.JobType == app.IndexJobType {
 		return "sea-btw-index-worker"
