@@ -52,6 +52,8 @@ flowchart LR
 
 评论和点赞的 offset 1 是两个不同来源位置，不能拼成一条 `1..6` 序列，也不能用一个 producer 的主体切片证明另一个 producer 的覆盖。
 
+当前Publisher只为该prefix内实际出现的UID产生主体receipt；任意已登录但**零事件**UID的空切片尚未由本合同证明，不能把“没查到”直接当作全量零事实。
+
 ## DWD 合同
 
 `warehouse/community/models/dwd_community_transition.sql` 输出 `source_version`、`operation`、`transition_type`、old/new state、前驱、主体、目标和三种来源时间。此次真实数据的 transition 依次为：
@@ -60,6 +62,8 @@ flowchart LR
 - like：`target_like`、`target_unlike`。
 
 四个 dbt data test 检查来源精度、支持的 transition、前驱一致性和 `(producer,source_offset)` 唯一性。DWD schema 明确不存在身份额外分区、impression、label、sample 或 content revision 列。
+
+RTW目标互动源也可能记录`dislike/undislike`。这两类行可由ODS原样接纳，但当前DWD只筛`like/unlike`，还没有为被排除的合法源行生成独立异常/排除清单；真实六行验收没有这两类输入。下游不能把它们当作已被DWD覆盖，更不能把点踩解释成曝光后的未点击负例。
 
 ## 2026-09-15 同次本机验收
 
@@ -79,7 +83,7 @@ flowchart LR
 
 真实链由 RTW 业务事务产生六条事实，经正式 dispatcher 到 DC，再由两个 warehouse consumer 写 PG。测试故意执行错 authority、错 hash、错前驱、缺 offset 四种拒收，并让两个 producer 的首次 ACK 响应丢失后重启；随后发布 comment `1..4`、like `1..2` 两份 prefix 和三份主体 receipt。真实 ClickHouse/dbt 执行结果为 `PASS=5`，ODS、DWD 和全部覆盖对象均写入同次 SeaweedFS 并按内容 hash 回读。
 
-本项状态为 `LOCAL_VERIFIED`。未验证真实 Kafka/Redis、长期常驻调度、线上数据库、生产对象存储、DWS 特征、样本、训练、模型效果或推荐激活。下游接手时必须分别绑定两个 prefix manifest，并把这些 transition 当作领域事实历史；任何更高层含义都需要新的、独立验收来源。
+本项功能子链为本机`INTEGRATED`，观测状态仅`LOCAL_VERIFIED/PARTIAL`：RTW与BTW应用阶段有逐行结构日志，但warehouse作业自己的Trace/指标、实际Collector及DataCenter下钻未联验。还未验证真实 Kafka/Redis、长期常驻调度、线上数据库、生产对象存储、零事件主体切片、被过滤互动清单、DWS 特征、样本、训练、模型效果或推荐激活。下游接手时必须分别绑定两个 prefix manifest，并把这些 transition 当作领域事实历史；任何更高层含义都需要新的、独立验收来源。
 
 运行示例：
 
