@@ -95,7 +95,8 @@ func TestRTWRealWikiQualitySource(t *testing.T) {
 	if err := Initialize(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, `TRUNCATE warehouse_wiki_quality.ods_event,
+	if _, err := db.Exec(ctx, `TRUNCATE warehouse_wiki_quality.ods_fact_set,
+ warehouse_wiki_quality.ods_event,
  warehouse_wiki_quality.consumer_cursor`); err != nil {
 		t.Fatal(err)
 	}

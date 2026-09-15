@@ -18,7 +18,7 @@ type FactSetAuthority interface {
 }
 
 type FactSetVerifier interface {
-	VerifyFactSetEvent(context.Context, eventing.Event, FactSetEventProof) (FactSetV1, error)
+	VerifyFactSetEvent(context.Context, eventing.Event, FactSetEventProof) error
 }
 
 // FactSetV1Verifier checks the fixed source payload. RTW's private GET has
@@ -26,11 +26,12 @@ type FactSetVerifier interface {
 type FactSetV1Verifier struct{}
 
 func (FactSetV1Verifier) VerifyFactSetEvent(ctx context.Context, event eventing.Event,
-	proof FactSetEventProof) (FactSetV1, error) {
+	proof FactSetEventProof) error {
 	if ctx == nil || ctx.Err() != nil {
-		return FactSetV1{}, ErrContract
+		return ErrContract
 	}
-	return ParseFactSetV1(event, proof.EventJSON, proof.FactSetJCSSHA256)
+	_, err := ParseFactSetV1(event, proof.EventJSON, proof.FactSetJCSSHA256)
+	return err
 }
 
 // verifyFactSetDC proves that the original RTW Event, the DC Event copy and
