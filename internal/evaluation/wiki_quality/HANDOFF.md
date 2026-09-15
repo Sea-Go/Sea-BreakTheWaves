@@ -20,7 +20,7 @@
 
 合成固定 Golden：双来源/五事实 AI Case JCS SHA=`6ceeda9bc97639684a9d2ea29a8f490130b9e209f8d3b3d08ad1ec54ff8e78a8`；同页人工新修订与 AI 组成的 Dataset Root SHA=`e995ec05366b6d910854a7d5f4ef0112e73822b85fc054f7b58fdacfa69efa2c`。这两个 SHA 只锁**合成合同字节**。五事实中四条必覆盖：已覆盖2、缺失1、冲突1、undetermined1，所需事实覆盖为 `2/4`；重复原文段落1，AI token夹具297输入+471输出=768总 token。人工版的 FactID 相同但 WikiRevisionID、新评阅version、等级和改稿原文均独立。测试还拒 CRLF byte shift、四空格丢失、漏引高等级、SourceRevision换版/撤回、标签不完整、人类权威/成本伪报、JCS篡改和重复 Dataset entry。
 
-固定独立分支验证：`GOMAXPROCS=2 go test -p 1 -mod=readonly -race -count=1 ./internal/evaluation/...` 三包顶层 0，日志 SHA=`dbef4d0ca79c223ab6f45195142cd63ab368ab8011e9d0c6e05e84f3fb1da9e6`；`go vet ./internal/evaluation/...` 顶层 0/空日志 SHA=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`；`go mod verify` 为 `all modules verified`。未用这轮测真实 RTW Event/PG、DC 模型或 CH/dbt。
+固定独立分支最终代码验证：`GOMAXPROCS=2 go test -p 1 -mod=readonly -race -count=1 ./internal/evaluation/...` 三包顶层 0，日志 SHA=`63a67e79175b9262d88fbd08dc690dd989435ddb956de1121f85a9ba12c8c1a4`；`go vet ./internal/evaluation/...` 顶层 0/空日志 SHA=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`；`go mod verify` 为 `all modules verified`。未用这轮测真实 RTW Event/PG、DC 模型或 CH/dbt。
 
 ## 下一 owner 和验收边界
 
