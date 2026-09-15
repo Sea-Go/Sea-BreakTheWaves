@@ -84,6 +84,24 @@ type signedToolsScope struct {
 	ExpiresAtUnix          int64                 `json:"expires_at_unix"`
 }
 
+// signedToolsScopeV2 changes only the signed audience and SubjectRef shape;
+// parent budget and snapshot contracts retain their existing versions.
+type signedToolsScopeV2 struct {
+	Audience               string          `json:"aud"`
+	Subject                signedSubjectV2 `json:"subject_ref"`
+	SessionID              string          `json:"session_id"`
+	OperationID            string          `json:"operation_id"`
+	BudgetRef              string          `json:"budget_ref"`
+	SearchID               string          `json:"search_id"`
+	SnapshotRef            string          `json:"snapshot_ref"`
+	Snapshot               json.RawMessage `json:"snapshot"`
+	AllowPartial           bool            `json:"allow_partial"`
+	AllowLowerIntelligence bool            `json:"allow_lower_intelligence"`
+	RequestHash            string          `json:"request_hash"`
+	IssuedAtUnix           int64           `json:"issued_at_unix"`
+	ExpiresAtUnix          int64           `json:"expires_at_unix"`
+}
+
 // The field order mirrors RTW's generated SearchSnapshot. Round-tripping this
 // shape rejects duplicate/missing/unknown nested fields before any Reader.
 type rtwSnapshotWire struct {
@@ -134,15 +152,38 @@ func (s *SignedToolsScopeResolver) ResolveTools(_ context.Context, request *http
 		return TrustedToolsScope{}, ErrScopeDenied
 	}
 	var payload signedToolsScope
-	if !strictJSON(payloadBytes, &payload) {
-		return TrustedToolsScope{}, ErrScopeDenied
-	}
-	canonical, err := json.Marshal(payload)
-	if err != nil || !bytes.Equal(canonical, payloadBytes) {
-		return TrustedToolsScope{}, ErrScopeDenied
+	switch signedScopeAudience(payloadBytes) {
+	case toolsScopeAudienceV2:
+		var wire signedToolsScopeV2
+		if !strictJSON(payloadBytes, &wire) {
+			return TrustedToolsScope{}, ErrScopeDenied
+		}
+		canonical, err := json.Marshal(wire)
+		if err != nil || !bytes.Equal(canonical, payloadBytes) {
+			return TrustedToolsScope{}, ErrScopeDenied
+		}
+		subject, ok := wire.Subject.legacySubject()
+		if !ok {
+			return TrustedToolsScope{}, ErrScopeDenied
+		}
+		payload = signedToolsScope{Audience: wire.Audience, Subject: subject,
+			SessionID: wire.SessionID, OperationID: wire.OperationID, BudgetRef: wire.BudgetRef,
+			SearchID: wire.SearchID, SnapshotRef: wire.SnapshotRef, Snapshot: wire.Snapshot,
+			AllowPartial: wire.AllowPartial, AllowLowerIntelligence: wire.AllowLowerIntelligence,
+			RequestHash: wire.RequestHash, IssuedAtUnix: wire.IssuedAtUnix, ExpiresAtUnix: wire.ExpiresAtUnix}
+	default:
+		// Keep the published v1 signed JSON and HMAC validation unchanged.
+		if !strictJSON(payloadBytes, &payload) {
+			return TrustedToolsScope{}, ErrScopeDenied
+		}
+		canonical, err := json.Marshal(payload)
+		if err != nil || !bytes.Equal(canonical, payloadBytes) {
+			return TrustedToolsScope{}, ErrScopeDenied
+		}
 	}
 	now := s.now().Unix()
-	if payload.Audience != toolsScopeAudience || payload.IssuedAtUnix > now+maxToolsClockSkew ||
+	if (payload.Audience != toolsScopeAudience && payload.Audience != toolsScopeAudienceV2) ||
+		payload.IssuedAtUnix > now+maxToolsClockSkew ||
 		payload.IssuedAtUnix < now-maxToolsTTLSeconds || payload.ExpiresAtUnix <= now ||
 		payload.ExpiresAtUnix <= payload.IssuedAtUnix ||
 		payload.ExpiresAtUnix-payload.IssuedAtUnix > maxToolsTTLSeconds ||
