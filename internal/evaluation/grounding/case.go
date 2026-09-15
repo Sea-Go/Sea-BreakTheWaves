@@ -18,6 +18,7 @@ import (
 
 const CaseSchema = "sea.search.answer-grounding-case.v1"
 const ReviewPolicy = "sea.search.answer-grounding-human-review.v1"
+const citationRefPrefix = "search-citations/sha256/"
 
 var ErrEvidence = errors.New("answer grounding source evidence mismatch")
 var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -88,6 +89,12 @@ type rtwReport struct {
 func Digest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
+}
+
+// citationRef is RTW's durable lookup identity. It is derived from the
+// search ID and is deliberately independent from the evidence-pack hash.
+func citationRef(searchID string) string {
+	return citationRefPrefix + Digest([]byte(searchID))
 }
 
 func readPrivate(path string, limit int64) ([]byte, error) {
@@ -198,8 +205,7 @@ func FreezeCase(usagePath, rtwPath, tracePath string) (Case, error) {
 		rtw.EvidenceID == "" || rtw.Quote == "" || Digest([]byte(rtw.Quote)) != rtw.QuoteHash ||
 		strings.TrimSpace(rtw.Answer) == "" || rtw.RTWAnswerRows != 1 ||
 		rtw.RTWAnswerCitationRows != 1 || rtw.RTWSearchCitationRows != 1 ||
-		!rtw.RTWProductHistoryPresent || !strings.HasPrefix(rtw.CitationReceiptRef, "search-citations/sha256/") ||
-		!hashPattern.MatchString(strings.TrimPrefix(rtw.CitationReceiptRef, "search-citations/sha256/")) {
+		!rtw.RTWProductHistoryPresent || rtw.CitationReceiptRef != citationRef(rtw.SearchID) {
 		return out, ErrEvidence
 	}
 	id, err := traceID(logRaw, usage.SearchID, usage.AnswerID)

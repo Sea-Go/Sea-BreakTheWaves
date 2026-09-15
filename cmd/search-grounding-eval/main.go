@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/evaluation/grounding"
 )
@@ -75,16 +78,24 @@ func freeze(usagePath, rtwPath, tracePath, outputDir string) error {
 	return writeNew(filepath.Join(outputDir, "review-template.json"), template)
 }
 
-func evaluate(casePath, reviewPath, trustPath, outputPath string) error {
+func readCase(casePath string) (grounding.Case, []byte, error) {
+	var value grounding.Case
 	caseRaw, err := readBounded(casePath, 1<<20, true)
 	if err != nil {
-		return err
+		return value, nil, err
 	}
-	var value grounding.Case
 	decoder := json.NewDecoder(bytes.NewReader(caseRaw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
-		return grounding.ErrEvidence
+		return grounding.Case{}, nil, grounding.ErrEvidence
+	}
+	return value, caseRaw, nil
+}
+
+func evaluate(casePath, reviewPath, trustPath, outputPath string) error {
+	value, caseRaw, err := readCase(casePath)
+	if err != nil {
+		return err
 	}
 	var reviewRaw []byte
 	var trust *grounding.Trust
@@ -113,16 +124,57 @@ func evaluate(casePath, reviewPath, trustPath, outputPath string) error {
 	return writeNew(outputPath, result)
 }
 
+func evaluateRTW(casePath, usagePath, rtwPath, tracePath, baseURL, tokenFile, outputPath string) error {
+	value, caseRaw, err := readCase(casePath)
+	if err != nil {
+		return err
+	}
+	// RTW PG cannot self-attest this run's model response or structured trace.
+	// Refreeze from the original private sources before consulting the Worker
+	// review/key registry, so a caller cannot substitute invented case fields.
+	refrozen, err := grounding.FreezeCase(usagePath, rtwPath, tracePath)
+	if err != nil {
+		return err
+	}
+	refrozenRaw, err := json.MarshalIndent(refrozen, "", "  ")
+	if err != nil {
+		return err
+	}
+	refrozenRaw = append(refrozenRaw, '\n')
+	if grounding.Digest(caseRaw) != grounding.Digest(refrozenRaw) ||
+		!bytes.Equal(caseRaw, refrozenRaw) {
+		return grounding.ErrEvidence
+	}
+	rawToken, err := readBounded(tokenFile, 4096, true)
+	if err != nil {
+		return err
+	}
+	worker, err := grounding.NewHTTPAuthority(baseURL, strings.TrimSpace(string(rawToken)))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	result, err := grounding.EvaluateFromRTW(ctx, value, caseRaw, worker)
+	if err != nil {
+		return err
+	}
+	return writeNew(outputPath, result)
+}
+
 func main() {
 	var mode, usagePath, rtwPath, tracePath, casePath, reviewPath, trustPath, outputPath, outputDir string
-	flag.StringVar(&mode, "mode", "", "freeze or evaluate")
+	var workerURL, tokenFile string
+	flag.StringVar(&mode, "mode", "", "freeze, evaluate, or evaluate-rtw")
 	flag.StringVar(&usagePath, "usage-report", "", "private DC/RTW exact usage receipt")
 	flag.StringVar(&rtwPath, "rtw-report", "", "private RTW accepted answer receipt")
 	flag.StringVar(&tracePath, "rtw-trace-log", "", "private RTW structured JSONL trace evidence")
 	flag.StringVar(&outputDir, "output-dir", "", "new private directory for case and review template")
 	flag.StringVar(&casePath, "case", "", "frozen grounding case")
 	flag.StringVar(&reviewPath, "review", "", "optional signed human review")
-	flag.StringVar(&trustPath, "trust", "", "RTW-admin-approved reviewer public key")
+	flag.StringVar(&trustPath, "trust", "", "self-supplied local fixture key; never proves human_admin authority")
+	flag.StringVar(&workerURL, "rtw-worker-url", "", "configured RTW Worker base URL; caller input does not prove service identity")
+	flag.StringVar(&tokenFile, "worker-token-file", "", "private configured RTW Worker bearer file")
 	flag.StringVar(&outputPath, "output", "", "new offline decision file")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -140,8 +192,16 @@ func main() {
 		} else {
 			err = evaluate(casePath, reviewPath, trustPath, outputPath)
 		}
+	case "evaluate-rtw":
+		if casePath == "" || usagePath == "" || rtwPath == "" || tracePath == "" ||
+			outputPath == "" || workerURL == "" || tokenFile == "" ||
+			reviewPath != "" || trustPath != "" {
+			err = errors.New("evaluate-rtw needs case, original usage/RTW/trace sources, Worker URL/token file and output; local review/trust are forbidden")
+		} else {
+			err = evaluateRTW(casePath, usagePath, rtwPath, tracePath, workerURL, tokenFile, outputPath)
+		}
 	default:
-		err = errors.New("mode must be freeze or evaluate")
+		err = errors.New("mode must be freeze, evaluate or evaluate-rtw")
 	}
 	if err != nil {
 		logger.Error("answer grounding acceptance failed", "mode", mode, "error", err)
