@@ -3,6 +3,8 @@
 -- No constructor applies this DDL and no old fact/event/outbox row is rewritten.
 -- Apply the whole file atomically with psql -X -v ON_ERROR_STOP=1
 -- --single-transaction -f 007_subjectref_v2_projection.sql (or one pgx Tx).
+-- Keep the same fixed search_path/schema used for 001..006; objects here are
+-- deliberately unqualified to match those existing explicit migrations.
 CREATE TABLE IF NOT EXISTS usermodel_subjectref_v2_projection (
     legacy_authority_id text NOT NULL,
     legacy_tenant_id text NOT NULL,
