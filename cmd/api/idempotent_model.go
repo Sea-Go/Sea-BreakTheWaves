@@ -17,9 +17,10 @@ import (
 // reuses the key while a distinct logical search gets a distinct key. The
 // framework's official OpenAI adapter remains the model implementation.
 type gatewayModel struct {
-	name string
-	url  string
-	key  string
+	name  string
+	url   string
+	key   string
+	stage string
 }
 
 func (m gatewayModel) Info() model.Info { return model.Info{Name: m.name} }
@@ -45,8 +46,23 @@ func (m gatewayModel) GenerateContent(ctx context.Context, request *model.Reques
 	if err != nil {
 		return nil, err
 	}
+	prefix := "btw-summary-"
+	if m.stage == "plan" {
+		keyInput, err = json.Marshal(struct {
+			Ref        searchdomain.ModelInvocationRef `json:"invocation"`
+			RequestSHA string                          `json:"request_sha256"`
+			Model      string                          `json:"model"`
+			Stage      string                          `json:"stage"`
+		}{invocation, hex.EncodeToString(requestSum[:]), m.name, "fast_medium_plan"})
+		if err != nil {
+			return nil, err
+		}
+		prefix = "btw-plan-"
+	} else if m.stage != "" && m.stage != "summary" {
+		return nil, errors.New("model stage unavailable")
+	}
 	sum := sha256.Sum256(keyInput)
-	idempotencyKey := "btw-summary-" + hex.EncodeToString(sum[:])
+	idempotencyKey := prefix + hex.EncodeToString(sum[:])
 	client := openai.New(m.name, openai.WithBaseURL(m.url), openai.WithAPIKey(m.key),
 		openai.WithHeaders(map[string]string{"Idempotency-Key": idempotencyKey}),
 		openai.WithExtraFields(map[string]any{"reasoning_effort": "none"}))

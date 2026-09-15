@@ -21,6 +21,7 @@ import (
 )
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var mediumPolicyVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 type config struct {
 	APIAddr, MetricsAddr             string
@@ -35,6 +36,7 @@ type config struct {
 	HTTPTimeout                      time.Duration
 	Indexes                          indexSettings
 	Policy                           searchdomain.Policy
+	FastMedium                       *fastMediumConfig
 	MaxQuoteRunes                    int
 	RepresentationMaxInFlight        int
 }
@@ -54,6 +56,21 @@ type policySettings struct {
 		MaxEvidence   int    `json:"max_evidence"`
 		WallTime      string `json:"wall_time"`
 	} `json:"fast_low"`
+	FastMedium *struct {
+		Version                string `json:"version"`
+		MaxBatches             int    `json:"max_batches"`
+		MaxSubqueries          int    `json:"max_subqueries"`
+		TopKPerLane            int    `json:"top_k_per_lane"`
+		MaxEvidence            int    `json:"max_evidence"`
+		WallTime               string `json:"wall_time"`
+		PlannerMaxOutputTokens int    `json:"planner_max_output_tokens"`
+	} `json:"fast_medium,omitempty"`
+}
+
+type fastMediumConfig struct {
+	Version                string
+	WallTime               time.Duration
+	PlannerMaxOutputTokens int
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -131,6 +148,27 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if p.FastLow.MaxBatches != 1 || p.FastLow.MaxSubqueries != 1 || p.FastLow.MaxEvidence < 1 ||
 		p.FastLow.MaxEvidence > 32 || p.FastLow.TopKPerLane < 1 || p.FastLow.TopKPerLane > 100 {
 		return c, errors.New("BTW_SEARCH_POLICY_FILE fast_low requires one batch/query and bounded evidence/TopK")
+	}
+	if p.FastMedium != nil {
+		medium := p.FastMedium
+		mediumWall, wallErr := time.ParseDuration(medium.WallTime)
+		if !mediumPolicyVersion.MatchString(medium.Version) || medium.Version == p.Version ||
+			wallErr != nil || mediumWall < time.Second || mediumWall > 30*time.Second ||
+			medium.MaxBatches != 1 || medium.MaxSubqueries != 3 ||
+			medium.MaxEvidence < 1 || medium.MaxEvidence > 32 ||
+			medium.TopKPerLane < 1 || medium.TopKPerLane > 100 ||
+			medium.PlannerMaxOutputTokens < 64 || medium.PlannerMaxOutputTokens > 512 {
+			return c, errors.New("BTW_SEARCH_POLICY_FILE fast_medium requires its own version, one batch, three queries and bounded model/evidence limits")
+		}
+		c.Policy.Profiles[searchdomain.Fast][searchdomain.Medium] = searchdomain.Limits{
+			MaxBatches: medium.MaxBatches, MaxSubqueries: medium.MaxSubqueries,
+			TopKPerLane: medium.TopKPerLane, MaxEvidence: medium.MaxEvidence, WallTime: mediumWall,
+		}
+		c.Policy.ProfileVersions = map[searchdomain.Depth]map[searchdomain.Intelligence]string{
+			searchdomain.Fast: {searchdomain.Medium: medium.Version},
+		}
+		c.FastMedium = &fastMediumConfig{Version: medium.Version, WallTime: mediumWall,
+			PlannerMaxOutputTokens: medium.PlannerMaxOutputTokens}
 	}
 	return c, nil
 }

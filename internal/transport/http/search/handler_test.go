@@ -20,6 +20,9 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/dense"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/multivector"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/sparse"
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
@@ -73,6 +76,27 @@ type fixtureModel struct {
 	calls    atomic.Int32
 	tools    atomic.Bool
 	invalid  atomic.Bool
+}
+
+type unavailableDense struct{ calls *atomic.Int32 }
+
+func (s unavailableDense) Search(context.Context, dense.Query) (dense.Result, error) {
+	s.calls.Add(1)
+	return dense.Result{}, nil
+}
+
+type unavailableSparse struct{ calls *atomic.Int32 }
+
+func (s unavailableSparse) Search(context.Context, sparse.Query) (sparse.Result, error) {
+	s.calls.Add(1)
+	return sparse.Result{}, nil
+}
+
+type unavailableMulti struct{ calls *atomic.Int32 }
+
+func (s unavailableMulti) Search(context.Context, multivector.Query) (multivector.Result, error) {
+	s.calls.Add(1)
+	return multivector.Result{}, nil
 }
 
 func (*fixtureModel) Info() model.Info { return model.Info{Name: "search-http-fixture"} }
@@ -280,6 +304,69 @@ func TestHTTPHandlerFrameworkRootAndPublicProjection(t *testing.T) {
 		strings.Contains(badBody.String(), "unaccepted model text") || strings.Contains(badBody.String(), "invented") ||
 		len(history.turns) != 1 {
 		t.Fatalf("invalid model answer escaped HTTP or history: status=%d body=%q turns=%d", bad.StatusCode, badBody.String(), len(history.turns))
+	}
+	var missingLaneCalls atomic.Int32
+	lowOnly, err := searchdomain.New(unavailableDense{&missingLaneCalls}, unavailableSparse{&missingLaneCalls},
+		unavailableMulti{&missingLaneCalls}, searchdomain.PlanFunc(func(_ context.Context, in searchdomain.PlanInput) ([]string, error) { return []string{in.Query}, nil }),
+		searchdomain.CheckFunc(func(context.Context, searchdomain.Snapshot, corpus.Chunk) (bool, error) { return true, nil }),
+		searchdomain.Policy{Version: "low-only-v1", Profiles: map[searchdomain.Depth]map[searchdomain.Intelligence]searchdomain.Limits{
+			searchdomain.Fast: {searchdomain.Low: {MaxBatches: 1, MaxSubqueries: 1, TopKPerLane: 2, MaxEvidence: 1, WallTime: 5 * time.Second}},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missingEffects atomic.Int32
+	missingDelivery, err := searchdomain.NewDelivery(lowOnly,
+		searchdomain.CheckFunc(func(context.Context, searchdomain.Snapshot, corpus.Chunk) (bool, error) { return true, nil }),
+		searchdomain.SourceReadFunc(func(context.Context, searchdomain.Snapshot, searchdomain.VerifiedCandidate) (corpus.Chunk, error) {
+			missingEffects.Add(1)
+			return corpus.Chunk{}, errors.New("unavailable policy read a source")
+		}),
+		searchdomain.AcceptFunc(func(context.Context, searchdomain.EvidencePack) (searchdomain.CitationReceipt, error) {
+			missingEffects.Add(1)
+			return searchdomain.CitationReceipt{}, errors.New("unavailable policy accepted a citation")
+		}),
+		searchdomain.EvidenceLimits{MaxReads: 1, MaxQuoteRunes: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingBoundary, err := searchdomain.NewRootSessionBoundary(missingDelivery, m, history, bundle,
+		searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingBoundary.Close()
+	missingScope := scope
+	missingScope.SearchID, missingScope.AnswerID = "search-missing-medium", "answer-missing-medium"
+	missingHandler, err := NewHandler(ScopeFunc(func(context.Context, *http.Request, PublicRequest) (TrustedScope, error) {
+		return missingScope, nil
+	}), missingBoundary, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingServer := httptest.NewServer(missingHandler)
+	defer missingServer.Close()
+	missingRequest, err := http.NewRequest(http.MethodPost, missingServer.URL+Route, strings.NewReader(`{"module_id":"module-1","query":"why","depth":"fast","intelligence":"medium"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingRequest.Header.Set("Content-Type", "application/json")
+	beforeModel := m.calls.Load()
+	missingResponse, err := missingServer.Client().Do(missingRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missingBody bytes.Buffer
+	_, _ = io.Copy(&missingBody, missingResponse.Body)
+	missingResponse.Body.Close()
+	if missingResponse.StatusCode != http.StatusServiceUnavailable || !strings.Contains(missingBody.String(), "SEARCH_PROFILE_UNAVAILABLE") ||
+		missingLaneCalls.Load() != 0 || missingEffects.Load() != 0 || m.calls.Load() != beforeModel || len(history.turns) != 1 {
+		t.Fatalf("missing medium policy escaped HTTP preflight: status=%d body=%s lane/model=%d/%d history=%d",
+			missingResponse.StatusCode, missingBody.String(), missingLaneCalls.Load(), m.calls.Load()-beforeModel, len(history.turns))
+	}
+	if !strings.Contains(logs.String(), `"error_code":"SEARCH_PROFILE_UNAVAILABLE"`) ||
+		!strings.Contains(logs.String(), `"outcome":"failed"`) {
+		t.Fatalf("missing policy did not use bounded OBS terminal fields")
 	}
 	metrics := httptest.NewRecorder()
 	bundle.MetricsHandler().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
