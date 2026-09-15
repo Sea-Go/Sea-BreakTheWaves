@@ -107,14 +107,28 @@ func (r UnmappedRef) valid() bool {
 }
 
 type Store struct {
-	db        *pgxpool.Pool
-	telemetry *telemetry.Bundle
+	db          *pgxpool.Pool
+	telemetry   *telemetry.Bundle
+	v2Candidate bool
+}
+
+type StoreOption func(*Store)
+
+// WithSubjectRefV2Candidate enables the additive fact-ledger projection only
+// for a deployment that has explicitly applied migration 007 and passed the
+// old-row preflight. Existing constructors and callers remain v1 by default.
+func WithSubjectRefV2Candidate() StoreOption {
+	return func(s *Store) { s.v2Candidate = true }
 }
 
 // NewStore borrows the pool and process telemetry. Pass a nonnil Bundle from
 // the tRPC Runner assembly for runtime observability; tests can omit it.
-func NewStore(db *pgxpool.Pool, bundle *telemetry.Bundle) *Store {
-	return &Store{db: db, telemetry: bundle}
+func NewStore(db *pgxpool.Pool, bundle *telemetry.Bundle, opts ...StoreOption) *Store {
+	s := &Store{db: db, telemetry: bundle}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func normalized(e Event, requireSubject bool) (Event, string, []byte, error) {
@@ -257,6 +271,13 @@ func (s *Store) Append(ctx context.Context, input Event) (receipt Receipt, err e
 	if err != nil {
 		return Receipt{}, err
 	}
+	var v2 SubjectRefV2
+	if s.v2Candidate {
+		v2, err = input.Subject.v2Projection()
+		if err != nil {
+			return Receipt{}, err
+		}
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Receipt{}, err
@@ -265,6 +286,11 @@ func (s *Store) Append(ctx context.Context, input Event) (receipt Receipt, err e
 	receipt, err = appendTx(ctx, tx, e, hash, body)
 	if err != nil {
 		return Receipt{}, dbErr(err)
+	}
+	if s.v2Candidate {
+		if err := insertV2Projection(ctx, tx, e.Subject, v2); err != nil {
+			return Receipt{}, dbErr(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Receipt{}, dbErr(err)
