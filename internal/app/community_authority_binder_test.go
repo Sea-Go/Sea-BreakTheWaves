@@ -51,15 +51,15 @@ func communityEvidence(t *testing.T, producer, eventType, eventID, aggregateID, 
 		ReceiptID: "receipt-" + eventID, InputHash: hash, Offset: offset, ReceivedAt: "2026-09-15T08:00:02.123456Z"}
 	source := FactSourceEvidence{Event: event, InputHash: hash, Offset: offset, Receipt: receipt}
 	authority := communityAuthorityResponse{Event: event,
-		SubjectRef:         communitySourceSubjectRef{Issuer: "rtw-user-center", Realm: "platform", SubjectID: subject},
+		SubjectRef:         communitySourceSubjectRef{Issuer: "rtw.identity", Realm: "platform", SubjectID: subject},
 		PredecessorEventID: predecessor, TechnicalReceipt: receipt, SourceEventHash: hash}
 	return source, authority
 }
 
 func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
-	createdID := "rtw.comment/9101/created"
-	commentLikeID := "rtw.comment.interaction/11111111-1111-4111-8111-111111111111"
-	commentUnlikeID := "rtw.comment.interaction/22222222-2222-4222-8222-222222222222"
+	createdID := "rtw.comment.9101.created"
+	commentLikeID := "rtw.comment.interaction.11111111-1111-4111-8111-111111111111"
+	commentUnlikeID := "rtw.comment.interaction.22222222-2222-4222-8222-222222222222"
 	commentFields := func(operation, source string, oldState, newState any) map[string]any {
 		fields := map[string]any{"aggregate_id": "9101", "operation": operation, "source_ref": source,
 			"comment_id": "9101", "visibility_state": 0, "search_evidence": false}
@@ -127,7 +127,7 @@ func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
 			predicate   string
 			predecessor string
 		}) {
-			deletedID := "rtw.comment/9101/deleted"
+			deletedID := "rtw.comment.9101.deleted"
 			result.name, result.action, result.predicate, result.predecessor = "comment-delete", usermodel.Retract, "comment", createdID
 			result.source, result.authority = communityEvidence(t, commentFactProducer, "community.comment.deleted", deletedID,
 				"9101", deletedID, 4, 4, "1101", commentFields("retract", "rtw.comment/9101", nil, nil), createdID)
@@ -141,7 +141,7 @@ func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
 			predicate   string
 			predecessor string
 		}) {
-			id := "rtw.like/9201"
+			id := "rtw.like.9201"
 			result.name, result.action, result.predicate = "target-like", usermodel.Assert, "like"
 			result.source, result.authority = communityEvidence(t, likeFactProducer, "community.target.interaction", id,
 				"like-state/1401/article/article-community", "9201", 1, 1, "1401", likeFields("like", id, 0, 1), "")
@@ -155,7 +155,7 @@ func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
 			predicate   string
 			predecessor string
 		}) {
-			id, prior := "rtw.like/9202", "rtw.like/9201"
+			id, prior := "rtw.like.9202", "rtw.like.9201"
 			result.name, result.action, result.predicate, result.predecessor = "target-unlike", usermodel.Retract, "like", prior
 			result.source, result.authority = communityEvidence(t, likeFactProducer, "community.target.interaction", id,
 				"like-state/1401/article/article-community", "9202", 2, 2, "1401", likeFields("unlike", id, 1, 0), prior)
@@ -168,7 +168,7 @@ func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expectedSubject := usermodel.SubjectRef{AuthorityID: "rtw-user-center", TenantID: "platform",
+			expectedSubject := usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform",
 				SubjectID: test.authority.SubjectRef.SubjectID}
 			if fact.Action != test.action || fact.Predicate != test.predicate || fact.Kind != usermodel.ProductAction ||
 				fact.Subject != expectedSubject || fact.ImpressionID != "" || fact.VisibilityEvidenceRef != "" {
@@ -183,7 +183,7 @@ func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
 }
 
 func TestBindCommunityAuthorityRejectsGuessesAndMismatches(t *testing.T) {
-	id := "rtw.like/9301"
+	id := "rtw.like.9301"
 	fields := map[string]any{"aggregate_id": "article/article-community", "operation": "like", "source_ref": id,
 		"old_state": int32(0), "new_state": int32(1)}
 	source, authority := communityEvidence(t, likeFactProducer, "community.target.interaction", id,
@@ -219,5 +219,27 @@ func TestDynamicFactBindingRequiresBoundedUniqueActions(t *testing.T) {
 		if validFactBindingActions("", invalid) {
 			t.Fatalf("invalid dynamic actions accepted: %v", invalid)
 		}
+	}
+}
+
+func TestCommunityAndLegacyFavoriteResolveSameRTWSubject(t *testing.T) {
+	favoriteEvidence, favoriteAuthority := favoriteAuthorityFixture(t)
+	favorite, err := bindFavoriteAuthority(favoriteEvidence, favoriteAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "rtw.like.9401"
+	fields := map[string]any{"aggregate_id": "article/article-community", "operation": "like", "source_ref": id,
+		"old_state": int32(0), "new_state": int32(1)}
+	communityEvidence, communityAuthority := communityEvidence(t, likeFactProducer, "community.target.interaction", id,
+		"like-state/1001/article/article-community", "9401", 1, 1, "1001", fields, "")
+	community, err := bindCommunityAuthority(communityEvidence, communityAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if community.Subject != favorite.Subject || community.Subject.AuthorityID != "rtw.identity" ||
+		community.Subject.SubjectID != "1001" {
+		t.Fatalf("legacy favorite and community facts split one RTW user: favorite=%+v community=%+v",
+			favorite.Subject, community.Subject)
 	}
 }
