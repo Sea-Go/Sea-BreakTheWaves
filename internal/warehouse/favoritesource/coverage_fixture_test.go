@@ -290,6 +290,12 @@ func TestCoveragePublisherTwoSubjects(t *testing.T) {
 	}
 	t.Logf("L2 isolated PG/read-only local coverage preflight snapshot_sha256=%s verified_roots=%d",
 		preflight.SnapshotSHA256, len(preflight.VerifiedCoverageRoots))
+	if path := os.Getenv("FAVORITE_PREFLIGHT_REPORT_OUTPUT"); path != "" {
+		body, err := json.MarshalIndent(preflight, "", "  ")
+		if err != nil || os.WriteFile(path, append(body, '\n'), 0600) != nil {
+			t.Fatal("write sanitized isolated preflight report failed")
+		}
+	}
 	if path := os.Getenv("COVERAGE_TWO_ODS_OUTPUT"); path != "" {
 		body, err := ExportODS(ctx, pool)
 		if err != nil {

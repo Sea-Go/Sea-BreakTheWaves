@@ -38,7 +38,7 @@ warehouse/favorite/acceptance.sh
 warehouse/favorite/subjectref_preflight_acceptance.sh
 ```
 
-脚本只输出通过状态、快照 SHA 与已核对根数；临时 PG 数据退出即清理。`TestSubjectRefV2*` 是 L1 确定性反例，隔离 PG/对象及原字节篡改是 L2；生产连接、生产覆盖字节、线上 ClickHouse/DWD/DWS 和流量均未验（L3 未做）。报告的 `snapshot_sha256` 是本次只读快照指纹，不是新 EventSpec、已发布根或迁移清单的替代 SHA。
+脚本只输出通过状态、快照 SHA、已核对根数，以及 0600 脱敏报告路径与准确 SHA；PG 停止并核对端口关闭后清理临时数据。需要限并行 race 验收时设置 `FAVORITE_PREFLIGHT_RACE=1`。`TestSubjectRefV2*` 是 L1 确定性反例，隔离 PG/对象及原字节篡改是 L2；生产连接、生产覆盖字节、线上 ClickHouse/DWD/DWS 和流量均未验（L3 未做）。报告的 `snapshot_sha256` 是本次只读快照指纹，不是新 EventSpec、已发布根或迁移清单的替代 SHA。
 
 ### ClickHouse 与下游迁移依赖及负例
 
