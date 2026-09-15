@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -365,6 +366,7 @@ func TestFavoriteSubjectRefV2StorageContinuousWritersAndFrozenArtifacts(t *testi
 	if err != nil || r1.ReceiptSHA256 != s1.Ref.ReceiptSHA256 || r1.EventCount != 2 || r1.SubjectID != "1001" {
 		t.Fatalf("internal v2 receipt differs from old manifest: %+v %v", r1, err)
 	}
+	handoffFavoriteV2PGToCH(t, db, oldODS, preflight, g3, s1)
 	// A default-off writer after DDL creates only the original row. Its old
 	// byte/offset contract survives until the owner explicitly replays it.
 	favoriteV2Append(source, "9007199254743993", "9007199254741991", "1003", "article-u3", 4)
@@ -505,6 +507,117 @@ func TestFavoriteSubjectRefV2StorageContinuousWritersAndFrozenArtifacts(t *testi
 	}
 	t.Logf("old_ods_prefix_sha256=%s snapshot_sha256=%s old_manifest=%s old_receipt=%s",
 		favoriteV2SHA(oldODS), preflight.SnapshotSHA256, g3.Ref.ManifestSHA256, s1.Ref.ReceiptSHA256)
+}
+
+// Test-only handoff keeps the same fresh PG16 and localhost original coverage
+// server alive while a separate CH/dbt owner verifies exported sidecar rows.
+// The ready file is written only after official locked Apply and full original
+// S3 coverage verification; a fixture mapping must never stand in for it.
+func handoffFavoriteV2PGToCH(t *testing.T, db *pgxpool.Pool, oldODS []byte,
+	preflight SubjectRefV2Report, global GlobalPublication, subject SubjectPublication) {
+	t.Helper()
+	dir := os.Getenv("FAVORITE_V2_CH_HANDOFF_DIR")
+	if dir == "" {
+		return
+	}
+	stat, err := os.Stat(dir)
+	if !filepath.IsAbs(dir) || err != nil || !stat.IsDir() || !preflight.Clear() ||
+		len(preflight.VerifiedCoverageRoots) != 1 {
+		t.Fatal("favorite v2 CH handoff requires an isolated directory and clear coverage preflight")
+	}
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT e.producer,e.source_offset,e.event_id,
+	 e.authority_id,e.tenant_id,e.subject_id,v.issuer,v.subject_uid
+	 FROM warehouse_favorite.ods_event e
+	 JOIN warehouse_favorite.ods_event_subject_ref_v2 v
+	  ON v.producer=e.producer AND v.source_offset=e.source_offset AND v.event_id=e.event_id
+	  AND v.authority_id=e.authority_id AND v.tenant_id=e.tenant_id AND v.subject_id=e.subject_id
+	 WHERE e.producer=$1 AND e.source_offset<=3 ORDER BY e.source_offset`, Producer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapping bytes.Buffer
+	count := 0
+	for rows.Next() {
+		var producer, eventID, authority, tenant, subjectID, issuer string
+		var offset, uid int64
+		if err := rows.Scan(&producer, &offset, &eventID, &authority, &tenant,
+			&subjectID, &issuer, &uid); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(map[string]any{
+			"producer": producer, "source_offset": offset, "event_id": eventID,
+			"authority_id": authority, "tenant_id": tenant, "subject_id": subjectID,
+			"issuer": issuer, "subject_uid": strconv.FormatInt(uid, 10)})
+		if err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		mapping.Write(encoded)
+		mapping.WriteByte('\n')
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if count != 3 || preflight.ODSRows != count {
+		t.Fatal("official PG sidecar is incomplete at frozen offset 3")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	objects := []map[string]string{
+		{"url": global.ManifestURL, "sha256": global.Ref.ManifestSHA256},
+		{"url": global.Ref.EventIndexURL, "sha256": global.Ref.EventIndexSHA256},
+		{"url": global.Ref.BatchEvidenceURL, "sha256": global.Ref.BatchEvidenceSHA256},
+		{"url": subject.ReceiptURL, "sha256": subject.Ref.ReceiptSHA256},
+		{"url": subject.Ref.SparseIndexURL, "sha256": subject.Ref.SparseIndexSHA256},
+	}
+	ready, err := json.Marshal(map[string]any{
+		"status": "official_apply_passed", "through_offset": count,
+		"old_ods_sha256":            favoriteV2SHA(oldODS),
+		"mapping_sha256":            favoriteV2SHA(mapping.Bytes()),
+		"preflight_snapshot_sha256": preflight.SnapshotSHA256,
+		"verified_coverage_roots":   preflight.VerifiedCoverageRoots,
+		"objects":                   objects,
+		"source_kind":               "isolated_DC_and_RTW_authority_HTTP_fixture_not_real_second_RTW_user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		name string
+		body []byte
+	}{
+		{"ods.jsonl", oldODS}, {"mapping-pg.jsonl", mapping.Bytes()},
+		{"ready.json", append(ready, '\n')},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, item.name), item.body, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.NewTimer(4 * time.Minute)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "release")); err == nil {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("official PG CH handoff was not released before deadline")
+		case <-ticker.C:
+		}
+	}
 }
 
 func newURLPath(t *testing.T, target string) string {
