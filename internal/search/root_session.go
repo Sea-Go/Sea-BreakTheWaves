@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
@@ -46,11 +47,32 @@ type RootSessionBoundary struct {
 
 func NewRootSessionBoundary(d *Delivery, m model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
 	limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
+	return newRootSessionBoundary(d, m, nil, history, observed, nil, limits...)
+}
+
+// NewRootSessionBoundaryWithFastMedium keeps the v1 accepted-history boundary
+// while adding one model planning stage only for fast/medium Summary requests.
+func NewRootSessionBoundaryWithFastMedium(d *Delivery, m, plannerModel model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
+	medium FastMediumModelLimits, limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
+	if isNil(plannerModel) || medium.MaxOutputTokens < 64 || medium.MaxOutputTokens > 512 || medium.WallTime < time.Second || medium.WallTime > 30*time.Second {
+		return nil, ErrInvalid
+	}
+	return newRootSessionBoundary(d, m, plannerModel, history, observed, &medium, limits...)
+}
+
+func newRootSessionBoundary(d *Delivery, m, plannerModel model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
+	medium *FastMediumModelLimits, limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
 	if isNil(history) {
 		return nil, ErrInvalid
 	}
 	attempts := inmemory.NewSessionService()
-	root, err := NewRootSummarizer(d, m, attempts, observed, limits...)
+	var root *RootSummarizer
+	var err error
+	if medium == nil {
+		root, err = NewRootSummarizer(d, m, attempts, observed, limits...)
+	} else {
+		root, err = NewRootSummarizerWithFastMedium(d, m, plannerModel, attempts, observed, *medium, limits...)
+	}
 	if err != nil {
 		_ = attempts.Close()
 		return nil, err
@@ -68,6 +90,11 @@ func (b *RootSessionBoundary) Summarize(ctx context.Context, q SummaryRequest) (
 	}
 	if err := validateRootSummaryRequest(q); err != nil {
 		return failed, err
+	}
+	if b.root.fastMedium != nil && q.Search.Depth == Fast && q.Search.Intelligence == Medium {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, b.root.fastMedium.WallTime)
+		defer cancel()
 	}
 	user, err := q.Subject.UserKey()
 	if err != nil {

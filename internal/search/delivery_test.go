@@ -367,11 +367,15 @@ type summaryModel struct {
 	receipt    *atomic.Bool
 	sawReceipt atomic.Bool
 	invalid    atomic.Bool
+	maxTokens  atomic.Int32
 }
 
 func (*summaryModel) Info() model.Info { return model.Info{Name: "summary-fixture"} }
 func (m *summaryModel) GenerateContent(ctx context.Context, q *model.Request) (<-chan *model.Response, error) {
 	m.calls.Add(1)
+	if q.MaxTokens != nil {
+		m.maxTokens.Store(int32(*q.MaxTokens))
+	}
 	if len(q.Tools) > 0 {
 		m.sawTools.Store(true)
 	}
