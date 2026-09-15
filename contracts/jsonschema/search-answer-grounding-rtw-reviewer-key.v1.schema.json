@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sea-go.dev/contracts/search-answer-grounding-rtw-reviewer-key.v1.schema.json",
+  "title": "RTW Worker reviewer key registry projection data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "key_id", "reviewer_authority", "reviewer_id", "data_kind",
+    "public_key_ed25519_hex", "registered_at", "revoked_at", "status", "registry_revision",
+    "registration_event_id", "revocation_event_id"],
+  "properties": {
+    "schema_version": {"const": "sea.rtw.reviewer-key.v1"},
+    "key_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "reviewer_authority": {"const": "ridethewind.knowledge.admin"},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "data_kind": {"enum": ["human_admin", "synthetic_fixture"]},
+    "public_key_ed25519_hex": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "registered_at": {"type": "string", "format": "date-time"},
+    "revoked_at": {"type": "string"},
+    "status": {"enum": ["active", "revoked"]},
+    "registry_revision": {"type": "integer", "minimum": 1},
+    "registration_event_id": {"type": "string", "minLength": 1},
+    "revocation_event_id": {"type": "string"}
+  }
+}

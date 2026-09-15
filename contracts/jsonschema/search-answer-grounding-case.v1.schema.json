@@ -26,7 +26,11 @@
     "rtw_trace_log_sha256": {"$ref": "#/$defs/sha256"},
     "rtw_trace_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
     "trace_scope": {"const": "rtw_structured_log_not_otlp_collector"},
-    "citation_pack_ref": {"type": "string", "pattern": "^search-citations/sha256/[a-f0-9]{64}$"},
+    "citation_pack_ref": {
+      "type": "string",
+      "pattern": "^search-citations/sha256/[a-f0-9]{64}$",
+      "description": "RTW durable_ref; runtime validation requires suffix SHA-256(search_id bytes)"
+    },
     "evidence": {"type": "array", "minItems": 1, "items": {
       "type": "object", "additionalProperties": false,
       "required": ["evidence_id", "quote", "quote_sha256"],

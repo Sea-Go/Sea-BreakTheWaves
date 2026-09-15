@@ -76,8 +76,7 @@ func ValidateCase(value Case) error {
 		!hashPattern.MatchString(value.RTWTraceLogSHA256) ||
 		!tracePattern.MatchString(value.RTWTraceID) ||
 		value.TraceScope != "rtw_structured_log_not_otlp_collector" ||
-		!strings.HasPrefix(value.CitationPackRef, "search-citations/sha256/") ||
-		!hashPattern.MatchString(strings.TrimPrefix(value.CitationPackRef, "search-citations/sha256/")) ||
+		value.CitationPackRef != citationRef(value.SearchID) ||
 		len(value.Evidence) == 0 ||
 		strings.TrimSpace(value.AcceptedAnswer) == "" ||
 		Digest([]byte(value.AcceptedAnswer)) != value.AcceptedAnswerSHA256 {
