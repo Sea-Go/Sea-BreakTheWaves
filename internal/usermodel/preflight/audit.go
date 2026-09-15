@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"sort"
@@ -36,18 +37,28 @@ type Finding struct {
 	Count int64  `json:"count"`
 }
 
+type TableScan struct {
+	Table string `json:"table"`
+	Rows  int64  `json:"rows"`
+}
+
 type Report struct {
-	SourceCommit      string    `json:"source_commit"`
-	SourceSHA256      string    `json:"source_sha256"`
-	ContractSHA256    string    `json:"contract_sha256"`
-	LiveCatalogSHA256 string    `json:"live_catalog_sha256"`
-	Transaction       string    `json:"transaction"`
-	Scope             string    `json:"scope"`
-	Findings          []Finding `json:"findings"`
-	L1                int64     `json:"l1"`
-	L2                int64     `json:"l2"`
-	L3                int64     `json:"l3"`
-	ReportSHA256      string    `json:"report_sha256"`
+	SourceCommit      string      `json:"source_commit"`
+	SourceSHA256      string      `json:"source_sha256"`
+	ContractSHA256    string      `json:"contract_sha256"`
+	LiveCatalogSHA256 string      `json:"live_catalog_sha256"`
+	Transaction       string      `json:"transaction"`
+	Scope             string      `json:"scope"`
+	TableRows         []TableScan `json:"table_rows"`
+	TotalRows         int64       `json:"total_rows"`
+	RowAuditComplete  bool        `json:"row_audit_complete"`
+	Findings          []Finding   `json:"findings"`
+	L1                int64       `json:"l1"`
+	L2                int64       `json:"l2"`
+	L3                int64       `json:"l3"`
+	// Hash of compact json.Marshal with this field empty. CLI stdout file bytes
+	// include the filled field and a newline, and have a different SHA-256.
+	ReportSHA256 string `json:"report_sha256"`
 }
 
 // Observation deliberately contains only bounded rule/table/count labels.
@@ -125,9 +136,13 @@ func Run(ctx context.Context, conn *pgx.Conn, schema string, observer Observer) 
 		observe(observer, Observation{Stage: "usermodel.preflight", Outcome: "blocked", Count: report.L1})
 		return report, nil
 	}
+	if err := scanRows(ctx, tx, schema, want, &report); err != nil {
+		return Report{}, errors.New("table row scan did not complete")
+	}
 	if err := auditRows(ctx, tx, schema, want, &report); err != nil {
 		return Report{}, errors.New("row audit did not complete")
 	}
+	report.RowAuditComplete = true
 	finalize(&report)
 	outcome := "passed"
 	if report.L1+report.L2 > 0 {
@@ -258,6 +273,23 @@ func finalize(report *Report) {
 	report.ReportSHA256 = hex.EncodeToString(h[:])
 }
 
+// Scans include every scoped table in the same read-only snapshot. Row counts
+// contain no identifiers but can still disclose small populations.
+func scanRows(ctx context.Context, tx pgx.Tx, schema string, contract Catalog, report *Report) error {
+	for _, table := range contract.Tables {
+		var rows int64
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+tableName(schema, table.Name)).Scan(&rows); err != nil {
+			return err
+		}
+		if rows < 0 || report.TotalRows > math.MaxInt64-rows {
+			return errors.New("table row count overflow")
+		}
+		report.TableRows = append(report.TableRows, TableScan{Table: table.Name, Rows: rows})
+		report.TotalRows += rows
+	}
+	return nil
+}
+
 func auditRows(ctx context.Context, tx pgx.Tx, schema string, contract Catalog, report *Report) error {
 	for _, t := range contract.Tables {
 		cols := columnSet(t)
@@ -360,15 +392,19 @@ func auditVersions(ctx context.Context, tx pgx.Tx, schema string, report *Report
 		{"L2", "watermark_subject_owner", "usermodel_watermarks", `SELECT count(*) FROM ` + q("watermarks") + ` w WHERE NOT EXISTS (SELECT 1 FROM ` + q("subject_state") + ` s WHERE (s.authority_id,s.tenant_id,s.subject_id)=(w.authority_id,w.tenant_id,w.subject_id))`},
 		{"L2", "binding_subject_owner", "usermodel_subject_bindings", `SELECT count(*) FROM ` + q("subject_bindings") + ` b WHERE NOT EXISTS (SELECT 1 FROM ` + q("subject_state") + ` s WHERE (s.authority_id,s.tenant_id,s.subject_id)=(b.authority_id,b.tenant_id,b.subject_id))`},
 		{"L2", "bound_unmapped_owner", "usermodel_unmapped_events", `SELECT count(*) FROM ` + q("unmapped_events") + ` u WHERE u.bound_subject_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ` + q("subject_state") + ` s WHERE (s.authority_id,s.tenant_id,s.subject_id)=(u.authority_id,u.tenant_id,u.bound_subject_id) AND s.state_version>=u.bound_version)`},
+		{"L2", "bound_unmapped_binding_disagreement", "usermodel_unmapped_events", `SELECT count(*) FROM ` + q("unmapped_events") + ` u WHERE u.bound_subject_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ` + q("subject_bindings") + ` b WHERE (b.authority_id,b.tenant_id,b.external_subject_id,b.subject_id)=(u.authority_id,u.tenant_id,u.external_subject_id,u.bound_subject_id))`},
 		{"L2", "event_version_watermark", "usermodel_events", `SELECT count(*) FROM ` + q("events") + ` e LEFT JOIN ` + q("subject_state") + ` s USING(authority_id,tenant_id,subject_id) WHERE (e.status='accepted') <> (e.accepted_version IS NOT NULL) OR e.initial_version > s.state_version OR e.accepted_version > s.state_version OR e.accepted_version < e.initial_version`},
 		{"L2", "active_fact_version_or_status", "usermodel_active_facts", `SELECT count(*) FROM ` + q("active_facts") + ` a JOIN ` + q("events") + ` e USING(authority_id,tenant_id,subject_id,producer,event_id) JOIN ` + q("subject_state") + ` s USING(authority_id,tenant_id,subject_id) WHERE e.status<>'accepted' OR e.action='retract' OR a.activated_version<>e.accepted_version OR a.activated_version>s.state_version`},
+		{"L2", "missing_current_active_fact", "usermodel_events", `SELECT count(*) FROM ` + q("events") + ` e WHERE e.status='accepted' AND e.action<>'retract' AND NOT EXISTS (SELECT 1 FROM ` + q("events") + ` successor WHERE (successor.authority_id,successor.tenant_id,successor.subject_id,successor.supersedes_producer,successor.supersedes_event_id)=(e.authority_id,e.tenant_id,e.subject_id,e.producer,e.event_id) AND successor.status='accepted') AND NOT EXISTS (SELECT 1 FROM ` + q("active_facts") + ` a WHERE (a.authority_id,a.tenant_id,a.subject_id,a.producer,a.event_id)=(e.authority_id,e.tenant_id,e.subject_id,e.producer,e.event_id))`},
 		{"L2", "attribution_version_watermark", "usermodel_attributions", `SELECT count(*) FROM ` + q("attributions") + ` a JOIN ` + q("subject_state") + ` s USING(authority_id,tenant_id,subject_id) WHERE a.linked_version>s.state_version OR a.revoked_version>s.state_version OR a.revoked_version<=a.linked_version`},
-		{"L2", "outbox_version_gap", "usermodel_outbox", `SELECT count(*) FROM ` + q("subject_state") + ` s LEFT JOIN (SELECT authority_id,tenant_id,subject_id,count(*) AS n,max(state_version) AS max_v FROM ` + q("outbox") + ` GROUP BY 1,2,3) o USING(authority_id,tenant_id,subject_id) WHERE s.state_version<>coalesce(o.n,0) OR s.state_version<>coalesce(o.max_v,0)`},
+		{"L2", "outbox_version_gap", "usermodel_outbox", `SELECT count(*) FROM ` + q("subject_state") + ` s LEFT JOIN (SELECT authority_id,tenant_id,subject_id,count(*) AS n,min(state_version) AS min_v,max(state_version) AS max_v FROM ` + q("outbox") + ` GROUP BY 1,2,3) o USING(authority_id,tenant_id,subject_id) WHERE s.state_version<>coalesce(o.n,0) OR s.state_version<>coalesce(o.max_v,0) OR (s.state_version>0 AND o.min_v IS DISTINCT FROM 1)`},
 		{"L2", "watermark_position", "usermodel_watermarks", `SELECT count(*) FROM ` + q("watermarks") + ` w WHERE w.contiguous_sequence<0 OR w.max_seen_sequence<w.contiguous_sequence OR w.max_seen_sequence<>coalesce((SELECT max(e.source_sequence) FROM ` + q("events") + ` e WHERE (e.authority_id,e.tenant_id,e.subject_id,e.producer,e.source_partition)=(w.authority_id,w.tenant_id,w.subject_id,w.producer,w.source_partition)),0) OR w.contiguous_sequence<>(SELECT count(*) FROM ` + q("events") + ` e WHERE (e.authority_id,e.tenant_id,e.subject_id,e.producer,e.source_partition)=(w.authority_id,w.tenant_id,w.subject_id,w.producer,w.source_partition) AND e.source_sequence BETWEEN 1 AND w.contiguous_sequence AND e.status='accepted')`},
-		{"L2", "coverage_event_version", "usermodel_coverage_event", `SELECT count(*) FROM ` + q("coverage_event") + ` c JOIN ` + q("events") + ` e USING(authority_id,tenant_id,subject_id,producer,event_id) JOIN ` + q("coverage_prefix") + ` p USING(manifest_sha256) WHERE c.accepted_version<>e.accepted_version OR c.source_offset>p.through_offset`},
+		{"L2", "missing_source_watermark", "usermodel_events", `SELECT count(*) FROM ` + q("events") + ` e WHERE e.source_sequence IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ` + q("watermarks") + ` w WHERE (w.authority_id,w.tenant_id,w.subject_id,w.producer,w.source_partition)=(e.authority_id,e.tenant_id,e.subject_id,e.producer,e.source_partition))`},
+		{"L2", "coverage_event_version", "usermodel_coverage_event", `SELECT count(*) FROM ` + q("coverage_event") + ` c JOIN ` + q("events") + ` e USING(authority_id,tenant_id,subject_id,producer,event_id) JOIN ` + q("coverage_prefix") + ` p USING(manifest_sha256) WHERE e.status<>'accepted' OR c.accepted_version IS DISTINCT FROM e.accepted_version OR c.source_offset>p.through_offset`},
 		{"L2", "coverage_subject_count", "usermodel_coverage_subject", `SELECT count(*) FROM ` + q("coverage_subject") + ` c WHERE c.event_count<>(SELECT count(*) FROM ` + q("coverage_event") + ` e WHERE (e.manifest_sha256,e.authority_id,e.tenant_id,e.subject_id)=(c.manifest_sha256,c.authority_id,c.tenant_id,c.subject_id))`},
 		{"L2", "ontology_projection_future", "usermodel_ontology_projections", `SELECT count(*) FROM ` + q("ontology_projections") + ` p JOIN ` + q("subject_state") + ` s USING(authority_id,tenant_id,subject_id) WHERE p.state_version>s.state_version`},
 		{"L3", "ontology_projection_stale", "usermodel_ontology_projections", `SELECT count(*) FROM ` + q("ontology_projections") + ` p JOIN ` + q("ontology_heads") + ` h USING(authority_id,tenant_id) JOIN ` + q("subject_state") + ` s USING(authority_id,tenant_id,subject_id) WHERE p.definition_version<>h.definition_version OR p.state_version<s.state_version`},
+		{"L3", "ontology_projection_missing", "usermodel_subject_state", `SELECT count(*) FROM ` + q("subject_state") + ` s JOIN ` + q("ontology_heads") + ` h USING(authority_id,tenant_id) WHERE NOT EXISTS (SELECT 1 FROM ` + q("ontology_projections") + ` p WHERE (p.authority_id,p.tenant_id,p.subject_id)=(s.authority_id,s.tenant_id,s.subject_id))`},
 		{"L2", "feature_snapshot_future", "usermodel_feature_snapshots", `SELECT count(*) FROM ` + q("feature_snapshots") + ` f JOIN ` + q("subject_state") + ` s USING(authority_id,tenant_id,subject_id) WHERE f.state_version>s.state_version`},
 		{"L2", "feature_baseline_revision_orphan", "usermodel_feature_snapshots", `SELECT count(*) FROM ` + q("feature_snapshots") + ` f WHERE f.baseline_revision IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ` + q("feature_baselines") + ` b WHERE (b.authority_id,b.tenant_id,b.subject_id,b.revision)=(f.authority_id,f.tenant_id,f.subject_id,f.baseline_revision))`},
 		{"L2", "serving_pointer_pair_owner", "usermodel_serving_pointers", `SELECT count(*) FROM ` + q("serving_pointers") + ` p JOIN ` + q("serving_bundles") + ` b USING(authority_id,tenant_id,subject_id,bundle_id) WHERE p.pair_id<>b.pair_id`},

@@ -156,7 +156,7 @@ func TestSyntheticAndCrossTenantRowsBlockProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if first.ReportSHA256 != second.ReportSHA256 {
-		t.Fatal("anonymous report hash changed on the same PG snapshot")
+		t.Fatal("report content hash changed on the same PG snapshot")
 	}
 	for _, rule := range []string{"invalid_legacy_subject", "projected_unique_collision:usermodel_subject_state_pkey",
 		"missing_or_changed_constraint", "orphan_expected_fk:", "outbox_version_gap", "serving_pointer_pair_owner"} {

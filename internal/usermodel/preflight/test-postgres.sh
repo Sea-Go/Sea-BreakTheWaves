@@ -22,7 +22,18 @@ preflight_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0
   -o "-h 127.0.0.1 -p $preflight_port -k $preflight_tmp" -w start >/dev/null
 preflight_started=true
 export USERMODEL_PREFLIGHT_TEST_POSTGRES_DSN="postgres://$(id -un)@127.0.0.1:$preflight_port/postgres?sslmode=disable"
-GOMAXPROCS=2 go test -mod=readonly -p=2 -count=1 -v ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
+mkdir "$preflight_tmp/old-src"
+git archive 1150534399849ab43a2751e9be32870e8746c26f \
+  go.mod go.sum cmd/usermodel-subjectref-preflight/main.go \
+  internal/usermodel/preflight/audit.go internal/usermodel/preflight/catalog.go \
+  internal/usermodel/preflight/contract.json | tar -x -C "$preflight_tmp/old-src"
+(
+  cd "$preflight_tmp/old-src"
+  GOMAXPROCS=2 go build -mod=readonly -p=2 -o "$preflight_tmp/old-preflight" \
+    ./cmd/usermodel-subjectref-preflight
+)
+export USERMODEL_PREFLIGHT_OLD_BIN="$preflight_tmp/old-preflight"
+GOMAXPROCS=2 go test -mod=readonly -p=2 -race -count=1 -v ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
 GOMAXPROCS=2 go vet -mod=readonly -p=2 ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
 GOMAXPROCS=2 go build -mod=readonly -p=2 -o "$preflight_tmp/preflight" ./cmd/usermodel-subjectref-preflight
 if "$preflight_tmp/preflight" >"$preflight_tmp/offline.out" 2>"$preflight_tmp/offline.log"; then
@@ -46,15 +57,19 @@ export USERMODEL_PREFLIGHT_FIXTURE_DSN="$USERMODEL_PREFLIGHT_TEST_POSTGRES_DSN"
 "$preflight_tmp/preflight" --run --dsn-env USERMODEL_PREFLIGHT_FIXTURE_DSN \
   >"$preflight_tmp/report.json" 2>"$preflight_tmp/cli.log"
 python3 - "$preflight_tmp/report.json" "$preflight_tmp/cli.log" "$preflight_tmp/offline.log" <<'PY'
+import hashlib
 import json
 import pathlib
 import sys
 
-report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+report_bytes = pathlib.Path(sys.argv[1]).read_bytes()
+report = json.loads(report_bytes)
 assert report['transaction'] == 'repeatable_read/read_only'
 assert report['l1'] == report['l2'] == report['l3'] == 0
+assert report['row_audit_complete'] and len(report['table_rows']) == 23 and report['total_rows'] == 0
 for path in sys.argv[2:]:
     rows = [json.loads(line) for line in pathlib.Path(path).read_text().splitlines()]
     assert rows and all(row['service'] == 'btw-subjectref-preflight' for row in rows)
-print('isolated CLI reportSHA=' + report['report_sha256'] + ' L1=0 L2=0 L3=0')
+print('isolated CLI contentSHA=' + report['report_sha256'] +
+      ' stdoutFileSHA=' + hashlib.sha256(report_bytes).hexdigest() + ' L1=0 L2=0 L3=0')
 PY
