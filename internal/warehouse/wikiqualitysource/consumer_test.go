@@ -182,7 +182,8 @@ func TestIndependentRealPGQualityCursorStopsWithoutRubricAndReplaysAfterLostACK(
 	}
 	reset := func() {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `TRUNCATE warehouse_wiki_quality.ods_event,
+		if _, err := pool.Exec(ctx, `TRUNCATE warehouse_wiki_quality.ods_fact_set,
+ warehouse_wiki_quality.ods_event,
  warehouse_wiki_quality.consumer_cursor`); err != nil {
 			t.Fatal(err)
 		}
