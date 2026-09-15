@@ -53,11 +53,12 @@ PY
   >"$favorite_evidence/start.log"
 favorite_pg_started=true
 export FAVORITE_V2_TEST_DSN="postgres://sea_btw_favorite_test@127.0.0.1:$favorite_port/postgres?sslmode=disable"
-export FAVORITE_V2_TEST_NONCE="$(python3 - <<'PY'
+favorite_nonce="$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(32))
 PY
 )"
+export FAVORITE_V2_TEST_NONCE="$favorite_nonce"
 export FAVORITE_V2_CH_HANDOFF_DIR="$favorite_evidence/handoff"
 (cd "$favorite_repo" && GOMAXPROCS=2 go test -mod=readonly -race -p=1 -count=1 -v \
   -run '^TestFavoriteSubjectRefV2StorageContinuousWritersAndFrozenArtifacts$' \
