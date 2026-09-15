@@ -53,3 +53,20 @@ func invocationForSummary(q SummaryRequest) (ModelInvocationRef, error) {
 		SearchID: q.SearchID, AnswerID: q.AnswerID,
 		SnapshotSHA: artifacts.Hash(raw)}, nil
 }
+
+// invocationForTool binds one signed child search and its durable parent
+// operation to the same typed model seam used by Summary. The legacy
+// TenantID field is the fixed v1 compatibility slot, not a product tenant.
+func invocationForTool(q ToolRunRequest) (ModelInvocationRef, error) {
+	if !validToolRunRequest(q) {
+		return ModelInvocationRef{}, ErrInvalid
+	}
+	raw, err := json.Marshal(q.Search.Snapshot)
+	if err != nil {
+		return ModelInvocationRef{}, err
+	}
+	return ModelInvocationRef{AuthorityID: q.Subject.AuthorityID,
+		TenantID: q.Subject.TenantID, SubjectID: q.Subject.SubjectID,
+		SearchID: q.SearchID, AnswerID: q.OperationID,
+		SnapshotSHA: artifacts.Hash(raw)}, nil
+}
