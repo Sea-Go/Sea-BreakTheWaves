@@ -140,6 +140,9 @@ func (s *SignedScopeResolver) ResolveSearch(_ context.Context, r *http.Request, 
 		payload.ExpiresAtUnix-payload.IssuedAtUnix > maxScopeTTLSeconds {
 		return TrustedScope{}, ErrScopeDenied
 	}
+	if !validLegacySubject(payload.Subject) {
+		return TrustedScope{}, ErrScopeDenied
+	}
 	if _, err := payload.Subject.UserKey(); err != nil ||
 		!constantTimeStringEqual(payload.Snapshot.ModuleID, request.ModuleID) {
 		return TrustedScope{}, ErrScopeDenied

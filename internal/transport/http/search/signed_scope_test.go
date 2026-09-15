@@ -170,6 +170,11 @@ func TestSignedScopeHTTPRejectsBeforeSourceAndAgent(t *testing.T) {
 		{"bad encoding", public, []string{goodHeader + "="}},
 		{"wrong audience", public, []string{malformed(func(p signedScope) signedScope { p.Audience = "other"; return p })}},
 		{"missing subject", public, []string{malformed(func(p signedScope) signedScope { p.Subject.SubjectID = ""; return p })}},
+		{"v1 wrong issuer", public, []string{malformed(func(p signedScope) signedScope { p.Subject.AuthorityID = "other.identity"; return p })}},
+		{"v1 nonplatform slot", public, []string{malformed(func(p signedScope) signedScope { p.Subject.TenantID = "tenant-a"; return p })}},
+		{"v1 leading zero UID", public, []string{malformed(func(p signedScope) signedScope { p.Subject.SubjectID = "0123"; return p })}},
+		{"v1 nonnumeric UID", public, []string{malformed(func(p signedScope) signedScope { p.Subject.SubjectID = "not-a-uid"; return p })}},
+		{"v1 overflow UID", public, []string{malformed(func(p signedScope) signedScope { p.Subject.SubjectID = "9223372036854775808"; return p })}},
 		{"future issued", public, []string{malformed(func(p signedScope) signedScope { p.IssuedAtUnix += 31; return p })}},
 		{"ancient issued overflow", public, []string{malformed(func(p signedScope) signedScope {
 			p.IssuedAtUnix = math.MinInt64
