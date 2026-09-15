@@ -137,3 +137,37 @@ InputHash/JCS SourceRefsSHA，经本构造器和官方 adapter 只调用
 候选保存或产品发布联验。DC 当前空候选或 `ErrLogicalModel`
 故障仍会失败；只有跨仓 owner 的 WS05A 模型控制门禁
 配置与实际 Gateway 运行结果同时签收，才升级该边界。
+
+2026-09-15 受控真模型边界已接纳一轮：提供方 BTW
+`7c58dae4dc18e9f950a13b59082bba714717a28c`（业务与
+测试源码 clean），DC 模型控制/真实 Gateway 的本机受控提供方
+`0e6f0fe0791807538ce317ca18ecb8747d0f615f` 为前置。跨仓 owner 的私有 0600
+`{base_url,native_bearer,run_id}` 文件使
+`TestWikiCallPointTrueDCGatewayCandidate` 对当前真实
+DC native app_user 会话、已发布
+`knowledge-wiki-compiler` 候选、本机 Ollama
+**只发一笔**官方 adapter 请求；顶层 `go test -race`
+退出 0，主测试 7.91 秒 PASS，唯一非部分终态带
+非空 `finish_reason`。BTW 父日志
+`/private/tmp/sea-btw-wiki-dc-true-7c58-l2.log`
+SHA256 `da57476c003431dfaad9190c1b705351dacc1ede0bda0374e1682ef8732607f0`，
+不打印具体模型文本/原 bearer。DC holder 的模型控制门禁
+先验 `route_source=callpoint`、同键回放与异文 409；
+实际消费者使用窗口的隔离 PG **恰留一笔**
+`telemetry.model_interaction`：配置
+`caead82c-ced6-4323-bd16-05c5c2709e67`，
+physical `qwen3:1.7b`，`completed`/HTTP 200，
+响应 SHA256
+`6bc69ed24640c8cb492158a3218602a7051b6a3736a553886e730d8a70d1f48d`，
+Provider usage prompt 57、completion 220、total 277；
+`consumer-usage.json` 私有受控收据 SHA256
+`8c2a2a30289e8ee4d6b589375a953f2005e4c5fd19a7cb1c82dd5dc7f555750e`。
+DC holder 父日志 SHA256
+`f38abd076ac910536a617b9ef7eacf5ee5545e4b68e4b1268436c5c7fa2f19cf`，
+PG stop 日志 SHA256
+`ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d`，
+`pg_ctl status` 退出 3；BTW 官方 adapter 调用、DC
+模型交互收据和运行窗口同轮封闭。这不表示模型配置
+已部署到正式环境。此处提升的是**模型 CallPoint/HTTP
+子边界 L2**，不是 RTW Wiki Worker、源修订、Wiki
+候选/发布、全套 native Graph spans 或线上模型部署。
