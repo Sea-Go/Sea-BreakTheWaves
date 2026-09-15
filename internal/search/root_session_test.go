@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -159,6 +161,19 @@ func TestRootSessionReadBoundary(t *testing.T) {
 		}
 		assertAcceptedHistory(t, boundary, q.Subject, q.SessionID, 2)
 		assertNoPrivateSessions(t, boundary, q.Subject)
+		identical, err := boundary.Summarize(context.Background(), q)
+		if err != nil || identical.Answer != good.Answer || model.calls.Load() != 4 {
+			t.Fatalf("identical AnswerID retry did not reuse the accepted turn: %+v %v", identical, err)
+		}
+		assertAcceptedHistory(t, boundary, q.Subject, q.SessionID, 2)
+		conflicting := q
+		conflicting.Search.Query = "different question with the same AnswerID"
+		conflict, err := boundary.Summarize(context.Background(), conflicting)
+		if !errors.Is(err, ErrAcceptedHistory) || conflict.Answer != "" || model.calls.Load() != 4 {
+			t.Fatalf("same AnswerID accepted a different fixed request: %+v %v", conflict, err)
+		}
+		assertAcceptedHistory(t, boundary, q.Subject, q.SessionID, 2)
+		assertNoPrivateSessions(t, boundary, q.Subject)
 
 		history.mu.Lock()
 		history.reject = true
@@ -170,6 +185,162 @@ func TestRootSessionReadBoundary(t *testing.T) {
 		}
 		assertAcceptedHistory(t, boundary, q.Subject, q.SessionID, 2)
 	})
+
+	t.Run("concurrent-private-sessions", func(t *testing.T) {
+		history := &acceptedHistoryFixture{turns: make(map[acceptedHistoryKey][]AcceptedRootTurn)}
+		delivery := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(exactSource), AcceptFunc(accepted))
+		boundary, err := NewRootSessionBoundary(delivery, &summaryModel{}, history, observed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer boundary.Close()
+		var wg sync.WaitGroup
+		failures := make(chan error, 8)
+		for i := 0; i < 8; i++ {
+			q := rootFixtureRequest("parallel-" + string(rune('a'+i)))
+			q.SessionID = "same-logical-session"
+			if i%2 == 0 {
+				q.Subject.SubjectID = "uid-101"
+			} else {
+				q.Subject.SubjectID = "uid-202"
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				out, err := boundary.Summarize(context.Background(), q)
+				if err != nil || out.SummaryStatus != "succeeded" || len(out.Citations) != 1 {
+					failures <- fmt.Errorf("parallel accepted turn %s: %+v %v", q.AnswerID, out, err)
+				}
+			}()
+		}
+		wg.Wait()
+		close(failures)
+		for err := range failures {
+			t.Error(err)
+		}
+		for _, uid := range []string{"uid-101", "uid-202"} {
+			subject := rootFixtureRequest("check").Subject
+			subject.SubjectID = uid
+			assertAcceptedHistory(t, boundary, subject, "same-logical-session", 4)
+			assertNoPrivateSessions(t, boundary, subject)
+		}
+	})
+
+	t.Run("lookup-rejects-before-agent", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			found bool
+			err   error
+		}{
+			{"unavailable", false, ErrAcceptedHistory},
+			{"invalid-accepted-status", true, nil},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				var reads atomic.Int32
+				m := &summaryModel{}
+				q := rootFixtureRequest("lookup-" + tc.name)
+				history := &controlledLookupHistory{acceptedHistoryFixture: &acceptedHistoryFixture{turns: make(map[acceptedHistoryKey][]AcceptedRootTurn)},
+					found: tc.found, err: tc.err, turn: AcceptedRootTurn{Request: q,
+						Result: SummaryResult{AnswerID: q.AnswerID, SummaryStatus: "failed"}}}
+				delivery := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(func(ctx context.Context, s Snapshot, candidate VerifiedCandidate) (corpus.Chunk, error) {
+					reads.Add(1)
+					return exactSource(ctx, s, candidate)
+				}), AcceptFunc(accepted))
+				boundary, err := NewRootSessionBoundary(delivery, m, history, observed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer boundary.Close()
+				out, err := boundary.Summarize(context.Background(), q)
+				if !errors.Is(err, ErrAcceptedHistory) || out.Answer != "" || reads.Load() != 0 || m.calls.Load() != 0 {
+					t.Fatalf("bad authoritative lookup reached SourceReader or Agent: %+v %v reads=%d calls=%d", out, err, reads.Load(), m.calls.Load())
+				}
+				assertNoPrivateSessions(t, boundary, q.Subject)
+			})
+		}
+	})
+
+	t.Run("close-during-commit", func(t *testing.T) {
+		history := &blockingAcceptedHistory{inner: &acceptedHistoryFixture{turns: make(map[acceptedHistoryKey][]AcceptedRootTurn)},
+			entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+		delivery := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(exactSource), AcceptFunc(accepted))
+		boundary, err := NewRootSessionBoundary(delivery, &summaryModel{}, history, observed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := rootFixtureRequest("close-commit")
+		result := make(chan error, 1)
+		go func() {
+			out, err := boundary.Summarize(context.Background(), q)
+			if out.Answer != "" || out.SummaryStatus != "failed" {
+				result <- errors.New("closing boundary published an in-flight answer")
+				return
+			}
+			result <- err
+		}()
+		select {
+		case <-history.entered:
+		case <-time.After(5 * time.Second):
+			close(history.release)
+			t.Fatal("validated result never reached the blocked history commit")
+		}
+		closed := make(chan error, 1)
+		go func() { closed <- boundary.Close() }()
+		select {
+		case <-history.canceled:
+		case <-closed:
+			close(history.release)
+			<-result
+			t.Fatal("Close returned while an accepted-history commit was still running")
+		case <-time.After(5 * time.Second):
+			close(history.release)
+			<-result
+			t.Fatal("Close did not cancel its in-flight accepted-history commit")
+		}
+		if err := <-closed; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("in-flight summary did not observe shutdown cancellation: %v", err)
+		}
+		assertAcceptedHistory(t, boundary, q.Subject, q.SessionID, 0)
+		if out, err := boundary.Summarize(context.Background(), rootFixtureRequest("after-close")); !errors.Is(err, btwruntime.ErrClosed) || out.Answer != "" {
+			t.Fatalf("closed boundary accepted a new summary: %+v %v", out, err)
+		}
+	})
+}
+
+type blockingAcceptedHistory struct {
+	inner    *acceptedHistoryFixture
+	entered  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+type controlledLookupHistory struct {
+	*acceptedHistoryFixture
+	turn  AcceptedRootTurn
+	found bool
+	err   error
+}
+
+func (s *controlledLookupHistory) Get(context.Context, btwruntime.SubjectRef, string, string) (AcceptedRootTurn, bool, error) {
+	return s.turn, s.found, s.err
+}
+
+func (s *blockingAcceptedHistory) Commit(ctx context.Context, turn AcceptedRootTurn) error {
+	close(s.entered)
+	select {
+	case <-ctx.Done():
+		close(s.canceled)
+		return ctx.Err()
+	case <-s.release:
+		return s.inner.Commit(ctx, turn)
+	}
+}
+
+func (s *blockingAcceptedHistory) List(ctx context.Context, subject btwruntime.SubjectRef, sessionID string) ([]AcceptedRootTurn, error) {
+	return s.inner.List(ctx, subject, sessionID)
 }
 
 type sessionProbeModel struct {
@@ -206,7 +377,12 @@ func (s *acceptedHistoryFixture) Commit(_ context.Context, turn AcceptedRootTurn
 	key := acceptedHistoryKey{turn.Request.Subject, turn.Request.SessionID}
 	for _, existing := range s.turns[key] {
 		if existing.Request.AnswerID == turn.Request.AnswerID {
-			return ErrAcceptedHistory
+			oldJSON, oldErr := json.Marshal(existing)
+			newJSON, newErr := json.Marshal(turn)
+			if oldErr != nil || newErr != nil || !bytes.Equal(oldJSON, newJSON) {
+				return ErrAcceptedHistory
+			}
+			return nil
 		}
 	}
 	s.turns[key] = append(s.turns[key], turn)
@@ -217,6 +393,17 @@ func (s *acceptedHistoryFixture) List(_ context.Context, subject btwruntime.Subj
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]AcceptedRootTurn(nil), s.turns[acceptedHistoryKey{subject, sessionID}]...), nil
+}
+
+func (s *acceptedHistoryFixture) Get(_ context.Context, subject btwruntime.SubjectRef, sessionID, answerID string) (AcceptedRootTurn, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, turn := range s.turns[acceptedHistoryKey{subject, sessionID}] {
+		if turn.Request.AnswerID == answerID {
+			return turn, true, nil
+		}
+	}
+	return AcceptedRootTurn{}, false, nil
 }
 
 func assertAcceptedHistory(t *testing.T, boundary *RootSessionBoundary, subject btwruntime.SubjectRef, sessionID string, want int) {
