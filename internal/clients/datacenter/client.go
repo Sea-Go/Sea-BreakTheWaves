@@ -36,6 +36,7 @@ func New(config httpclient.Config) (*Client, error) {
 var (
 	ErrNoWork                   = errors.New("DataCenter has no claimable work")
 	ErrPredictionOutcomeUnknown = errors.New("DataCenter prediction outcome is unknown")
+	ErrPredictionInFlight       = errors.New("DataCenter prediction logical call is still in progress")
 )
 
 func call[T any](ctx context.Context, c *Client, method, path string, query url.Values, input any, key string) (T, error) {
@@ -114,7 +115,15 @@ func (c *Client) Predict(ctx context.Context, q prediction.Request, key string) 
 	if err != nil {
 		var response *httpclient.HTTPError
 		if errors.As(err, &response) {
-			if response.StatusCode == http.StatusServiceUnavailable && response.RetryAfter != "" {
+			// DC uses 409 for both an immutable binding conflict and an active
+			// logical-call lease. Only its fixed in-progress envelope plus a
+			// Retry-After marks work that should be polled with the same key.
+			if response.StatusCode == http.StatusConflict && response.RetryAfter != "" &&
+				predictionErrorEnvelope(response.Body, "prediction logical call is still in progress") {
+				return result, fmt.Errorf("%w: %w", ErrPredictionInFlight, err)
+			}
+			if response.StatusCode == http.StatusServiceUnavailable && response.RetryAfter != "" &&
+				predictionErrorEnvelope(response.Body, "prediction outcome is unknown; retry the same idempotency key") {
 				return result, fmt.Errorf("%w: %w", ErrPredictionOutcomeUnknown, err)
 			}
 			return result, err
@@ -129,6 +138,16 @@ func (c *Client) Predict(ctx context.Context, q prediction.Request, key string) 
 	}
 	result.Body = append([]byte(nil), raw...)
 	return result, nil
+}
+
+func predictionErrorEnvelope(body, expected string) bool {
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	if err := prediction.Decode([]byte(body), &envelope); err != nil {
+		return false
+	}
+	return envelope.Error == expected
 }
 func (c *Client) PublishEvent(ctx context.Context, q eventing.Event) (eventing.Receipt, error) {
 	v, e := call[eventing.Receipt](ctx, c, http.MethodPost, "/v1/events", nil, q, q.EventID)

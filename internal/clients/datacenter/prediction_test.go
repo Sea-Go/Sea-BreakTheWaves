@@ -69,7 +69,7 @@ func TestPredictionClientPinsLogicalKeyAndValidatesResponse(t *testing.T) {
 		if key == "prediction-logical-call-0003" && attempt == 1 {
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(w, `{"error":"prediction outcome is unknown"}`)
+			_, _ = io.WriteString(w, `{"error":"prediction outcome is unknown; retry the same idempotency key"}`)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -106,5 +106,101 @@ func TestPredictionClientPinsLogicalKeyAndValidatesResponse(t *testing.T) {
 	raw, _ = json.Marshal(response)
 	if _, err := client.Predict(context.Background(), q, "prediction-logical-call-0002"); err == nil {
 		t.Fatal("wrong-space prediction response accepted")
+	}
+}
+
+func TestPredictionClientSeparatesInFlightFromBindingConflict(t *testing.T) {
+	q := predictionRequest()
+	response := predictionResponse(q)
+	completeBody, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	seen := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		mu.Lock()
+		seen[key]++
+		attempt := seen[key]
+		mu.Unlock()
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/predictions" || key == "" {
+			t.Errorf("prediction recovery changed HTTP request: %s %s %q", r.Method, r.URL.Path, key)
+		}
+		switch key {
+		case "prediction-sequence-0001":
+			switch attempt {
+			case 1:
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"error":"prediction outcome is unknown; retry the same idempotency key"}`)
+				return
+			case 2:
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"error":"prediction logical call is still in progress"}`)
+				return
+			}
+		case "prediction-conflict-0001":
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"prediction state conflict"}`)
+			return
+		case "prediction-no-retry-0001":
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"prediction logical call is still in progress"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(completeBody)
+	}))
+	defer server.Close()
+	client, err := New(httpclient.Config{BaseURL: server.URL, Token: "native-subject-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "prediction-sequence-0001"
+	if _, err := client.Predict(context.Background(), q, key); !errors.Is(err, ErrPredictionOutcomeUnknown) {
+		t.Fatalf("503 unknown lost retryable type: %v", err)
+	}
+	if _, err := client.Predict(context.Background(), q, key); !errors.Is(err, ErrPredictionInFlight) {
+		t.Fatalf("409 lease lost retryable type: %v", err)
+	} else {
+		var status *httpclient.HTTPError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusConflict || status.RetryAfter != "1" {
+			t.Fatalf("409 lease lost HTTP receipt: %v", err)
+		}
+	}
+	completed, err := client.Predict(context.Background(), q, key)
+	if err != nil || completed.Response.ModelCallID != response.ModelCallID || string(completed.Body) != string(completeBody) {
+		t.Fatalf("same-key completed replay=%+v err=%v", completed, err)
+	}
+	mu.Lock()
+	count := seen[key]
+	mu.Unlock()
+	if count != 3 {
+		t.Fatalf("unknown/lease recovery changed logical key: calls=%d", count)
+	}
+	for _, conflictKey := range []string{"prediction-conflict-0001", "prediction-no-retry-0001"} {
+		_, err := client.Predict(context.Background(), q, conflictKey)
+		var status *httpclient.HTTPError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusConflict || errors.Is(err, ErrPredictionInFlight) {
+			t.Fatalf("binding conflict was misclassified as lease: key=%s err=%v", conflictKey, err)
+		}
+	}
+}
+
+func TestPredictionLeaseEnvelopeRejectsAmbiguousJSON(t *testing.T) {
+	expected := "prediction logical call is still in progress"
+	for _, body := range []string{
+		`{"error":"prediction state conflict"}`,
+		`{"error":"prediction state conflict","error":"prediction logical call is still in progress"}`,
+		`{"error":"prediction logical call is still in progress","other":true}`,
+		`{"error":"prediction logical call is still in progress"}{}`,
+		`null`,
+	} {
+		if predictionErrorEnvelope(body, expected) {
+			t.Fatalf("ambiguous/non-lease envelope classified as in-flight: %s", body)
+		}
 	}
 }
