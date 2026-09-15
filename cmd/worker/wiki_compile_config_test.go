@@ -58,15 +58,16 @@ func (*wikiGateOwner) AcceptCompile(context.Context, ridethewind.AcceptCompileRe
 }
 
 type wikiGateRuns struct {
-	session wikiNativeSession
+	session app.WikiCompileModelSession
 	err     error
 	checks  int
 }
 
-func (f *wikiGateRuns) Open(context.Context, content.WikiCompileInput) (app.WikiCompileRun, error) {
+func (f *wikiGateRuns) Open(context.Context, content.WikiCompileInput,
+	app.WikiCompileModelSession) (app.WikiCompileRun, error) {
 	return nil, errors.New("fixture model must not open during startup gate")
 }
-func (f *wikiGateRuns) CurrentNativeSession(context.Context) (wikiNativeSession, error) {
+func (f *wikiGateRuns) CurrentNativeSession(context.Context) (app.WikiCompileModelSession, error) {
 	f.checks++
 	return f.session, f.err
 }
@@ -82,10 +83,19 @@ func wikiGateBearer() string {
 	return "wh_access_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x44}, 32))
 }
 
+func wikiGateSession(t *testing.T) app.WikiCompileModelSession {
+	t.Helper()
+	session, err := app.NewWikiCompileModelSession("11111111-1111-4111-8111-111111111111", wikiGateBearer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
 func wikiGateFixtureDeps(t *testing.T, cfg config) (wikiCompileStartDeps, *wikiGateJobs, *wikiGateRuns) {
 	t.Helper()
 	jobsFixture := &wikiGateJobs{}
-	runs := &wikiGateRuns{session: wikiNativeSession{AccountID: "11111111-1111-4111-8111-111111111111", Bearer: wikiGateBearer()}}
+	runs := &wikiGateRuns{session: wikiGateSession(t)}
 	root := cfg.Wiki.SharedObjectRoot
 	if root == "" {
 		root = t.TempDir()
@@ -144,10 +154,10 @@ func TestWikiCompileCommandRejectsUnownedModelObjectOrResultRef(t *testing.T) {
 		"other-RTW-root":         func(d *wikiCompileStartDeps) { d.RTWObjectRoot = t.TempDir() },
 		"missing-jobs-client":    func(d *wikiCompileStartDeps) { d.Jobs = nil },
 		"jobs-token-as-model": func(d *wikiCompileStartDeps) {
-			d.Runs = &wikiGateRuns{session: wikiNativeSession{AccountID: "11111111-1111-4111-8111-111111111111", Bearer: v["BTW_DC_TOKEN"]}}
+			d.Runs = &wikiGateRuns{err: app.ErrWikiCompileModelIdentity}
 		},
 		"wrong-native-account": func(d *wikiCompileStartDeps) {
-			d.Runs = &wikiGateRuns{session: wikiNativeSession{AccountID: "not-a-DC-user", Bearer: wikiGateBearer()}}
+			d.Runs = &wikiGateRuns{err: app.ErrWikiCompileModelIdentity}
 		},
 		"native-session-unavailable": func(d *wikiCompileStartDeps) {
 			d.Runs = &wikiGateRuns{err: errors.New("fixture native session unavailable")}
@@ -160,6 +170,13 @@ func TestWikiCompileCommandRejectsUnownedModelObjectOrResultRef(t *testing.T) {
 				t.Fatalf("missing Wiki dependency reached DC Claim/model: %v claims=%d", err, jobsFixture.claims)
 			}
 		})
+	}
+	if _, err := app.NewWikiCompileModelSession("11111111-1111-4111-8111-111111111111",
+		v["BTW_DC_TOKEN"]); !errors.Is(err, app.ErrWikiCompileModelIdentity) {
+		t.Fatalf("jobs token became a DC native model session: %v", err)
+	}
+	if _, err := app.NewWikiCompileModelSession("not-a-DC-user", wikiGateBearer()); !errors.Is(err, app.ErrWikiCompileModelIdentity) {
+		t.Fatalf("wrong DC account became a model session: %v", err)
 	}
 	for name, change := range map[string]func(map[string]string){
 		"wrong-native-source":    func(m map[string]string) { m["BTW_WIKI_NATIVE_SESSION_SOURCE"] = "jobs-token" },
