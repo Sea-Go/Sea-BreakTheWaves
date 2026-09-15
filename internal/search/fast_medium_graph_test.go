@@ -33,6 +33,24 @@ type mediumPlannerFixture struct {
 
 type deadlineAcceptedHistory struct{ commits atomic.Int32 }
 
+type lateAcceptedHistory struct {
+	inner   *acceptedHistoryFixture
+	commits atomic.Int32
+}
+
+func (h *lateAcceptedHistory) Commit(ctx context.Context, turn AcceptedRootTurn) error {
+	if err := h.inner.Commit(context.Background(), turn); err != nil {
+		return err
+	}
+	h.commits.Add(1)
+	<-ctx.Done()
+	return nil
+}
+
+func (h *lateAcceptedHistory) List(ctx context.Context, subject btwruntime.SubjectRef, session string) ([]AcceptedRootTurn, error) {
+	return h.inner.List(ctx, subject, session)
+}
+
 func (h *deadlineAcceptedHistory) Commit(ctx context.Context, _ AcceptedRootTurn) error {
 	h.commits.Add(1)
 	<-ctx.Done()
@@ -316,6 +334,36 @@ func TestFastMediumNativePlannerChangesThreeLaneSummaryRetrieval(t *testing.T) {
 	}
 	assertAcceptedHistory(t, deadlineBoundary, deadlineQ.Subject, deadlineQ.SessionID, 0)
 	if err := deadlineBoundary.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lateHistory := &lateAcceptedHistory{inner: &acceptedHistoryFixture{turns: make(map[acceptedHistoryKey][]AcceptedRootTurn)}}
+	lateBoundary, err := NewRootSessionBoundaryWithFastMedium(d, summaryModel, plannerModel, lateHistory, observed,
+		FastMediumModelLimits{MaxOutputTokens: 128, WallTime: time.Second}, SummaryModelLimits{MaxOutputTokens: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lateQ := rootFixtureRequest("medium-commit-nil-after-deadline")
+	lateQ.Search.Intelligence = Medium
+	lateInvocation, err := invocationForSummary(lateQ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plannerModel.expected.Store(lateInvocation)
+	beforeLatePlan, beforeLateSummary := plannerModel.calls.Load(), summaryModel.calls.Load()
+	lateResult, lateErr := lateBoundary.Summarize(context.Background(), lateQ)
+	if !errors.Is(lateErr, context.DeadlineExceeded) || lateResult.Answer != "" || lateResult.SummaryStatus != "failed" ||
+		lateHistory.commits.Load() != 1 || plannerModel.calls.Load() != beforeLatePlan+1 ||
+		summaryModel.calls.Load() != beforeLateSummary+1 {
+		t.Fatalf("durable nil Commit after deadline escaped as public success: %+v, err=%v, commits/model=%d/%d/%d",
+			lateResult, lateErr, lateHistory.commits.Load(), plannerModel.calls.Load()-beforeLatePlan,
+			summaryModel.calls.Load()-beforeLateSummary)
+	}
+	lateTurns, err := lateBoundary.History(context.Background(), lateQ.Subject, lateQ.SessionID)
+	if err != nil || len(lateTurns) != 1 || lateTurns[0].Request.SearchID != lateQ.SearchID ||
+		lateTurns[0].Request.AnswerID != lateQ.AnswerID || lateTurns[0].Result.Answer == "" {
+		t.Fatalf("timeout did not preserve fixed-key durable history lookup: %+v, err=%v", lateTurns, err)
+	}
+	if err := lateBoundary.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(logs.String(), `"subject_id"`) || strings.Contains(logs.String(), `"queries"`) {

@@ -129,6 +129,12 @@ func (b *RootSessionBoundary) Summarize(ctx context.Context, q SummaryRequest) (
 	if err := b.history.Commit(ctx, turn); err != nil {
 		return failed, fmt.Errorf("commit accepted search turn: %w", err)
 	}
+	// Commit can durably accept this key and still return nil after the caller's
+	// deadline. That turn remains readable from the history owner, but this
+	// request must never report a successful public answer after cancellation.
+	if err := ctx.Err(); err != nil {
+		return failed, err
+	}
 	return result, nil
 }
 
