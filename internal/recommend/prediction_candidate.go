@@ -10,6 +10,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"strconv"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter"
@@ -25,17 +26,19 @@ var (
 
 var predictionLogicalCall = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,176}$`)
 
-// PredictionSubject uses RTW UserCenter terminology. Realm is mapped into the
-// legacy runtime SubjectRef field only at the Runner boundary; it is not a
-// configurable tenant and this use case never derives account linkage.
+// PredictionSubject is the frozen SubjectRef v2 shape. RTW UserCenter is the
+// human source system, while the machine issuer remains rtw.identity.
 type PredictionSubject struct {
-	Issuer string `json:"issuer"`
-	Realm  string `json:"realm"`
-	UID    string `json:"uid"`
+	Issuer    string `json:"issuer"`
+	SubjectID string `json:"subject_id"`
 }
 
 func (s PredictionSubject) valid() bool {
-	return s.Issuer == "rtw-user-center" && s.Realm == "platform" && validID(s.UID)
+	if s.Issuer != "rtw.identity" || s.SubjectID == "" || (len(s.SubjectID) > 1 && s.SubjectID[0] == '0') {
+		return false
+	}
+	id, err := strconv.ParseInt(s.SubjectID, 10, 64)
+	return err == nil && id > 0 && strconv.FormatInt(id, 10) == s.SubjectID
 }
 
 // SyntheticPredictionFeatures is deliberately not a usermodel FeatureSpec.
@@ -52,17 +55,17 @@ func (f SyntheticPredictionFeatures) valid() bool {
 }
 
 type PredictionCandidateConfig struct {
-	Enabled           bool   `json:"enabled"`
-	Model             string `json:"model"`
-	ConfigurationID   string `json:"configuration_id"`
-	ArtifactSHA256    string `json:"artifact_sha256"`
-	FeatureContractID string `json:"feature_contract_id"`
-	PairID            string `json:"pair_id"`
-	SpaceID           string `json:"space_id"`
+	SyntheticEvaluationEnabled bool   `json:"synthetic_evaluation_enabled"`
+	Model                      string `json:"model"`
+	ConfigurationID            string `json:"configuration_id"`
+	ArtifactSHA256             string `json:"artifact_sha256"`
+	FeatureContractID          string `json:"feature_contract_id"`
+	PairID                     string `json:"pair_id"`
+	SpaceID                    string `json:"space_id"`
 }
 
 func (c PredictionCandidateConfig) validate() error {
-	if !c.Enabled {
+	if !c.SyntheticEvaluationEnabled {
 		return nil
 	}
 	user, item := 0.0, 0.0
@@ -87,7 +90,6 @@ type PredictionTaskReceipt struct {
 	ModelCallID       string            `json:"model_call_id"`
 	ResponseSHA256    string            `json:"response_sha256"`
 	PointerRevision   int64             `json:"pointer_revision"`
-	Attempts          int               `json:"attempts"`
 	Output            prediction.Output `json:"output"`
 	Usage             prediction.Usage  `json:"usage"`
 }
@@ -135,7 +137,7 @@ func NewPredictionCandidateUseCase(config PredictionCandidateConfig, caller Pred
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	if !config.Enabled {
+	if !config.SyntheticEvaluationEnabled {
 		return &PredictionCandidateUseCase{config: config}, nil
 	}
 	if nilPredictionCaller(caller) || observed == nil || observed.Closed() {
@@ -154,7 +156,7 @@ func nilPredictionCaller(caller PredictionCaller) bool {
 
 func (u *PredictionCandidateUseCase) BuildCandidate(ctx context.Context,
 	request PredictionCandidateRequest) (candidate PredictionCandidate, err error) {
-	if u == nil || !u.config.Enabled {
+	if u == nil || !u.config.SyntheticEvaluationEnabled {
 		return PredictionCandidate{}, ErrPredictionDisabled
 	}
 	if ctx == nil || request.validate() != nil {
@@ -220,6 +222,7 @@ func (u *PredictionCandidateUseCase) request(task prediction.Task, input predict
 
 func (u *PredictionCandidateUseCase) call(ctx context.Context, request prediction.Request,
 	logicalCall string) (receipt PredictionTaskReceipt, err error) {
+	var attempts int
 	ctx, stage, err := u.observed.Begin(ctx, "recommend", "recommend.prediction_call",
 		slog.String("configuration_id", u.config.ConfigurationID), slog.String("representation_space", u.config.SpaceID),
 		slog.String("pair_id", u.config.PairID), slog.String("task", string(request.Task)),
@@ -230,11 +233,12 @@ func (u *PredictionCandidateUseCase) call(ctx context.Context, request predictio
 	defer func() {
 		outcome, code := predictionCandidateOutcome(err)
 		stage.End(ctx, outcome, code, err, slog.String("model_call_id", receipt.ModelCallID),
-			slog.Int("attempts", receipt.Attempts), slog.Int64("input_rows", receipt.Usage.InputRows),
+			slog.Int("attempts", attempts), slog.Int64("input_rows", receipt.Usage.InputRows),
 			slog.Int64("input_feature_values", receipt.Usage.InputFeatureValues),
 			slog.Int64("output_rows", receipt.Usage.OutputRows), slog.Int64("output_values", receipt.Usage.OutputValues))
 	}()
-	result, attempts, err := u.predictWithRecovery(ctx, request, logicalCall)
+	var result datacenter.PredictionResult
+	result, attempts, err = u.predictWithRecovery(ctx, request, logicalCall)
 	if err != nil {
 		return PredictionTaskReceipt{}, err
 	}
@@ -249,8 +253,8 @@ func (u *PredictionCandidateUseCase) call(ctx context.Context, request predictio
 	}
 	receipt = PredictionTaskReceipt{Task: request.Task, LogicalCallSHA256: digestPrediction([]byte(logicalCall)),
 		ModelCallID: result.Response.ModelCallID, ResponseSHA256: digestPrediction(result.Body),
-		PointerRevision: result.Response.PointerRevision, Attempts: attempts,
-		Output: result.Response.Data[0], Usage: *result.Response.Usage}
+		PointerRevision: result.Response.PointerRevision,
+		Output:          result.Response.Data[0], Usage: *result.Response.Usage}
 	stage.SetAttributes(slog.String("model_call_id", receipt.ModelCallID))
 	return receipt, nil
 }
@@ -291,7 +295,7 @@ func validPredictionCandidate(candidate PredictionCandidate) bool {
 		modelCallID, err := uuid.Parse(receipt.ModelCallID)
 		if !artifacts.ValidHash(receipt.LogicalCallSHA256) || !artifacts.ValidHash(receipt.ResponseSHA256) ||
 			err != nil || modelCallID == uuid.Nil || modelCallID.String() != receipt.ModelCallID ||
-			receipt.PointerRevision < 1 || receipt.Attempts < 1 || receipt.Attempts > 2 {
+			receipt.PointerRevision < 1 {
 			return false
 		}
 	}

@@ -114,6 +114,9 @@ func (c *Client) Predict(ctx context.Context, q prediction.Request, key string) 
 	if err != nil {
 		var response *httpclient.HTTPError
 		if errors.As(err, &response) {
+			if response.StatusCode == http.StatusServiceUnavailable && response.RetryAfter != "" {
+				return result, fmt.Errorf("%w: %w", ErrPredictionOutcomeUnknown, err)
+			}
 			return result, err
 		}
 		return result, fmt.Errorf("%w: %v", ErrPredictionOutcomeUnknown, err)
