@@ -34,7 +34,7 @@ func signedFixture(t *testing.T, value Case, caseRaw []byte, claim Claim,
 	}
 	payload := ReviewPayload{SchemaVersion: ReviewSchema, CaseSHA256: Digest(caseRaw),
 		PolicyRevision: ReviewPolicy, DataKind: kind,
-		ReviewerAuthority: "test.review-authority", ReviewerID: "fixture-reviewer",
+		ReviewerAuthority: RTWReviewerAuthority, ReviewerID: "fixture-reviewer",
 		ReviewedAt: "2026-09-15T00:00:00Z", CoverageComplete: coverageComplete,
 		Claims: []Claim{claim}}
 	encoded, err := json.Marshal(payload)
@@ -63,7 +63,7 @@ func fixtureCase(t *testing.T, quote, answer string) Case {
 		RTWTraceLogSHA256:     Digest([]byte("RTW structured trace")),
 		RTWTraceID:            "0123456789abcdef0123456789abcdef",
 		TraceScope:            "rtw_structured_log_not_otlp_collector",
-		CitationPackRef:       "search-citations/sha256/" + Digest([]byte("pack")),
+		CitationPackRef:       citationRef("search-fixture"),
 		Evidence:              []Evidence{{ID: "ev-fixture", Quote: quote, QuoteSHA256: Digest([]byte(quote))}},
 		AcceptedAnswer:        answer, AcceptedAnswerSHA256: Digest([]byte(answer)),
 		PriorQualityObservation: "not_assessed"}
@@ -73,6 +73,20 @@ func fixtureCase(t *testing.T, quote, answer string) Case {
 	}
 	value.CaseID = "grounding-" + Digest(identity)
 	return value
+}
+
+func TestCaseRequiresRTWDurableRefFromSearchID(t *testing.T) {
+	value := fixtureCase(t, "A source quote.", "A source quote.")
+	value.CitationPackRef = citationRef("another-search")
+	value.CaseID = ""
+	identity, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value.CaseID = "grounding-" + Digest(identity)
+	if ValidateCase(value) == nil {
+		t.Fatal("case accepted a durable_ref not derived from its search_id")
+	}
 }
 
 func TestSyntheticSignedUnsupportedClaimRejectsWithoutTextHeuristics(t *testing.T) {
