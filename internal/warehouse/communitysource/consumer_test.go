@@ -94,6 +94,31 @@ func TestLikeSourceHasIndependentProducerSequence(t *testing.T) {
 	}
 }
 
+func TestSourceRequiresExplicitNullRevisionAndBusinessVersion(t *testing.T) {
+	item, _, _, _ := sourceFixture(t, LikeProducer, "community.target.interaction", "rtw.like.30",
+		"like-state/1003/article/article-1", "30", "1003", 1,
+		map[string]any{"aggregate_id": "article/article-1", "operation": "like", "source_ref": "rtw.like.30",
+			"old_state": int16(0), "new_state": int16(1)}, "")
+	if !explicitNullSourceFields(item.Event.Payload) {
+		t.Fatal("valid explicit null fields rejected")
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(item.Event.Payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"target_revision", "aggregate_version"} {
+		changed := make(map[string]any, len(fields))
+		for name, value := range fields {
+			changed[name] = value
+		}
+		delete(changed, key)
+		raw, _ := json.Marshal(changed)
+		if explicitNullSourceFields(raw) {
+			t.Fatalf("missing %s accepted as explicit null", key)
+		}
+	}
+}
+
 func ptr(value string) *string { return &value }
 
 func TestValidateBatchRejectsMissingAndMixedOffsets(t *testing.T) {

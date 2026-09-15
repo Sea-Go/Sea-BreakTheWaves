@@ -146,21 +146,27 @@ func (c *Consumer) RunOnce(ctx context.Context) (result Result, resultErr error)
 	c.Logger.InfoContext(ctx, "community warehouse batch started", "event", "warehouse.community.batch.started",
 		"producer", c.Stream.Producer, "consumer", c.Stream.Consumer)
 	defer func() {
-		outcome, code := "succeeded", ""
+		outcome, code, level := "succeeded", "", slog.LevelInfo
 		if resultErr != nil {
-			outcome, code = "failed", "WAREHOUSE_SOURCE_FAILED"
+			outcome, code, level = "failed", "WAREHOUSE_SOURCE_FAILED", slog.LevelError
 			if errors.Is(resultErr, ErrContract) {
-				outcome, code = "rejected", "SOURCE_CONTRACT_MISMATCH"
+				outcome, code, level = "rejected", "SOURCE_CONTRACT_MISMATCH", slog.LevelWarn
 			}
 		}
-		c.Logger.LogAttrs(ctx, slog.LevelInfo, "community warehouse batch finished",
+		attrs := []slog.Attr{
 			slog.String("event", "warehouse.community.batch.finished"), slog.String("outcome", outcome),
 			slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000),
-			slog.String("error_code", code), slog.String("producer", c.Stream.Producer),
+			slog.String("producer", c.Stream.Producer),
 			slog.String("consumer", c.Stream.Consumer), slog.Int("read", result.Read),
 			slog.Int("new_rows", result.NewRows), slog.Int("replayed_rows", result.ReplayedRows),
 			slog.Int64("committed_offset", result.CommittedOffset),
-			slog.Int64("acknowledged_offset", result.AcknowledgedOffset))
+			slog.Int64("acknowledged_offset", result.AcknowledgedOffset),
+		}
+		if resultErr != nil {
+			attrs = append(attrs, slog.String("error_code", code), slog.String("error_type", fmt.Sprintf("%T", resultErr)),
+				slog.String("error_message", resultErr.Error()))
+		}
+		c.Logger.LogAttrs(ctx, level, "community warehouse batch finished", attrs...)
 	}()
 	batch, err := c.Source.ReadEvents(ctx, c.Stream.Consumer, c.Stream.Producer, c.limit())
 	if err != nil {
@@ -272,6 +278,9 @@ func (c *Consumer) admit(ctx context.Context, item eventing.Item) (admittedRow, 
 	}
 	var payload sourcePayload
 	if err := strictJSON(bytes.NewReader(item.Event.Payload), &payload); err != nil {
+		return admittedRow{}, ErrContract
+	}
+	if !explicitNullSourceFields(item.Event.Payload) {
 		return admittedRow{}, ErrContract
 	}
 	row, err := sourceRow(item, receipt, fact, payload)
@@ -421,6 +430,15 @@ func optional(value string) *string {
 	return &value
 }
 
+func jsonNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+func explicitNullSourceFields(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	return json.Unmarshal(raw, &fields) == nil && jsonNull(fields["target_revision"]) && jsonNull(fields["aggregate_version"])
+}
+
 func strictJSON(reader io.Reader, value any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
@@ -542,35 +560,35 @@ func sameOptional(left, right *string) bool {
 }
 
 type ODSRow struct {
-	Producer           string          `json:"producer"`
-	SourceOffset       int64           `json:"source_offset"`
-	EventID            string          `json:"event_id"`
-	EventType          string          `json:"event_type"`
-	AggregateID        string          `json:"aggregate_id"`
-	AggregateVersion   int64           `json:"aggregate_version"`
-	OperationID        string          `json:"operation_id"`
-	OccurredAt         string          `json:"occurred_at"`
-	Issuer             string          `json:"issuer"`
-	SubjectID          string          `json:"subject_id"`
-	TargetType         string          `json:"target_type"`
-	TargetID           string          `json:"target_id"`
-	TargetRevision     *string         `json:"target_revision"`
-	RevisionStatus     string          `json:"revision_status"`
-	Operation          string          `json:"operation"`
-	SourceRef          string          `json:"source_ref"`
-	CommentID          *string         `json:"comment_id"`
-	ParentCommentID    *string         `json:"parent_comment_id"`
-	OldState           *int16          `json:"old_state"`
-	NewState           *int16          `json:"new_state"`
-	VisibilityState    *int16          `json:"visibility_state"`
-	SearchEvidence     *bool           `json:"search_evidence"`
-	PredecessorEventID *string         `json:"predecessor_event_id"`
-	EventTime          string          `json:"event_time"`
-	AvailableAt        string          `json:"available_at"`
-	DCReceivedAt       string          `json:"dc_received_at"`
-	SourceEventHash    string          `json:"source_event_hash"`
-	TechnicalReceipt   json.RawMessage `json:"technical_receipt"`
-	EventSpec          json.RawMessage `json:"event_spec"`
+	Producer           string  `json:"producer"`
+	SourceOffset       int64   `json:"source_offset"`
+	EventID            string  `json:"event_id"`
+	EventType          string  `json:"event_type"`
+	AggregateID        string  `json:"aggregate_id"`
+	AggregateVersion   int64   `json:"aggregate_version"`
+	OperationID        string  `json:"operation_id"`
+	OccurredAt         string  `json:"occurred_at"`
+	Issuer             string  `json:"issuer"`
+	SubjectID          string  `json:"subject_id"`
+	TargetType         string  `json:"target_type"`
+	TargetID           string  `json:"target_id"`
+	TargetRevision     *string `json:"target_revision"`
+	RevisionStatus     string  `json:"revision_status"`
+	Operation          string  `json:"operation"`
+	SourceRef          string  `json:"source_ref"`
+	CommentID          *string `json:"comment_id"`
+	ParentCommentID    *string `json:"parent_comment_id"`
+	OldState           *int16  `json:"old_state"`
+	NewState           *int16  `json:"new_state"`
+	VisibilityState    *int16  `json:"visibility_state"`
+	SearchEvidence     *bool   `json:"search_evidence"`
+	PredecessorEventID *string `json:"predecessor_event_id"`
+	EventTime          string  `json:"event_time"`
+	AvailableAt        string  `json:"available_at"`
+	DCReceivedAt       string  `json:"dc_received_at"`
+	SourceEventHash    string  `json:"source_event_hash"`
+	TechnicalReceipt   string  `json:"technical_receipt"`
+	EventSpec          string  `json:"event_spec"`
 }
 
 func ExportODS(ctx context.Context, db *pgxpool.Pool) ([]byte, error) {
