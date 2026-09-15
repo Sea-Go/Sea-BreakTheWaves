@@ -40,7 +40,7 @@ flowchart LR
 
 ## 覆盖对象与交接
 
-`CoveragePublisher.Publish` 一次只接收一个固定 `Stream`。它在 repeatable-read 快照里要求 ODS 恰好覆盖 `1..W`，审计每个已保存窗口的原始 DC batch hash，再从可重叠的窗口中确定性选一条从 1 连续到 W 的批次证据链；W 必须是其中一个真实批次边界。已保存的其他窗口仍是不可变读取证据，**batch hash 不充当业务水位**。发布前再次读取每条 DC receipt 和 RTW authority。
+`CoveragePublisher.Publish` 一次只接收一个固定 `Stream`。它在 repeatable-read 快照里要求 ODS 恰好覆盖 `1..W`，审计每个已保存窗口的原始 DC batch hash，再从可重叠的窗口中确定性选一条从 1 连续到 W 的批次证据链；W 必须是其中一个真实批次边界。已保存的其他窗口仍是不可变读取证据，**batch hash 不充当业务水位**。发布前再次读取每条 DC receipt 和 RTW authority。当前只给完整 prefix 内实际出现过的 UID 写主体 receipt；**任意 UID 在该 prefix 中零事件的空切片证明尚未实现**，不能用“没有 receipt”推断该用户没有行为。
 
 每个 producer 独立写入以下内容寻址对象：
 
@@ -59,7 +59,7 @@ flowchart LR
 - comment：`comment_create`、`comment_like`、`comment_unlike`、`comment_delete`；
 - like：`target_like`、`target_unlike`。
 
-四个 dbt data test 检查来源精度、支持的 transition、前驱一致性和 `(producer,source_offset)` 唯一性。DWD schema 明确不存在身份额外分区、impression、label、sample 或 content revision 列。
+四个 dbt data test 检查来源精度、支持的 transition、前驱一致性和 `(producer,source_offset)` 唯一性。DWD schema 明确不存在身份额外分区、impression、label、sample 或 content revision 列。RTW 目标点赞来源也可能产生 `dislike/undislike`；它们作为合法领域互动会被 ODS 与来源 prefix 保存，但当前 DWD 的目标互动过滤条件只产出 `like/unlike`，**没有为被过滤的点踩/取消点踩写排除清单或异常 receipt**。下游不能把 DWD 行数当成完整目标互动行数，也不能把被过滤的点踩解释成未点击负例。
 
 ## 2026-09-15 同次本机验收
 
@@ -79,7 +79,7 @@ flowchart LR
 
 真实链由 RTW 业务事务产生六条事实，经正式 dispatcher 到 DC，再由两个 warehouse consumer 写 PG。测试故意执行错 authority、错 hash、错前驱、缺 offset 四种拒收，并让两个 producer 的首次 ACK 响应丢失后重启；随后发布 comment `1..4`、like `1..2` 两份 prefix 和三份主体 receipt。真实 ClickHouse/dbt 执行结果为 `PASS=5`，ODS、DWD 和全部覆盖对象均写入同次 SeaweedFS 并按内容 hash 回读。
 
-本项状态为 `LOCAL_VERIFIED`。未验证真实 Kafka/Redis、长期常驻调度、线上数据库、生产对象存储、DWS 特征、样本、训练、模型效果或推荐激活。下游接手时必须分别绑定两个 prefix manifest，并把这些 transition 当作领域事实历史；任何更高层含义都需要新的、独立验收来源。
+本项状态为 `LOCAL_VERIFIED`。同次本机验收解析了 warehouse JSON 结构日志和结果字段；**warehouse 的 Trace、指标与 Collector 查询尚未验收**，不能声称跨 RTW/DC/warehouse 的观测链已闭合。真实 Kafka/Redis、长期常驻调度、线上数据库、生产对象存储、DWS 特征、样本、训练、模型效果或推荐激活也未验证。下游接手时必须分别绑定两个 prefix manifest，并把这些 transition 当作领域事实历史；任何更高层含义都需要新的、独立验收来源。
 
 运行示例：
 
