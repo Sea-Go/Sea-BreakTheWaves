@@ -50,6 +50,11 @@ if [[ -n "${SEA_BTW_WIKI_DWD_EVIDENCE_DIR:-}" ]]; then
     go test -race -count=1 -v -run '^TestRTWRealFactSetDWDSourceBundle$' \
     ./internal/warehouse/wikiqualitydwd >"$evidence/wikiquality-dwd-source-test.log" 2>&1
 fi
+if [[ -n "${SEA_BTW_WIKI_ASOF_EVIDENCE_DIR:-}" ]]; then
+  GOFLAGS='-mod=readonly -p=2' GOMAXPROCS=2 \
+    go test -race -count=1 -v -run '^TestRTWRealWikiDCCurrentAlignment$' \
+    ./internal/evaluation/wiki_quality/sourceproof >"$evidence/asof-current-source-test.log" 2>&1
+fi
 GOFLAGS='-mod=readonly -p=2' GOMAXPROCS=2 \
   go vet ./internal/warehouse/wikiqualitysource \
     ./internal/evaluation/wiki_quality/sourceproof \
@@ -57,4 +62,7 @@ GOFLAGS='-mod=readonly -p=2' GOMAXPROCS=2 \
 printf 'RTW original/explicit history, real DC ACK-prefix and same-PG BTW ODS source projection passed.\n'
 if [[ -n "${SEA_BTW_WIKI_DWD_EVIDENCE_DIR:-}" ]]; then
   printf 'Caller-owned Wiki FactSet offline source bundle also passed before PG shutdown.\n'
+fi
+if [[ -n "${SEA_BTW_WIKI_ASOF_EVIDENCE_DIR:-}" ]]; then
+  printf 'RTW read-time source V and DC acknowledged cutoff C aligned on the same PG prefix; human quality remains not_evaluable.\n'
 fi
