@@ -1,5 +1,5 @@
-// Command worker runs one explicitly selected local content job or favorite
-// fact consumer through tRPC-Agent-Go. Each mode uses a separate process.
+// Command worker runs one explicitly selected local content job or user fact
+// consumer through tRPC-Agent-Go. Each mode uses a separate process.
 package main
 
 import (
@@ -39,7 +39,7 @@ func run() int {
 	cfg, err := loadConfig(os.Getenv)
 	if err != nil {
 		event := "content.worker.configuration_failed"
-		if cfg.JobType == favoriteFactJobType {
+		if isFactJobType(cfg.JobType) {
 			event = "usermodel.worker.configuration_failed"
 		}
 		bootstrapLogger(os.Stderr, cfg).ErrorContext(ctx, "worker configuration rejected",
@@ -48,8 +48,8 @@ func run() int {
 		return 2
 	}
 	serveMode := serve
-	if cfg.JobType == favoriteFactJobType {
-		serveMode = serveFavoriteFacts
+	if isFactJobType(cfg.JobType) {
+		serveMode = serveFactConsumer
 	}
 	if err := serveMode(ctx, cfg, os.Stderr); err != nil {
 		return 1
@@ -76,7 +76,7 @@ func bootstrapLogger(output io.Writer, cfg config) *slog.Logger {
 		return attr
 	}})
 	component := "content"
-	if cfg.JobType == favoriteFactJobType {
+	if isFactJobType(cfg.JobType) {
 		component = "usermodel"
 	}
 	return slog.New(handler).With("service", workerService(cfg), "environment", known(cfg.Environment),
@@ -85,8 +85,13 @@ func bootstrapLogger(output io.Writer, cfg config) *slog.Logger {
 }
 
 func workerService(cfg config) string {
-	if cfg.JobType == favoriteFactJobType {
+	switch cfg.JobType {
+	case favoriteFactJobType:
 		return "sea-btw-favorite-fact-worker"
+	case commentFactJobType:
+		return "sea-btw-comment-fact-worker"
+	case likeFactJobType:
+		return "sea-btw-like-fact-worker"
 	}
 	if cfg.JobType == app.IndexJobType {
 		return "sea-btw-index-worker"

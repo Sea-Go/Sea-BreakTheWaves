@@ -15,7 +15,11 @@ var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var revision = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var factConsumer = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
 
-const favoriteFactJobType = "usermodel.favorite-facts.v1"
+const (
+	favoriteFactJobType = "usermodel.favorite-facts.v1"
+	commentFactJobType  = "usermodel.comment-facts.v1"
+	likeFactJobType     = "usermodel.like-facts.v1"
+)
 
 type config struct {
 	JobType        string
@@ -53,12 +57,13 @@ type config struct {
 	FactSchema     string
 	AuthorityURL   string
 	AuthorityToken string
+	FactProducer   string
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
 	var c config
-	if getenv("BTW_JOB_TYPE") == favoriteFactJobType {
-		return loadFavoriteFactConfig(getenv)
+	if isFactJobType(getenv("BTW_JOB_TYPE")) {
+		return loadFactConfig(getenv)
 	}
 	if getenv("BTW_MODE") != "local" || getenv("BTW_ARTIFACT_STORE") != "local" {
 		return c, errors.New("BTW_MODE and BTW_ARTIFACT_STORE must explicitly be local")
@@ -152,13 +157,29 @@ func loadConfig(getenv func(string) string) (config, error) {
 	return c, nil
 }
 
-func loadFavoriteFactConfig(getenv func(string) string) (config, error) {
-	c := config{JobType: favoriteFactJobType}
+func isFactJobType(jobType string) bool {
+	return jobType == favoriteFactJobType || jobType == commentFactJobType || jobType == likeFactJobType
+}
+
+func loadFactConfig(getenv func(string) string) (config, error) {
+	c := config{JobType: getenv("BTW_JOB_TYPE")}
 	if getenv("BTW_MODE") != "local" {
-		return c, errors.New("favorite fact consumer requires BTW_MODE=local")
+		return c, errors.New("user fact consumer requires BTW_MODE=local")
 	}
-	for _, key := range []string{"BTW_DC_URL", "BTW_DC_TOKEN", "BTW_FAVORITE_AUTHORITY_URL",
-		"BTW_FAVORITE_AUTHORITY_TOKEN", "BTW_FACT_POSTGRES_DSN", "BTW_FACT_SCHEMA", "BTW_FACT_CONSUMER",
+	authorityURLKey, authorityTokenKey := "BTW_COMMUNITY_AUTHORITY_URL", "BTW_COMMUNITY_AUTHORITY_TOKEN"
+	switch c.JobType {
+	case favoriteFactJobType:
+		c.FactProducer = "rtw.community.favorite"
+		authorityURLKey, authorityTokenKey = "BTW_FAVORITE_AUTHORITY_URL", "BTW_FAVORITE_AUTHORITY_TOKEN"
+	case commentFactJobType:
+		c.FactProducer = "rtw.comment-rpc"
+	case likeFactJobType:
+		c.FactProducer = "rtw.like-mq"
+	default:
+		return c, errors.New("unsupported user fact job type")
+	}
+	for _, key := range []string{"BTW_DC_URL", "BTW_DC_TOKEN", authorityURLKey,
+		authorityTokenKey, "BTW_FACT_POSTGRES_DSN", "BTW_FACT_SCHEMA", "BTW_FACT_CONSUMER",
 		"BTW_FACT_BATCH_LIMIT", "BTW_POLL_INTERVAL", "BTW_HTTP_TIMEOUT", "BTW_OTLP_TRACES_URL",
 		"BTW_METRICS_ADDR", "BTW_SERVICE_VERSION", "BTW_ENVIRONMENT", "BTW_INSTANCE_ID"} {
 		if strings.TrimSpace(getenv(key)) == "" {
@@ -166,7 +187,7 @@ func loadFavoriteFactConfig(getenv func(string) string) (config, error) {
 		}
 	}
 	c.DCURL, c.DCToken = getenv("BTW_DC_URL"), getenv("BTW_DC_TOKEN")
-	c.AuthorityURL, c.AuthorityToken = getenv("BTW_FAVORITE_AUTHORITY_URL"), getenv("BTW_FAVORITE_AUTHORITY_TOKEN")
+	c.AuthorityURL, c.AuthorityToken = getenv(authorityURLKey), getenv(authorityTokenKey)
 	c.FactDSN, c.FactSchema, c.FactConsumer = getenv("BTW_FACT_POSTGRES_DSN"), getenv("BTW_FACT_SCHEMA"), getenv("BTW_FACT_CONSUMER")
 	c.OTLPTracesURL, c.MetricsAddr = getenv("BTW_OTLP_TRACES_URL"), getenv("BTW_METRICS_ADDR")
 	c.Version, c.Environment, c.InstanceID = getenv("BTW_SERVICE_VERSION"), getenv("BTW_ENVIRONMENT"), getenv("BTW_INSTANCE_ID")
@@ -184,13 +205,13 @@ func loadFavoriteFactConfig(getenv func(string) string) (config, error) {
 		return c, errors.New("fact consumer and schema must be fixed bounded identifiers")
 	}
 	if len(c.AuthorityToken) < 32 {
-		return c, errors.New("BTW_FAVORITE_AUTHORITY_TOKEN must have at least 32 bytes")
+		return c, fmt.Errorf("%s must have at least 32 bytes", authorityTokenKey)
 	}
 	if !revision.MatchString(c.Version) || (c.Environment != "local" && c.Environment != "test") {
 		return c, errors.New("BTW_SERVICE_VERSION must be a full commit SHA and BTW_ENVIRONMENT must be local or test")
 	}
 	for name, raw := range map[string]string{"BTW_DC_URL": c.DCURL,
-		"BTW_FAVORITE_AUTHORITY_URL": c.AuthorityURL, "BTW_OTLP_TRACES_URL": c.OTLPTracesURL} {
+		authorityURLKey: c.AuthorityURL, "BTW_OTLP_TRACES_URL": c.OTLPTracesURL} {
 		if err := endpoint(raw); err != nil {
 			return c, fmt.Errorf("%s: %w", name, err)
 		}
