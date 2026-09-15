@@ -129,6 +129,7 @@ type wikiWorkerOwnerFixture struct {
 	claims, accepts, reads int
 	lostFirstAccept        bool
 	acceptedRequest        ridethewind.AcceptCompileReq
+	supersedeOnRead        int
 }
 
 type wikiWorkerTrackedObjects struct {
@@ -146,6 +147,9 @@ func (s *wikiWorkerTrackedObjects) Get(ctx context.Context, ref corpus.Ref) ([]b
 
 func (f *wikiWorkerOwnerFixture) GetCompile(context.Context, string) (ridethewind.Compile, error) {
 	f.reads++
+	if f.supersedeOnRead > 0 && f.reads == f.supersedeOnRead {
+		f.compile.State, f.compile.CancelVersion = "SUPERSEDED", f.compile.CancelVersion+1
+	}
 	return f.compile, nil
 }
 func (f *wikiWorkerOwnerFixture) GetRevision(_ context.Context, id string) (ridethewind.Revision, error) {
@@ -342,6 +346,25 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	if result, err := worker4.ProcessClaim(context.Background(), job4); !errors.Is(err, ErrWikiCompileRun) ||
 		result.Accepted.State != "" || badObjects.puts != 0 || owner4.accepts != 0 || jobs4.completes != 0 {
 		t.Fatalf("bad model ref escaped into Wiki object/RTW/DC: %+v %v", result, err)
+	}
+	// A newer same-page Compile can supersede the old RTW generation after
+	// model text exists. The old claim must not Put or overwrite a human page.
+	job5 := job
+	job5.ID, job5.AttemptID = "job-5", "attempt-5"
+	oldObjects := &wikiWorkerTrackedObjects{store: objects}
+	owner5 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions,
+		objects: oldObjects, supersedeOnRead: 2}
+	jobs5 := &wikiWorkerJobsFixture{job: job5, owner: owner5}
+	model5 := &wikiWorkerFixedModel{}
+	worker5, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job5.WorkerID, LeaseSeconds: 20},
+		jobs5, owner5, wikiWorkerRunFixture{model5, observed}, oldObjects, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := worker5.ProcessClaim(context.Background(), job5); !errors.Is(err, ErrWikiCompileFence) ||
+		result.Accepted.State != "" || model5.calls != 1 || oldObjects.puts != 0 ||
+		owner5.accepts != 0 || jobs5.completes != 0 {
+		t.Fatalf("superseded Compile overwrote old Wiki generation: %+v %v", result, err)
 	}
 	badJob := job
 	badJob.ID, badJob.InputHash = "job-malformed", strings.Repeat("0", 64)
