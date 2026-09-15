@@ -308,6 +308,8 @@ func summaryError(err error) (int, string, string) {
 		return http.StatusGatewayTimeout, "timed_out", "TIMEOUT"
 	case errors.Is(err, searchdomain.ErrInvalid):
 		return http.StatusBadRequest, "rejected", "SEARCH_INVALID"
+	case errors.Is(err, searchdomain.ErrUnavailable):
+		return http.StatusServiceUnavailable, "failed", "SEARCH_PROFILE_UNAVAILABLE"
 	case errors.Is(err, searchdomain.ErrReceipt), errors.Is(err, searchdomain.ErrAcceptedHistory):
 		return http.StatusConflict, "rejected", "SEARCH_RECEIPT_CONFLICT"
 	default:

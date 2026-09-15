@@ -157,13 +157,23 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	// This one-query planner is the only advertised profile in local-exact
-	// mode. Detailed and model-planned tiers require a separate implementation.
-	planner := searchdomain.PlanFunc(func(_ context.Context, in searchdomain.PlanInput) ([]string, error) {
-		if in.Round != 1 || in.Depth != searchdomain.Fast || in.Intelligence != searchdomain.Low {
+	// Low keeps the original one-query contract. Medium can run only after the
+	// optional root Graph's native planning Agent has validated new queries.
+	planner := searchdomain.PlanFunc(func(ctx context.Context, in searchdomain.PlanInput) ([]string, error) {
+		if in.Round != 1 || in.Depth != searchdomain.Fast {
 			return nil, searchdomain.ErrUnavailable
 		}
-		return []string{in.Query}, nil
+		switch in.Intelligence {
+		case searchdomain.Low:
+			return []string{in.Query}, nil
+		case searchdomain.Medium:
+			if cfg.FastMedium == nil {
+				return nil, searchdomain.ErrUnavailable
+			}
+			return searchdomain.PlanFastMedium(ctx, in)
+		default:
+			return nil, searchdomain.ErrUnavailable
+		}
 	})
 	searcher, err := searchdomain.New(denseLane, sparseLane, multiLane, planner, checker, cfg.Policy)
 	if err != nil {
@@ -173,8 +183,12 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
+	maxReads := cfg.Policy.Profiles[searchdomain.Fast][searchdomain.Low].MaxEvidence
+	if cfg.FastMedium != nil && cfg.Policy.Profiles[searchdomain.Fast][searchdomain.Medium].MaxEvidence > maxReads {
+		maxReads = cfg.Policy.Profiles[searchdomain.Fast][searchdomain.Medium].MaxEvidence
+	}
 	delivery, err := searchdomain.NewDelivery(searcher, checker, citations, citations,
-		searchdomain.EvidenceLimits{MaxReads: cfg.Policy.Profiles[searchdomain.Fast][searchdomain.Low].MaxEvidence,
+		searchdomain.EvidenceLimits{MaxReads: maxReads,
 			MaxQuoteRunes: cfg.MaxQuoteRunes})
 	if err != nil {
 		return err
@@ -184,10 +198,17 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		return err
 	}
 	model := gatewayModel{name: cfg.ModelName, url: cfg.ModelURL, key: cfg.ModelKey}
-	// This executable currently exposes only fast/low. The 512-token cap is
-	// explicit for that product profile, not a default for future tiers.
-	boundary, err = searchdomain.NewRootSessionBoundary(delivery, model, history, bundle,
-		searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+	// The final no-tool summary remains capped at 512 output tokens. Medium
+	// additionally bounds its own one-call planning stage and total wall time.
+	if cfg.FastMedium == nil {
+		boundary, err = searchdomain.NewRootSessionBoundary(delivery, model, history, bundle,
+			searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+	} else {
+		plannerModel := gatewayModel{name: cfg.ModelName, url: cfg.ModelURL, key: cfg.ModelKey, stage: "plan"}
+		boundary, err = searchdomain.NewRootSessionBoundaryWithFastMedium(delivery, model, plannerModel, history, bundle,
+			searchdomain.FastMediumModelLimits{MaxOutputTokens: cfg.FastMedium.PlannerMaxOutputTokens,
+				WallTime: cfg.FastMedium.WallTime}, searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+	}
 	if err != nil {
 		return fmt.Errorf("construct root search session: %w", err)
 	}
@@ -233,10 +254,15 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	stopped := make(chan error, 2)
 	go func() { stopped <- apiServer.Serve(apiListener) }()
 	go func() { stopped <- metricsServer.Serve(metricsListener) }()
+	supportedProfile := "fast.low"
+	if cfg.FastMedium != nil {
+		supportedProfile = "fast.low,fast.medium.summary"
+	}
 	logger.InfoContext(ctx, "search API started", "event", "search.api.started", "outcome", "succeeded",
 		"api_addr", apiListener.Addr().String(), "metrics_addr", metricsListener.Addr().String(),
-		"backend", "local-exact", "supported_profile", "fast.low",
+		"backend", "local-exact", "supported_profile", supportedProfile,
 		"representation_max_in_flight", cfg.RepresentationMaxInFlight,
+		"tools_supported_profile", "fast.low",
 		"tools_route", searchhttp.ToolsRoute)
 	select {
 	case <-ctx.Done():
