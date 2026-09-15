@@ -77,9 +77,13 @@ type FactWorkerConfig struct {
 // domain action together. A binder must obtain SubjectRef from its source's
 // authoritative owner, never from the DC event payload alone.
 type FactEventBinding struct {
-	EventType      string
-	SchemaVersion  int
-	Action         usermodel.Action
+	EventType     string
+	SchemaVersion int
+	Action        usermodel.Action
+	// AllowedActions is used only when one source EventType represents a
+	// state transition whose trusted RTW authority selects assert, correct, or
+	// retract from old/new state. It is mutually exclusive with Action.
+	AllowedActions []usermodel.Action
 	Binder         TrustedFactBinder
 	EvidenceBinder TrustedFactEvidenceBinder
 }
@@ -116,7 +120,7 @@ func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedF
 		}
 		for _, binding := range cfg.Bindings {
 			if !factDeliveryToken.MatchString(binding.EventType) || binding.SchemaVersion < 1 ||
-				(binding.Action != usermodel.Assert && binding.Action != usermodel.Correct && binding.Action != usermodel.Retract) ||
+				!validFactBindingActions(binding.Action, binding.AllowedActions) ||
 				(nilDependency(binding.Binder) == nilDependency(binding.EvidenceBinder)) {
 				return nil, fmt.Errorf("invalid fact event binding: %w", ErrFactDeliveryContract)
 			}
@@ -127,6 +131,30 @@ func NewFactWorker(cfg FactWorkerConfig, source FactEventSource, binder TrustedF
 		}
 	}
 	return &FactWorker{config: cfg, source: source, bindings: bindings, graph: graph, receipts: receipts, observed: observed}, nil
+}
+
+func validFactBindingActions(action usermodel.Action, allowed []usermodel.Action) bool {
+	if action != "" {
+		return len(allowed) == 0 && validFactAction(action)
+	}
+	if len(allowed) < 2 || len(allowed) > 3 {
+		return false
+	}
+	seen := make(map[usermodel.Action]struct{}, len(allowed))
+	for _, candidate := range allowed {
+		if !validFactAction(candidate) {
+			return false
+		}
+		if _, duplicate := seen[candidate]; duplicate {
+			return false
+		}
+		seen[candidate] = struct{}{}
+	}
+	return true
+}
+
+func validFactAction(action usermodel.Action) bool {
+	return action == usermodel.Assert || action == usermodel.Correct || action == usermodel.Retract
 }
 
 type FactDeliveryResult struct {
@@ -261,7 +289,7 @@ func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (re
 	if err != nil {
 		return receipt, fmt.Errorf("bind RTW-issued fact subject and EventSpec: %w", err)
 	}
-	if binding.Action != "" && bound.Action != binding.Action {
+	if !bindingAllowsAction(binding, bound.Action) {
 		return receipt, fmt.Errorf("trusted fact binder action differs from event type: %w", ErrFactDeliveryContract)
 	}
 	occurredAt, _ := time.Parse(time.RFC3339Nano, item.Event.OccurredAt)
@@ -304,6 +332,18 @@ func (w *FactWorker) processItem(parent context.Context, item eventing.Item) (re
 		receipt.Replay = true
 	}
 	return receipt, nil
+}
+
+func bindingAllowsAction(binding FactEventBinding, action usermodel.Action) bool {
+	if binding.Action != "" {
+		return binding.Action == action
+	}
+	for _, allowed := range binding.AllowedActions {
+		if allowed == action {
+			return true
+		}
+	}
+	return false
 }
 
 func factWorkerOutcome(err error) (string, string) {

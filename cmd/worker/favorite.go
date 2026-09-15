@@ -19,14 +19,14 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 )
 
-// serveFavoriteFacts is selected only by the explicit favorite fact job type.
-// It borrows an already-migrated user fact schema and never creates tables.
-func serveFavoriteFacts(ctx context.Context, cfg config, output io.Writer) (resultErr error) {
+// serveFactConsumer is selected only by an explicit user fact job type. It
+// borrows an already-migrated user fact schema and never creates tables.
+func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resultErr error) {
 	bundle, err := telemetry.New(ctx, telemetry.Config{Service: workerService(cfg), Environment: cfg.Environment,
 		Version: cfg.Version, InstanceID: cfg.InstanceID, Output: output, Level: slog.LevelInfo,
 		OTLPEndpoint: cfg.OTLPTracesURL, SampleRatio: 1})
 	if err != nil {
-		bootstrapLogger(output, cfg).ErrorContext(ctx, "favorite fact telemetry initialization failed",
+		bootstrapLogger(output, cfg).ErrorContext(ctx, "user fact telemetry initialization failed",
 			"event", "usermodel.worker.start_failed", "outcome", "failed", "error_code", "TELEMETRY_INIT_FAILED",
 			"error_type", fmt.Sprintf("%T", err), "error_message", safeError(err, cfg))
 		return err
@@ -63,11 +63,11 @@ func serveFavoriteFacts(ctx context.Context, cfg config, output io.Writer) (resu
 		}
 		resultErr = errors.Join(resultErr, bundle.Close(shutdown))
 		if resultErr != nil {
-			logger.ErrorContext(context.Background(), "favorite fact worker stopped with error",
+			logger.ErrorContext(context.Background(), "user fact worker stopped with error",
 				"event", "usermodel.worker.stopped", "outcome", "failed", "error_code", "WORKER_STOPPED",
 				"error_type", fmt.Sprintf("%T", resultErr), "error_message", safeError(resultErr, cfg))
 		} else {
-			logger.InfoContext(context.Background(), "favorite fact worker stopped",
+			logger.InfoContext(context.Background(), "user fact worker stopped",
 				"event", "usermodel.worker.stopped", "outcome", "succeeded")
 		}
 	}()
@@ -85,10 +85,9 @@ func serveFavoriteFacts(ctx context.Context, cfg config, output io.Writer) (resu
 	if err != nil {
 		return fmt.Errorf("construct DataCenter client: %w", err)
 	}
-	authority, err := app.NewFavoriteAuthorityBinder(app.FavoriteAuthorityBinderConfig{
-		BaseURL: cfg.AuthorityURL, Token: cfg.AuthorityToken, Client: rtwClient})
+	bindings, err := factBindings(cfg, rtwClient)
 	if err != nil {
-		return fmt.Errorf("construct RTW favorite authority binder: %w", err)
+		return fmt.Errorf("construct RTW fact authority binder: %w", err)
 	}
 	pgCfg, err := pgxpool.ParseConfig(cfg.FactDSN)
 	if err != nil {
@@ -112,17 +111,14 @@ func serveFavoriteFacts(ctx context.Context, cfg config, output io.Writer) (resu
 		return errors.New("user fact schema must be migrated before worker start")
 	}
 	store := usermodel.NewStore(pool, bundle)
-	graph, err = usermodel.NewFactGraphRuntime("sea-btw-favorite-facts", store, inmemory.NewSessionService(), bundle)
+	graph, err = usermodel.NewFactGraphRuntime(workerService(cfg), store, inmemory.NewSessionService(), bundle)
 	if err != nil {
 		return fmt.Errorf("construct tRPC fact Graph/Runner: %w", err)
 	}
-	worker, err := app.NewFactWorker(app.FactWorkerConfig{Consumer: cfg.FactConsumer, Producer: "rtw.community.favorite",
-		BatchLimit: cfg.FactBatchLimit, Bindings: []app.FactEventBinding{
-			{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: authority},
-			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: authority},
-		}}, dc, nil, graph, store, bundle)
+	worker, err := app.NewFactWorker(app.FactWorkerConfig{Consumer: cfg.FactConsumer, Producer: cfg.FactProducer,
+		BatchLimit: cfg.FactBatchLimit, Bindings: bindings}, dc, nil, graph, store, bundle)
 	if err != nil {
-		return fmt.Errorf("construct favorite fact consumer: %w", err)
+		return fmt.Errorf("construct user fact consumer: %w", err)
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", bundle.MetricsHandler())
@@ -134,10 +130,47 @@ func serveFavoriteFacts(ctx context.Context, cfg config, output io.Writer) (resu
 	}
 	metricsErrors := make(chan error, 1)
 	go func() { metricsErrors <- metrics.Serve(listener) }()
-	logger.InfoContext(ctx, "favorite fact worker started", "event", "usermodel.worker.started", "outcome", "succeeded",
-		"consumer", cfg.FactConsumer, "producer", "rtw.community.favorite", "batch_limit", cfg.FactBatchLimit,
+	logger.InfoContext(ctx, "user fact worker started", "event", "usermodel.worker.started", "outcome", "succeeded",
+		"consumer", cfg.FactConsumer, "producer", cfg.FactProducer, "batch_limit", cfg.FactBatchLimit,
 		"metrics_addr", listener.Addr().String())
 	return pollFavoriteFacts(ctx, worker, cfg, logger, metricsErrors)
+}
+
+func factBindings(cfg config, rtwClient *http.Client) ([]app.FactEventBinding, error) {
+	switch cfg.JobType {
+	case favoriteFactJobType:
+		authority, err := app.NewFavoriteAuthorityBinder(app.FavoriteAuthorityBinderConfig{
+			BaseURL: cfg.AuthorityURL, Token: cfg.AuthorityToken, Client: rtwClient})
+		if err != nil {
+			return nil, err
+		}
+		return []app.FactEventBinding{
+			{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: authority},
+			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: authority},
+		}, nil
+	case commentFactJobType:
+		authority, err := app.NewCommunityAuthorityBinder(app.CommunityAuthorityBinderConfig{
+			BaseURL: cfg.AuthorityURL, Token: cfg.AuthorityToken, Producer: cfg.FactProducer, Client: rtwClient})
+		if err != nil {
+			return nil, err
+		}
+		return []app.FactEventBinding{
+			{EventType: "community.comment.created", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: authority},
+			{EventType: "community.comment.deleted", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: authority},
+			{EventType: "community.comment.interaction", SchemaVersion: 1,
+				AllowedActions: []usermodel.Action{usermodel.Assert, usermodel.Correct, usermodel.Retract}, EvidenceBinder: authority},
+		}, nil
+	case likeFactJobType:
+		authority, err := app.NewCommunityAuthorityBinder(app.CommunityAuthorityBinderConfig{
+			BaseURL: cfg.AuthorityURL, Token: cfg.AuthorityToken, Producer: cfg.FactProducer, Client: rtwClient})
+		if err != nil {
+			return nil, err
+		}
+		return []app.FactEventBinding{{EventType: "community.target.interaction", SchemaVersion: 1,
+			AllowedActions: []usermodel.Action{usermodel.Assert, usermodel.Correct, usermodel.Retract}, EvidenceBinder: authority}}, nil
+	default:
+		return nil, app.ErrFactDeliveryContract
+	}
 }
 
 func pollFavoriteFacts(ctx context.Context, worker *app.FactWorker, cfg config, logger *slog.Logger,
@@ -164,7 +197,7 @@ func pollFavoriteFacts(ctx context.Context, worker *app.FactWorker, cfg config, 
 			if errors.Is(err, app.ErrFactDeliveryContract) || errors.Is(err, app.ErrFactDeliveryPending) {
 				outcome = "blocked"
 			}
-			logger.WarnContext(ctx, "favorite fact batch deferred", "event", "usermodel.worker.batch_deferred",
+			logger.WarnContext(ctx, "user fact batch deferred", "event", "usermodel.worker.batch_deferred",
 				"outcome", outcome, "error_code", favoritePollErrorCode(err),
 				"error_type", fmt.Sprintf("%T", err), "error_message", safeError(err, cfg),
 				"retry_after_ms", backoff.Milliseconds())

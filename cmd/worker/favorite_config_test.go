@@ -53,3 +53,39 @@ func TestFavoriteFactModeIsExplicitAndFailsClosed(t *testing.T) {
 		t.Fatalf("content mode's original artifact gate changed: %v", err)
 	}
 }
+
+func communityEnvironment(jobType string) map[string]string {
+	values := favoriteEnvironment()
+	values["BTW_JOB_TYPE"] = jobType
+	delete(values, "BTW_FAVORITE_AUTHORITY_URL")
+	delete(values, "BTW_FAVORITE_AUTHORITY_TOKEN")
+	values["BTW_COMMUNITY_AUTHORITY_URL"] = "http://127.0.0.1:8291"
+	values["BTW_COMMUNITY_AUTHORITY_TOKEN"] = "community-source-token-at-least-32-bytes"
+	return values
+}
+
+func TestCommunityFactModesFixProducerAndAuthority(t *testing.T) {
+	get := func(values map[string]string) func(string) string {
+		return func(key string) string { return values[key] }
+	}
+	for jobType, producer := range map[string]string{
+		commentFactJobType: "rtw.comment-rpc",
+		likeFactJobType:    "rtw.like-mq",
+	} {
+		t.Run(jobType, func(t *testing.T) {
+			values := communityEnvironment(jobType)
+			cfg, err := loadConfig(get(values))
+			if err != nil || cfg.JobType != jobType || cfg.FactProducer != producer ||
+				cfg.AuthorityURL != values["BTW_COMMUNITY_AUTHORITY_URL"] {
+				t.Fatalf("community fact config: %+v %v", cfg, err)
+			}
+			for _, key := range []string{"BTW_COMMUNITY_AUTHORITY_URL", "BTW_COMMUNITY_AUTHORITY_TOKEN"} {
+				broken := communityEnvironment(jobType)
+				delete(broken, key)
+				if _, err := loadConfig(get(broken)); err == nil {
+					t.Fatalf("missing %s accepted", key)
+				}
+			}
+		})
+	}
+}
