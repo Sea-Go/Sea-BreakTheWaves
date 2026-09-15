@@ -6,8 +6,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import json
+import subprocess
+import sys
 
-from export.candidate import export_candidate
 from export.contract import canonical, digest
 from export.serving import PREPROCESSING, load_candidate
 from recommend.tests.test_trainer import fixture
@@ -29,10 +30,18 @@ def main() -> None:
                      checkpoint=checkpoint, **CONFIG)
     preprocessing = root / "preprocessing.identity.json"
     preprocessing.write_bytes(canonical(PREPROCESSING))
+    expected_config = root / "training-config.json"
+    expected_config.write_bytes(canonical(CONFIG))
     serving = root / "serving"
-    exported = export_candidate(manifest, expected_manifest_sha256=manifest_sha,
-                                checkpoint_path=checkpoint, expected_config=CONFIG,
-                                preprocessing_path=preprocessing, output_dir=serving)
+    completed = subprocess.run([
+        sys.executable, "-m", "export", str(manifest),
+        "--expected-manifest-sha256", manifest_sha,
+        "--checkpoint", str(checkpoint),
+        "--expected-config", str(expected_config),
+        "--preprocessing", str(preprocessing),
+        "--output-dir", str(serving),
+    ], check=True, stdout=subprocess.PIPE, text=True)
+    exported = json.loads(completed.stdout)
     loaded, _, _ = load_candidate(serving)
     if loaded != exported or training["status"] != "candidate":
         raise RuntimeError("real trainer/exporter candidate did not round trip")
