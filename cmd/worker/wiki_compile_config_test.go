@@ -14,6 +14,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/jobs"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/content"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 )
 
 func wikiCompileConfigFixture(t *testing.T) map[string]string {
@@ -61,18 +62,45 @@ func (*wikiGateOwner) AcceptCompile(context.Context, ridethewind.AcceptCompileRe
 }
 
 type wikiGateRuns struct {
-	session app.WikiCompileModelSession
-	err     error
-	checks  int
+	session           app.WikiCompileModelSession
+	err               error
+	checks            int
+	opens             int
+	binds             int
+	closes            int
+	bindErr           error
+	closeErr          error
+	observed          *telemetry.Bundle
+	preBound          bool
+	closedAfterBundle bool
 }
 
 func (f *wikiGateRuns) Open(context.Context, content.WikiCompileInput,
 	app.WikiCompileModelSession) (app.WikiCompileRun, error) {
+	f.opens++
 	return nil, errors.New("fixture model must not open during startup gate")
 }
 func (f *wikiGateRuns) CurrentNativeSession(context.Context) (app.WikiCompileModelSession, error) {
 	f.checks++
 	return f.session, f.err
+}
+func (f *wikiGateRuns) BindTelemetry(observed *telemetry.Bundle) error {
+	f.binds++
+	if f.bindErr != nil {
+		return f.bindErr
+	}
+	if observed == nil || !observed.Installed() || observed.Closed() || f.observed != nil || f.preBound {
+		return app.ErrWikiCompileNativeFactory
+	}
+	f.observed = observed
+	return nil
+}
+func (f *wikiGateRuns) Close() error {
+	f.closes++
+	if f.observed != nil && f.observed.Closed() {
+		f.closedAfterBundle = true
+	}
+	return f.closeErr
 }
 
 type wikiGateBucketStore struct {
@@ -145,7 +173,8 @@ func TestWikiCompileCommandRejectsUnownedModelObjectOrResultRef(t *testing.T) {
 		t.Fatalf("explicit Wiki fixture configuration rejected: %+v %v", cfg, err)
 	}
 	deps, jobsFixture, runs := wikiGateFixtureDeps(t, cfg)
-	if err := wikiCompileStartupGate(context.Background(), cfg, deps); err != nil || jobsFixture.claims != 0 || runs.checks != 1 {
+	if err := wikiCompileStartupGate(context.Background(), cfg, deps); err != nil || jobsFixture.claims != 0 ||
+		runs.checks != 1 || runs.binds != 0 || runs.closes != 0 {
 		t.Fatalf("complete isolated Wiki fixture did not cross startup seam: %v", err)
 	}
 	unsupported := cfg
@@ -246,7 +275,7 @@ func TestWikiCompileCommandLogsConfiguredStartupFailureBeforeClaim(t *testing.T)
 	cfg.OTLPTracesURL = "" // Directly inject one runtime failure after the owned gate.
 	var output bytes.Buffer
 	if err := serveWikiCompileWithDeps(context.Background(), cfg, &output, deps); err == nil ||
-		jobsFixture.claims != 0 || runs.checks != 1 {
+		jobsFixture.claims != 0 || runs.checks != 1 || runs.binds != 0 || runs.closes != 1 {
 		t.Fatalf("configured Wiki failure claimed DC job or hid error: err=%v claims=%d checks=%d",
 			err, jobsFixture.claims, runs.checks)
 	}
