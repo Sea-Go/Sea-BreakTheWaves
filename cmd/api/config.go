@@ -234,7 +234,9 @@ func literalFastMediumPolicyKeys(raw []byte) bool {
 		if decoder.Decode(&value) != nil {
 			return false
 		}
-		if key != "fast_medium" {
+		// encoding/json matches struct fields case-insensitively. Every spelling
+		// that could bind FastMedium must be checked before the struct decode.
+		if !strings.EqualFold(key, "fast_medium") {
 			continue
 		}
 		if seenMedium || !literalJSONKeySpelling(raw, keyStart, keyEnd, "fast_medium") ||

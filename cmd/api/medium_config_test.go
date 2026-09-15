@@ -30,10 +30,15 @@ func TestFastMediumPolicyIsOptionalVersionedAndStrictlyBounded(t *testing.T) {
 		{name: "extra_key", body: valid[:len(valid)-1] + `,"allow_detailed":true}`},
 		{name: "medium_then_null", body: valid[:len(valid)-1] + `,"fast_medium":null}`},
 		{name: "medium_then_unicode_alias_null", body: valid[:len(valid)-1] + `,"\u0066ast_medium":null}`},
+		{name: "medium_then_uppercase_null", body: valid[:len(valid)-1] + `,"FAST_MEDIUM":null}`},
+		{name: "medium_then_escaped_uppercase_null", body: valid[:len(valid)-1] + `,"\u0046ast_medium":null}`},
 		{name: "unicode_medium_root", body: strings.Replace(valid, `"fast_medium":`, `"\u0066ast_medium":`, 1)},
+		{name: "uppercase_medium_root", body: strings.Replace(valid, `"fast_medium":`, `"FAST_MEDIUM":`, 1)},
 		{name: "single_null_medium", body: `{"version":"local-fast-low-v1","fast_low":{"max_batches":1,"max_subqueries":1,"top_k_per_lane":8,"max_evidence":4,"wall_time":"5s"},"fast_medium":null}`},
 		{name: "nested_duplicate_version", body: strings.Replace(valid, `"version":"local-fast-medium-v1","max_batches":`, `"version":"local-fast-medium-v1","version":"another-medium-v1","max_batches":`, 1)},
 		{name: "nested_unicode_alias", body: strings.Replace(valid, `"version":"local-fast-medium-v1","max_batches":`, `"version":"local-fast-medium-v1","\u0076ersion":"another-medium-v1","max_batches":`, 1)},
+		{name: "nested_uppercase_alias", body: strings.Replace(valid, `"version":"local-fast-medium-v1","max_batches":`, `"version":"local-fast-medium-v1","VERSION":"another-medium-v1","max_batches":`, 1)},
+		{name: "nested_escaped_uppercase_alias", body: strings.Replace(valid, `"version":"local-fast-medium-v1","max_batches":`, `"version":"local-fast-medium-v1","\u0056ERSION":"another-medium-v1","max_batches":`, 1)},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			if err := os.WriteFile(values["BTW_SEARCH_POLICY_FILE"], []byte(scenario.body), 0600); err != nil {
