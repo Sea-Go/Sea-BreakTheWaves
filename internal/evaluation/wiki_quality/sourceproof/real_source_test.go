@@ -108,6 +108,44 @@ func oldFixtureTypes() map[string]byte {
 	return kinds
 }
 
+var oldWarehouseResultTypes = map[string]byte{
+	"committed_offset": 'n', "acknowledged_offset": 'n',
+	"catalogs": 'n', "judgments": 'n', "technical_skips": 'n',
+	"catalog_event_id": '"', "quality_event_ids": '[',
+	"catalog_quality_event_ids": '[',
+}
+
+type oldWarehouseResult struct {
+	Committed         int64    `json:"committed_offset"`
+	Acknowledged      int64    `json:"acknowledged_offset"`
+	Catalogs          int      `json:"catalogs"`
+	Judgments         int      `json:"judgments"`
+	TechnicalSkips    int      `json:"technical_skips"`
+	CatalogEventID    string   `json:"catalog_event_id"`
+	QualityEventIDs   []string `json:"quality_event_ids"`
+	CatalogQualityIDs []string `json:"catalog_quality_event_ids"`
+}
+
+func verifyOldWarehouseResult(raw []byte, fixture realSourceFixture) error {
+	if err := exactRealSourceFixtureLiterals(raw, oldWarehouseResultTypes); err != nil {
+		return err
+	}
+	var report oldWarehouseResult
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&report) != nil || decoder.Decode(new(any)) != io.EOF ||
+		report.Committed != int64(fixture.ExpectedEvents) ||
+		report.Acknowledged != report.Committed ||
+		report.Catalogs != 1 || report.Judgments != 3 ||
+		report.TechnicalSkips != fixture.ExpectedEvents-4 ||
+		report.CatalogEventID != fixture.CatalogEventID ||
+		!slices.Equal(report.QualityEventIDs, fixture.QualityEventIDs) ||
+		!slices.Equal(report.CatalogQualityIDs, fixture.CatalogQualityEventIDs) {
+		return ErrProof
+	}
+	return nil
+}
+
 func realSourceLoopback(endpoint string) bool {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed == nil || parsed.Scheme != "http" ||
@@ -122,13 +160,17 @@ func realSourceLoopback(endpoint string) bool {
 		ip != nil && ip.IsLoopback()
 }
 
+func ordinaryPrivate0600(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm() == 0600
+}
+
 func readRealSourceFixture(t *testing.T, path string) realSourceFixture {
 	t.Helper()
 	if !filepath.IsAbs(path) {
 		t.Fatal("real SourceProof fixture requires an absolute task-owned path")
 	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if !ordinaryPrivate0600(path) {
 		t.Fatal("real SourceProof fixture requires an ordinary private 0600 file")
 	}
 	raw, err := os.ReadFile(path)
@@ -178,8 +220,7 @@ func readSameParentWarehouseFixture(t *testing.T, path string,
 		filepath.Dir(path) != filepath.Dir(newFixture.ResultPath) {
 		t.Fatal("old warehouse and SourceProof fixtures require one private parent directory")
 	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if !ordinaryPrivate0600(path) {
 		t.Fatal("old eleven-key warehouse fixture is not an ordinary private file")
 	}
 	raw, err := os.ReadFile(path)
@@ -204,28 +245,14 @@ func readSameParentWarehouseFixture(t *testing.T, path string,
 		filepath.Dir(old.ResultPath) != filepath.Dir(path) {
 		t.Fatal("warehouse source and SourceProof reader fixtures do not name the same parent")
 	}
-	info, err = os.Lstat(old.ResultPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if !ordinaryPrivate0600(old.ResultPath) {
 		t.Fatal("preceding warehouse source test did not write its private receipt")
 	}
 	reportRaw, err := os.ReadFile(old.ResultPath)
 	if err != nil || len(reportRaw) < 2 || len(reportRaw) > 32<<10 {
 		t.Fatal("preceding warehouse source receipt unavailable")
 	}
-	var report struct {
-		Committed      int64  `json:"committed_offset"`
-		Acknowledged   int64  `json:"acknowledged_offset"`
-		Catalogs       int    `json:"catalogs"`
-		Judgments      int    `json:"judgments"`
-		TechnicalSkips int    `json:"technical_skips"`
-		CatalogEventID string `json:"catalog_event_id"`
-	}
-	if json.Unmarshal(reportRaw, &report) != nil ||
-		report.Committed != int64(newFixture.ExpectedEvents) ||
-		report.Acknowledged != report.Committed ||
-		report.Catalogs != 1 || report.Judgments != 3 ||
-		report.TechnicalSkips != newFixture.ExpectedEvents-4 ||
-		report.CatalogEventID != newFixture.CatalogEventID {
+	if verifyOldWarehouseResult(reportRaw, newFixture) != nil {
 		t.Fatal("preceding warehouse source receipt disagrees with same-parent cutoff")
 	}
 }
@@ -257,6 +284,76 @@ func TestRealSourceFixtureRejectsDuplicateOrInventedTenant(t *testing.T) {
 		if _, err := decodeRealSourceFixture(candidate); !errors.Is(err, ErrProof) {
 			t.Fatalf("%s crossed test-only fixture contract: %v", name, err)
 		}
+	}
+}
+
+func TestPrivateSourceFixtureAndReceiptRequireExact0600(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private-source.json")
+	if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []os.FileMode{0600, 0400, 0700} {
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		if ordinaryPrivate0600(path) != (mode == 0600) {
+			t.Fatalf("private fixture/receipt accepted wrong exact mode %04o", mode)
+		}
+	}
+}
+
+func TestOldWarehouseReceiptRejectsDuplicateUnknownAndPartialQualityIDs(t *testing.T) {
+	fixture := realSourceFixture{ExpectedEvents: 14, CatalogEventID: "catalog-1",
+		QualityEventIDs:        []string{"quality-1", "quality-2", "quality-3"},
+		CatalogQualityEventIDs: []string{"quality-2", "quality-3"}}
+	report := oldWarehouseResult{Committed: 14, Acknowledged: 14,
+		Catalogs: 1, Judgments: 3, TechnicalSkips: 10,
+		CatalogEventID:    "catalog-1",
+		QualityEventIDs:   []string{"quality-1", "quality-2", "quality-3"},
+		CatalogQualityIDs: []string{"quality-2", "quality-3"}}
+	raw, err := json.Marshal(report)
+	if err != nil || verifyOldWarehouseResult(raw, fixture) != nil {
+		t.Fatalf("exact old eight-key result rejected: %v", err)
+	}
+	duplicate := bytes.Replace(raw, []byte(`"catalog_event_id":"catalog-1"`),
+		[]byte(`"catalog_event_id":"catalog-1","catalog_event_id":"catalog-1"`), 1)
+	unknown := bytes.Replace(raw, []byte(`}`), []byte(`,"tenant_id":"invented"}`), 1)
+	if bytes.Equal(duplicate, raw) || bytes.Equal(unknown, raw) {
+		t.Fatal("old receipt literal negative probes could not be constructed")
+	}
+	for name, bad := range map[string][]byte{
+		"duplicate_catalog_id": duplicate,
+		"unknown_tenant":       unknown,
+	} {
+		if err := verifyOldWarehouseResult(bad, fixture); !errors.Is(err, ErrProof) {
+			t.Fatalf("%s crossed old result contract: %v", name, err)
+		}
+	}
+	for name, corrupt := range map[string]func(*oldWarehouseResult){
+		"missing_baseline_quality": func(r *oldWarehouseResult) {
+			r.QualityEventIDs = []string{"quality-2", "quality-3"}
+		},
+		"repeated_target_quality": func(r *oldWarehouseResult) {
+			r.CatalogQualityIDs = []string{"quality-2", "quality-2"}
+		},
+		"substituted_target_quality": func(r *oldWarehouseResult) {
+			r.CatalogQualityIDs = []string{"quality-1", "quality-3"}
+		},
+		"ack_less_than_cutoff": func(r *oldWarehouseResult) {
+			r.Acknowledged = 13
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := report
+			corrupt(&bad)
+			encoded, err := json.Marshal(bad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyOldWarehouseResult(encoded, fixture); !errors.Is(err, ErrProof) {
+				t.Fatalf("old result claimed complete proof from partial EventIDs: %v", err)
+			}
+		})
 	}
 }
 
