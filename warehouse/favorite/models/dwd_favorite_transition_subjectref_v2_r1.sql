@@ -5,6 +5,7 @@ with versioned as (
   select *, authority_id as issuer, subject_id as subject_uid,
     1 as representation_version
   from {{ source('favorite_landing', 'ods_favorite_event') }}
+  where producer='rtw.community.favorite' and source_offset<= {{ var('favorite_subjectref_v2_through_offset', 0) }}
   union all
   select producer,source_offset,event_id,event_type,authority_id,tenant_id,
     subject_id,favorite_id,folder_id,target_type,target_id,target_revision,
@@ -12,6 +13,7 @@ with versioned as (
     source_event_hash,technical_receipt,event_spec,issuer,subject_uid,
     2 as representation_version
   from {{ source('favorite_landing', 'ods_favorite_event_subjectref_v2_r1') }}
+  where producer='rtw.community.favorite' and source_offset<= {{ var('favorite_subjectref_v2_through_offset', 0) }}
 ), chosen as (
   select *, row_number() over (
     partition by producer,source_offset,event_id

@@ -1,6 +1,8 @@
 {{ config(enabled=var('favorite_subjectref_v2_read', false)) }}
-with old as (select * from {{ source('favorite_landing', 'ods_favorite_event') }}),
-new as (select * from {{ source('favorite_landing', 'ods_favorite_event_subjectref_v2_r1') }}),
+with old as (select * from {{ source('favorite_landing', 'ods_favorite_event') }}
+  where producer='rtw.community.favorite' and source_offset<= {{ var('favorite_subjectref_v2_through_offset', 0) }}),
+new as (select * from {{ source('favorite_landing', 'ods_favorite_event_subjectref_v2_r1') }}
+  where producer='rtw.community.favorite' and source_offset<= {{ var('favorite_subjectref_v2_through_offset', 0) }}),
 conflicts as (
   select n.producer,n.source_offset,n.event_id from new n
   left join old o on o.producer=n.producer and o.source_offset=n.source_offset
@@ -24,6 +26,11 @@ conflicts as (
     or n.authority_id!=o.authority_id or n.tenant_id!=o.tenant_id
     or n.subject_id!=o.subject_id
   union all
+  select o.producer,o.source_offset,o.event_id from old o
+  left join new n on n.producer=o.producer and n.source_offset=o.source_offset
+    and n.event_id=o.event_id
+  where n.event_id is null
+  union all
   select producer,source_offset,event_id from old
   where authority_id!='rtw.identity' or tenant_id!='platform'
     or toInt64OrNull(subject_id) is null or toInt64OrNull(subject_id)<=0
@@ -40,5 +47,13 @@ conflicts as (
   select producer,source_offset,min(event_id) from old
   group by producer,source_offset
   having count()>1
+  union all
+  select 'rtw.community.favorite' as producer,0 as source_offset,
+    'incomplete_frozen_prefix' as event_id
+  from (select count() as row_count,min(source_offset) as first_offset,
+    max(source_offset) as last_offset from old)
+  where {{ var('favorite_subjectref_v2_through_offset', 0) }} < 1
+    or row_count != {{ var('favorite_subjectref_v2_through_offset', 0) }}
+    or first_offset != 1 or last_offset != {{ var('favorite_subjectref_v2_through_offset', 0) }}
 )
 select * from conflicts
