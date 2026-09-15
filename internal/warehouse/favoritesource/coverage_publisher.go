@@ -20,6 +20,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/eventing"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/sourcecoverage"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,11 +36,12 @@ var coverageGeneration = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 // never writes usermodel facts, FeatureBaselines, recommendation labels, or
 // the FactWorker's independent DC cursor.
 type CoveragePublisher struct {
-	DB         *pgxpool.Pool
-	Source     Source
-	Binder     *app.FavoriteAuthorityBinder
-	S3Prefix   string
-	HTTPClient *http.Client
+	DB          *pgxpool.Pool
+	Source      Source
+	Binder      *app.FavoriteAuthorityBinder
+	S3Prefix    string
+	HTTPClient  *http.Client
+	V2Candidate *SubjectRefV2StorageCandidate
 }
 
 type GlobalPublication struct {
@@ -323,10 +325,14 @@ func (p *CoveragePublisher) recordPublication(ctx context.Context, ref sourcecov
 }
 
 func (p *CoveragePublisher) PublishSubject(ctx context.Context, prefix sourcecoverage.GlobalPrefixRef,
-	subject sourcecoverage.SubjectRef) (SubjectPublication, error) {
-	var output SubjectPublication
+	subject sourcecoverage.SubjectRef) (output SubjectPublication, err error) {
 	if err := p.check(); err != nil {
 		return output, err
+	}
+	if p.V2Candidate != nil {
+		if !p.V2Candidate.readyFor(p.DB) || !validFavoriteV2Subject(subject.AuthorityID, subject.TenantID, subject.SubjectID) {
+			return output, ErrContract
+		}
 	}
 	if prefix.BindingPolicyID != CoverageBindingPolicyID || prefix.WarehouseConsumer != DefaultConsumer || prefix.Producer != Producer || prefix.Origin != "1" ||
 		!coverageGeneration.MatchString(prefix.WarehouseGeneration) {
@@ -414,7 +420,27 @@ func (p *CoveragePublisher) PublishSubject(ctx context.Context, prefix sourcecov
 	if err := p.putFixed(ctx, receiptURL, receiptBody); err != nil {
 		return output, err
 	}
-	_, err = p.DB.Exec(ctx, `INSERT INTO warehouse_favorite.coverage_subject_receipt
+	if p.V2Candidate != nil {
+		var stage *telemetry.Stage
+		var beginErr error
+		ctx, stage, beginErr = p.V2Candidate.begin(ctx, "warehouse.favorite.subjectref_v2.receipt",
+			"manifest_sha256", prefix.ManifestSHA256)
+		if beginErr != nil {
+			return output, beginErr
+		}
+		defer func() { p.V2Candidate.end(ctx, stage, err, 0) }()
+	}
+	var receiptTx pgx.Tx
+	writer := coverageReceiptWriter(p.DB)
+	if p.V2Candidate != nil {
+		receiptTx, err = p.DB.Begin(ctx)
+		if err != nil {
+			return output, err
+		}
+		defer receiptTx.Rollback(context.Background())
+		writer = receiptTx
+	}
+	_, err = writer.Exec(ctx, `INSERT INTO warehouse_favorite.coverage_subject_receipt
 		(receipt_sha256,manifest_sha256,authority_id,tenant_id,subject_id,sparse_index_sha256,event_count)
 		VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, ref.ReceiptSHA256, prefix.ManifestSHA256,
 		subject.AuthorityID, subject.TenantID, subject.SubjectID, sparseHash, count)
@@ -423,11 +449,24 @@ func (p *CoveragePublisher) PublishSubject(ctx context.Context, prefix sourcecov
 	}
 	var oldHash, oldSparse string
 	var oldCount int64
-	err = p.DB.QueryRow(ctx, `SELECT receipt_sha256,sparse_index_sha256,event_count FROM warehouse_favorite.coverage_subject_receipt
-		WHERE manifest_sha256=$1 AND authority_id=$2 AND tenant_id=$3 AND subject_id=$4`, prefix.ManifestSHA256,
+	lookup := `SELECT receipt_sha256,sparse_index_sha256,event_count FROM warehouse_favorite.coverage_subject_receipt
+		WHERE manifest_sha256=$1 AND authority_id=$2 AND tenant_id=$3 AND subject_id=$4`
+	if p.V2Candidate != nil {
+		lookup += ` FOR SHARE`
+	}
+	err = writer.QueryRow(ctx, lookup, prefix.ManifestSHA256,
 		subject.AuthorityID, subject.TenantID, subject.SubjectID).Scan(&oldHash, &oldSparse, &oldCount)
 	if err != nil || oldHash != ref.ReceiptSHA256 || oldSparse != sparseHash || oldCount != count {
 		return output, ErrCoverageConflict
+	}
+	if p.V2Candidate != nil {
+		if err = p.V2Candidate.projectReceipt(ctx, receiptTx, ref.ReceiptSHA256, prefix.ManifestSHA256,
+			subject.AuthorityID, subject.TenantID, subject.SubjectID); err != nil {
+			return output, err
+		}
+		if err = receiptTx.Commit(ctx); err != nil {
+			return output, err
+		}
 	}
 	return SubjectPublication{Ref: ref, ReceiptURL: receiptURL}, nil
 }
