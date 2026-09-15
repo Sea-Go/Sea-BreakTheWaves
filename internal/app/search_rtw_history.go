@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
 )
 
@@ -35,7 +37,7 @@ func rtwSubject(s btwruntime.SubjectRef) ridethewind.AcceptedSubjectRef {
 }
 
 func (h *RTWAcceptedRootHistory) Commit(ctx context.Context, turn searchdomain.AcceptedRootTurn) error {
-	if h == nil || ctx == nil || turn.Request.SearchID == "" || turn.Request.AnswerID == "" ||
+	if h == nil || nilDependency(h.client) || ctx == nil || turn.Request.SearchID == "" || turn.Request.AnswerID == "" ||
 		turn.Request.SessionID == "" || turn.Result.AnswerID != turn.Request.AnswerID ||
 		turn.Result.Search.Pack.SearchID != turn.Request.SearchID {
 		return ErrRTWAcceptedHistory
@@ -74,10 +76,46 @@ func sameAcceptedAnswer(answer ridethewind.AcceptedAnswer, q ridethewind.CommitA
 		answer.AcceptedOrdinal > 0 && answer.AcceptedAt != ""
 }
 
+// Get lets the search boundary replay a previously accepted AnswerID before
+// starting another Agent run. Only RTW's scoped 404 means no accepted turn;
+// timeouts, malformed envelopes and mismatched receipts remain errors.
+func (h *RTWAcceptedRootHistory) Get(ctx context.Context, subject btwruntime.SubjectRef, sessionID, answerID string) (searchdomain.AcceptedRootTurn, bool, error) {
+	if h == nil || nilDependency(h.client) || ctx == nil || sessionID == "" || answerID == "" {
+		return searchdomain.AcceptedRootTurn{}, false, ErrRTWAcceptedHistory
+	}
+	if _, err := subject.UserKey(); err != nil {
+		return searchdomain.AcceptedRootTurn{}, false, ErrRTWAcceptedHistory
+	}
+	answer, err := h.client.GetAcceptedAnswer(ctx, ridethewind.GetAcceptedAnswerReq{
+		AnswerId: answerID, AuthorityId: subject.AuthorityID, TenantId: subject.TenantID,
+		SubjectId: subject.SubjectID, SessionId: sessionID})
+	if err != nil {
+		var status *httpclient.HTTPError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			return searchdomain.AcceptedRootTurn{}, false, nil
+		}
+		return searchdomain.AcceptedRootTurn{}, false, fmt.Errorf("get RTW accepted answer: %w", err)
+	}
+	if answer.AnswerId != answerID || answer.Subject != rtwSubject(subject) || answer.SessionId != sessionID ||
+		answer.SearchId == "" || answer.AcceptedOrdinal < 1 || answer.AcceptedAt == "" ||
+		(answer.Status != "succeeded" && answer.Status != "insufficient") {
+		return searchdomain.AcceptedRootTurn{}, false, ErrRTWAcceptedHistory
+	}
+	var turn searchdomain.AcceptedRootTurn
+	if err := json.Unmarshal([]byte(answer.TurnJson), &turn); err != nil ||
+		turn.Request.Subject != subject || turn.Request.SessionID != sessionID ||
+		turn.Request.AnswerID != answerID || turn.Request.SearchID != answer.SearchId ||
+		turn.Result.AnswerID != answerID || turn.Result.Search.Pack.SearchID != answer.SearchId ||
+		turn.Result.SummaryStatus != answer.Status {
+		return searchdomain.AcceptedRootTurn{}, false, ErrRTWAcceptedHistory
+	}
+	return turn, true, nil
+}
+
 // List is capped because AcceptedRootHistory's current interface has no page
 // argument. A large history must fail explicitly, never silently truncate.
 func (h *RTWAcceptedRootHistory) List(ctx context.Context, subject btwruntime.SubjectRef, sessionID string) ([]searchdomain.AcceptedRootTurn, error) {
-	if h == nil || ctx == nil || sessionID == "" {
+	if h == nil || nilDependency(h.client) || ctx == nil || sessionID == "" {
 		return nil, ErrRTWAcceptedHistory
 	}
 	if _, err := subject.UserKey(); err != nil {
@@ -120,3 +158,4 @@ func (h *RTWAcceptedRootHistory) List(ctx context.Context, subject btwruntime.Su
 }
 
 var _ searchdomain.AcceptedRootHistory = (*RTWAcceptedRootHistory)(nil)
+var _ searchdomain.AcceptedRootLookup = (*RTWAcceptedRootHistory)(nil)

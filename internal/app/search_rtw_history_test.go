@@ -45,6 +45,7 @@ func TestRTWAcceptedHistoryHTTPCommitRecoveryAndScope(t *testing.T) {
 	var mu sync.Mutex
 	var stored ridethewind.AcceptedAnswer
 	var commitTrace, getTrace string
+	var lookupUnavailable bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -64,10 +65,22 @@ func TestRTWAcceptedHistoryHTTPCommitRecoveryAndScope(t *testing.T) {
 			// RTW committed the product turn, then its HTTP response was lost.
 			http.Error(w, "post-commit receipt lost", http.StatusServiceUnavailable)
 		case r.Method == http.MethodGet && r.URL.Path == "/internal/v1/knowledge/accepted-answers/answer-1":
+			if r.URL.Query().Get("authority_id") != turn.Request.Subject.AuthorityID ||
+				r.URL.Query().Get("tenant_id") != turn.Request.Subject.TenantID ||
+				r.URL.Query().Get("subject_id") != turn.Request.Subject.SubjectID ||
+				r.URL.Query().Get("session_id") != turn.Request.SessionID {
+				http.NotFound(w, r)
+				return
+			}
 			mu.Lock()
+			unavailable := lookupUnavailable
 			getTrace = r.Header.Get("traceparent")
 			answer := stored
 			mu.Unlock()
+			if unavailable {
+				http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "msg": "success", "data": answer})
 		case r.Method == http.MethodGet && r.URL.Path == "/internal/v1/knowledge/accepted-answers":
 			mu.Lock()
@@ -92,6 +105,11 @@ func TestRTWAcceptedHistoryHTTPCommitRecoveryAndScope(t *testing.T) {
 	if err := history.Commit(ctx, turn); err != nil {
 		t.Fatalf("lost RTW Commit receipt did not recover by AnswerID: %v", err)
 	}
+	replayed, found, err := history.Get(ctx, turn.Request.Subject, turn.Request.SessionID, turn.Request.AnswerID)
+	if err != nil || !found || replayed.Request.AnswerID != turn.Request.AnswerID ||
+		replayed.Result.SummaryStatus != "insufficient" {
+		t.Fatalf("scoped RTW AnswerID was not replayable: %+v %t %v", replayed, found, err)
+	}
 	turns, err := history.List(ctx, turn.Request.Subject, turn.Request.SessionID)
 	span.End()
 	if err != nil || len(turns) != 1 || turns[0].Request.AnswerID != turn.Request.AnswerID ||
@@ -106,6 +124,12 @@ func TestRTWAcceptedHistoryHTTPCommitRecoveryAndScope(t *testing.T) {
 	}
 	wrong := turn.Request.Subject
 	wrong.TenantID = "other"
+	if _, found, err := history.Get(context.Background(), wrong, turn.Request.SessionID, turn.Request.AnswerID); err != nil || found {
+		t.Fatalf("cross-subject RTW answer lookup was not a scoped 404: found=%t err=%v", found, err)
+	}
+	if _, found, err := history.Get(context.Background(), turn.Request.Subject, turn.Request.SessionID, "missing-answer"); err != nil || found {
+		t.Fatalf("missing AnswerID was not a scoped 404: found=%t err=%v", found, err)
+	}
 	if _, err := history.List(context.Background(), wrong, turn.Request.SessionID); err == nil {
 		t.Fatalf("wrong subject received product history: %v", err)
 	}
@@ -115,11 +139,46 @@ func TestRTWAcceptedHistoryHTTPCommitRecoveryAndScope(t *testing.T) {
 	if _, err := history.List(context.Background(), turn.Request.Subject, turn.Request.SessionID); !errors.Is(err, ErrRTWAcceptedHistory) {
 		t.Fatalf("corrupted RTW turn reached product history: %v", err)
 	}
+	if _, found, err := history.Get(context.Background(), turn.Request.Subject, turn.Request.SessionID, turn.Request.AnswerID); !errors.Is(err, ErrRTWAcceptedHistory) || found {
+		t.Fatalf("corrupted RTW turn replayed: found=%t err=%v", found, err)
+	}
+	mu.Lock()
+	stored.TurnJson = replayedJSON(t, turn)
+	stored.Status = "failed"
+	mu.Unlock()
+	if _, found, err := history.Get(context.Background(), turn.Request.Subject, turn.Request.SessionID, turn.Request.AnswerID); !errors.Is(err, ErrRTWAcceptedHistory) || found {
+		t.Fatalf("unknown accepted status replayed: found=%t err=%v", found, err)
+	}
+	mu.Lock()
+	lookupUnavailable = true
+	mu.Unlock()
+	if _, found, err := history.Get(context.Background(), turn.Request.Subject, turn.Request.SessionID, turn.Request.AnswerID); err == nil || found {
+		t.Fatalf("RTW 503 was treated as an absent turn: found=%t err=%v", found, err)
+	}
+}
+
+func replayedJSON(t *testing.T, turn searchdomain.AcceptedRootTurn) string {
+	t.Helper()
+	raw, err := json.Marshal(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func TestRTWAcceptedHistoryRejectsMalformedScope(t *testing.T) {
 	if _, err := NewRTWAcceptedRootHistory(nil); !errors.Is(err, ErrRTWAcceptedHistory) {
 		t.Fatalf("nil client: %v", err)
+	}
+	valid := acceptedEmptyTurn()
+	if err := (&RTWAcceptedRootHistory{}).Commit(context.Background(), valid); !errors.Is(err, ErrRTWAcceptedHistory) {
+		t.Fatalf("nil accepted-history client reached POST: %v", err)
+	}
+	if _, err := (&RTWAcceptedRootHistory{}).List(context.Background(), valid.Request.Subject, valid.Request.SessionID); !errors.Is(err, ErrRTWAcceptedHistory) {
+		t.Fatalf("nil accepted-history client reached LIST: %v", err)
+	}
+	if _, found, err := (&RTWAcceptedRootHistory{}).Get(context.Background(), valid.Request.Subject, valid.Request.SessionID, valid.Request.AnswerID); !errors.Is(err, ErrRTWAcceptedHistory) || found {
+		t.Fatalf("nil accepted-history client reached GET: found=%t err=%v", found, err)
 	}
 	invalid := acceptedEmptyTurn()
 	invalid.Request.Subject.TenantID = ""
