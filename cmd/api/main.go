@@ -20,6 +20,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/ridethewind"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/dense"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/multivector"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/sparse"
@@ -27,6 +28,7 @@ import (
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	searchhttp "github.com/Sea-Go/Sea-BreakTheWaves/internal/transport/http/search"
+	"github.com/milvus-io/milvus/client/v2/milvusclient"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -57,7 +59,8 @@ func bootstrap(output io.Writer) *slog.Logger {
 
 func redacted(err error, cfg config) string {
 	message := err.Error()
-	for _, secret := range []string{cfg.ScopeKey, cfg.ToolsScopeKey, cfg.RTWToken, cfg.DCToken, cfg.ModelKey} {
+	for _, secret := range []string{cfg.ScopeKey, cfg.ToolsScopeKey, cfg.RTWToken,
+		cfg.DCToken, cfg.ModelKey, cfg.MilvusAPIKey} {
 		if secret != "" {
 			message = strings.ReplaceAll(message, secret, "[REDACTED]")
 		}
@@ -81,6 +84,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	var toolsBoundary *searchdomain.ToolRunBoundary
 	var apiServer, metricsServer *http.Server
 	var rtwTransport, dcTransport *http.Transport
+	var nativeClient *milvusclient.Client
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -103,6 +107,9 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		}
 		if dcTransport != nil {
 			dcTransport.CloseIdleConnections()
+		}
+		if nativeClient != nil {
+			resultErr = errors.Join(resultErr, nativeClient.Close(shutdown))
 		}
 		resultErr = errors.Join(resultErr, bundle.Close(shutdown))
 		if resultErr == nil {
@@ -137,21 +144,103 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return fmt.Errorf("open local exact artifacts: %w", err)
 	}
-	denseLane, err := dense.New(objects, representations, cfg.Indexes.Dense)
-	if err != nil {
-		return fmt.Errorf("construct dense lane: %w", err)
-	}
-	sparseLane, err := sparse.New(objects, representations, cfg.Indexes.Sparse)
-	if err != nil {
-		return fmt.Errorf("construct sparse lane: %w", err)
-	}
-	multiLane, err := multivector.New(objects, representations, cfg.Indexes.MultiVector)
-	if err != nil {
-		return fmt.Errorf("construct multivector lane: %w", err)
-	}
 	current, err := app.NewRTWSearchSnapshotProvider(rtw)
 	if err != nil {
 		return err
+	}
+	var denseReader searchdomain.DenseReader
+	var sparseReader searchdomain.SparseReader
+	var multiReader searchdomain.MultiVectorReader
+	var native *nativeBackend
+	if cfg.Mode == "native-milvus" {
+		if cfg.Native == nil {
+			return errors.New("native Milvus mode has no fixed physical settings")
+		}
+		nativeClient, err = milvusclient.New(ctx, &milvusclient.ClientConfig{
+			Address: cfg.MilvusAddress, APIKey: cfg.MilvusAPIKey})
+		if err != nil {
+			return fmt.Errorf("connect native Milvus backend: %w", err)
+		}
+		physical := cfg.Native
+		denseLane, denseErr := dense.NewMilvus(objects, representations, cfg.Indexes.Dense,
+			nativeClient, dense.MilvusConfig{Namespace: physical.Namespace, Engine: physical.Engine,
+				M: physical.Dense.M, EFConstruction: physical.Dense.EFConstruction,
+				EFSearch: physical.Dense.EFSearch})
+		if denseErr != nil {
+			return fmt.Errorf("construct native dense lane: %w", denseErr)
+		}
+		sparseEngine := physical.Engine
+		if sparseEngine == "lite" { // Sparse's locked SDK ABI names Lite native-lite.
+			sparseEngine = "native-lite"
+		}
+		sparseLane, sparseErr := sparse.NewMilvus(objects, representations, cfg.Indexes.Sparse,
+			nativeClient, sparse.MilvusConfig{Namespace: physical.Namespace, Engine: sparseEngine})
+		if sparseErr != nil {
+			return fmt.Errorf("construct native learned sparse lane: %w", sparseErr)
+		}
+		multiLane, multiErr := multivector.NewMilvus(objects, representations,
+			cfg.Indexes.MultiVector, nativeClient, multivector.MilvusConfig{
+				Namespace: physical.Namespace, Engine: physical.Engine,
+				M:              physical.MultiVector.M,
+				EFConstruction: physical.MultiVector.EFConstruction,
+				EFSearch:       physical.MultiVector.EFSearch}, multivector.WithTelemetry(bundle))
+		if multiErr != nil {
+			return fmt.Errorf("construct native token multivector lane: %w", multiErr)
+		}
+		native, err = newNativeBackend(current, objects, cfg.Indexes, nativeLaneLoads{
+			Dense: func(ctx context.Context, ref corpus.Ref) (searchdomain.DenseReader, error) {
+				return denseLane.Load(ctx, ref)
+			},
+			Sparse: func(ctx context.Context, ref corpus.Ref) (searchdomain.SparseReader, error) {
+				return sparseLane.Load(ctx, ref)
+			},
+			MultiVector: func(ctx context.Context, ref corpus.Ref) (searchdomain.MultiVectorReader, error) {
+				return multiLane.Load(ctx, ref)
+			},
+			ProbeDense: func(ctx context.Context, index corpus.LaneIndex, manifest corpus.ChunkManifest,
+				probes []corpus.Chunk) error {
+				result, err := denseLane.VerifyAndProbe(ctx, index, manifest, probes)
+				if err != nil || len(result) != len(probes) {
+					return errNativeProjection
+				}
+				return nil
+			},
+			ProbeSparse: func(ctx context.Context, index corpus.LaneIndex, manifest corpus.ChunkManifest,
+				probes []corpus.Chunk) error {
+				result, err := sparseLane.VerifyAndProbe(ctx, index, manifest, probes)
+				if err != nil || len(result) != len(probes) {
+					return errNativeProjection
+				}
+				return nil
+			},
+			ProbeMulti: func(ctx context.Context, index corpus.LaneIndex, manifest corpus.ChunkManifest,
+				probes []corpus.Chunk) error {
+				result, err := multiLane.VerifyAndProbe(ctx, index, manifest, probes)
+				if err != nil || len(result) != len(probes) {
+					return errNativeProjection
+				}
+				return nil
+			},
+		}, bundle)
+		if err != nil {
+			return fmt.Errorf("construct native three-lane publication loader: %w", err)
+		}
+		denseReader, sparseReader, multiReader =
+			nativeDenseReader{native}, nativeSparseReader{native}, nativeMultiReader{native}
+	} else {
+		denseLane, denseErr := dense.New(objects, representations, cfg.Indexes.Dense)
+		if denseErr != nil {
+			return fmt.Errorf("construct dense lane: %w", denseErr)
+		}
+		sparseLane, sparseErr := sparse.New(objects, representations, cfg.Indexes.Sparse)
+		if sparseErr != nil {
+			return fmt.Errorf("construct sparse lane: %w", sparseErr)
+		}
+		multiLane, multiErr := multivector.New(objects, representations, cfg.Indexes.MultiVector)
+		if multiErr != nil {
+			return fmt.Errorf("construct multivector lane: %w", multiErr)
+		}
+		denseReader, sparseReader, multiReader = denseLane, sparseLane, multiLane
 	}
 	checker, err := app.NewRTWEffectiveRevisionChecker(current)
 	if err != nil {
@@ -175,7 +264,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 			return nil, searchdomain.ErrUnavailable
 		}
 	})
-	searcher, err := searchdomain.New(denseLane, sparseLane, multiLane, planner, checker, cfg.Policy)
+	searcher, err := searchdomain.New(denseReader, sparseReader, multiReader, planner, checker, cfg.Policy)
 	if err != nil {
 		return fmt.Errorf("construct fixed search policy: %w", err)
 	}
@@ -216,7 +305,11 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	handler, err := searchhttp.NewHandler(resolver, boundary, bundle)
+	var summaryResolver searchhttp.ScopeResolver = resolver
+	if native != nil {
+		summaryResolver = nativeSummaryScope{inner: resolver, backend: native, policy: cfg.Policy}
+	}
+	handler, err := searchhttp.NewHandler(summaryResolver, boundary, bundle)
 	if err != nil {
 		return err
 	}
@@ -236,10 +329,15 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		return err
 	}
 	var toolsHandler http.Handler
+	var scopedTools searchhttp.ToolsScopeResolver = toolsResolver
+	if native != nil {
+		scopedTools = nativeToolsScope{inner: toolsResolver, backend: native,
+			mediumEnabled: cfg.FastMediumTools}
+	}
 	if cfg.FastMediumTools {
-		toolsHandler, err = searchhttp.NewToolsHandlerWithFastMedium(toolsResolver, toolsBoundary, bundle)
+		toolsHandler, err = searchhttp.NewToolsHandlerWithFastMedium(scopedTools, toolsBoundary, bundle)
 	} else {
-		toolsHandler, err = searchhttp.NewToolsHandler(toolsResolver, toolsBoundary, bundle)
+		toolsHandler, err = searchhttp.NewToolsHandler(scopedTools, toolsBoundary, bundle)
 	}
 	if err != nil {
 		return err
@@ -276,7 +374,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	}
 	logger.InfoContext(ctx, "search API started", "event", "search.api.started", "outcome", "succeeded",
 		"api_addr", apiListener.Addr().String(), "metrics_addr", metricsListener.Addr().String(),
-		"backend", "local-exact", "supported_profile", supportedProfile,
+		"backend", cfg.Mode, "supported_profile", supportedProfile,
 		"representation_max_in_flight", cfg.RepresentationMaxInFlight,
 		"tools_supported_profile", toolsSupportedProfile,
 		"tools_route", searchhttp.ToolsRoute)

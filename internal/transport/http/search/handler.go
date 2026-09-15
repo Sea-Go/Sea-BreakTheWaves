@@ -294,6 +294,12 @@ func projectResult(result searchdomain.SummaryResult, request searchdomain.Summa
 }
 
 func scopeError(err error) (int, string, string) {
+	if errors.Is(err, context.Canceled) {
+		return 499, "cancelled", "CANCELLED"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "timed_out", "TIMEOUT"
+	}
 	if errors.Is(err, ErrScopeDenied) {
 		return http.StatusForbidden, "rejected", "SEARCH_SCOPE_DENIED"
 	}
