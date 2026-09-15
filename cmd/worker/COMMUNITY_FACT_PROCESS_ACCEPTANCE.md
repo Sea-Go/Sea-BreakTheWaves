@@ -29,4 +29,4 @@ RTW dispatcher、authority 的每行真实进程日志均经 JSON 解析，要�
 
 ## 尚未覆盖
 
-验收没有连接真实 Kafka、Redis、线上数据库、数仓 ODS/DWD 或生产部署；也没有把全局 producer offset 解释成每主体连续序列。评论和点赞事实可被用户模型可靠接纳，不表示推荐特征覆盖已经完整，更不表示模型效果已改善。物理移除 usermodel 历史 `tenant_id` 兼容槽的全仓影响与迁移顺序见 `REALM_SCHEMA_MIGRATION_IMPACT.md`。
+验收没有连接真实 Kafka、Redis、线上数据库、数仓 ODS/DWD 或生产部署；也没有把全局 producer offset 解释成每主体连续序列。评论和点赞事实可被用户模型可靠接纳，不表示推荐特征覆盖已经完整，更不表示模型效果已改善。物理移除 usermodel 历史 `tenant_id` 兼容槽的全仓影响与迁移顺序见 `SUBJECTREF_V2_SCHEMA_MIGRATION_IMPACT.md`。
