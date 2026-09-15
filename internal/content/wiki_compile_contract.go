@@ -170,8 +170,15 @@ func validateWikiJSONTokens(decoder *json.Decoder, raw []byte, path string, dept
 			key, err := decoder.Token()
 			end := decoder.InputOffset()
 			name, ok := key.(string)
+			literal := []byte(nil)
+			if start >= 0 && end <= int64(len(raw)) {
+				literal = bytes.TrimSpace(raw[start:end])
+			}
+			if len(seen) > 0 && len(literal) > 0 && literal[0] == ',' {
+				literal = bytes.TrimSpace(literal[1:])
+			}
 			if err != nil || !ok || !allowed[name] || seen[name] || start < 0 || end > int64(len(raw)) ||
-				!bytes.Equal(bytes.TrimSpace(raw[start:end]), []byte(`"`+name+`"`)) {
+				!bytes.Equal(literal, []byte(`"`+name+`"`)) {
 				return ErrWikiCompileContract
 			}
 			seen[name] = true
