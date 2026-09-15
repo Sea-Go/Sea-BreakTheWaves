@@ -24,7 +24,7 @@ func wikiCompileConfigFixture(t *testing.T) map[string]string {
 	v["BTW_WIKI_COMPILE_ENABLED"] = "true"
 	v["BTW_WIKI_NATIVE_SESSION_SOURCE"] = wikiCompileNativeSessionSource
 	v["BTW_WIKI_MODEL_CALLPOINT"] = wikiCompileModelCallpoint
-	v["BTW_WIKI_RESULT_REF_CONTRACT_ID"] = "fixture-only-result-ref"
+	v["BTW_WIKI_RESULT_REF_CONTRACT_ID"] = app.WikiCompileResultRefContractID
 	v["BTW_WIKI_OBJECT_BACKEND"] = "shared-local"
 	v["BTW_WIKI_SHARED_OBJECT_ROOT"] = root
 	v["BTW_RTW_OBJECT_ROOT"] = root
@@ -110,10 +110,7 @@ func wikiGateFixtureDeps(t *testing.T, cfg config) (wikiCompileStartDeps, *wikiG
 	deps := wikiCompileStartDeps{Jobs: jobsFixture, Owner: &wikiGateOwner{}, Runs: runs,
 		Objects: objects, ObjectBackend: "shared-local",
 		SharedObjectRoot: cfg.Wiki.SharedObjectRoot, RTWObjectRoot: cfg.Wiki.RTWObjectRoot,
-		ResultRefContractID: cfg.Wiki.ResultRefContractID,
-		CompletionRef: func(context.Context, ridethewind.Compile, content.WikiCompileCandidate) (jobs.ResultRef, error) {
-			return jobs.ResultRef{URI: "fixture://not-a-production-contract", Hash: strings.Repeat("a", 64), MediaType: "application/json"}, nil
-		}}
+		ResultRefContractID: cfg.Wiki.ResultRefContractID}
 	return deps, jobsFixture, runs
 }
 
@@ -151,11 +148,18 @@ func TestWikiCompileCommandRejectsUnownedModelObjectOrResultRef(t *testing.T) {
 	if err := wikiCompileStartupGate(context.Background(), cfg, deps); err != nil || jobsFixture.claims != 0 || runs.checks != 1 {
 		t.Fatalf("complete isolated Wiki fixture did not cross startup seam: %v", err)
 	}
+	unsupported := cfg
+	copyWiki := *cfg.Wiki
+	unsupported.Wiki = &copyWiki
+	unsupported.Wiki.ResultRefContractID = "fixture-only-result-ref"
+	if err := wikiCompileStartupGate(context.Background(), unsupported, deps); !errors.Is(err, errWikiCompileStartup) || jobsFixture.claims != 0 {
+		t.Fatalf("syntactically valid but unsigned ResultRef contract entered Wiki jobs: %v", err)
+	}
 	for name, change := range map[string]func(*wikiCompileStartDeps){
-		"missing-completion-ref": func(d *wikiCompileStartDeps) { d.CompletionRef = nil },
-		"wrong-result-contract":  func(d *wikiCompileStartDeps) { d.ResultRefContractID = "other" },
-		"other-RTW-root":         func(d *wikiCompileStartDeps) { d.RTWObjectRoot = t.TempDir() },
-		"missing-jobs-client":    func(d *wikiCompileStartDeps) { d.Jobs = nil },
+		"missing-result-contract": func(d *wikiCompileStartDeps) { d.ResultRefContractID = "" },
+		"wrong-result-contract":   func(d *wikiCompileStartDeps) { d.ResultRefContractID = "other" },
+		"other-RTW-root":          func(d *wikiCompileStartDeps) { d.RTWObjectRoot = t.TempDir() },
+		"missing-jobs-client":     func(d *wikiCompileStartDeps) { d.Jobs = nil },
 		"jobs-token-as-model": func(d *wikiCompileStartDeps) {
 			d.Runs = &wikiGateRuns{err: app.ErrWikiCompileModelIdentity}
 		},
