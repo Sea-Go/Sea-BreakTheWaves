@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +9,6 @@ import (
 	"net"
 	"net/http"
 	"reflect"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/app"
@@ -20,18 +17,12 @@ import (
 )
 
 var errWikiCompileStartup = errors.New("Wiki compile worker lacks signed model, shared objects or result reference")
-var wikiNativeAccountID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-type wikiNativeSession struct {
-	AccountID string
-	Bearer    string
-}
 
 // The same run factory that opens the DC-authorized per-Compile model must
 // supply current native app_user proof. A jobs service token cannot satisfy it.
 type wikiCompileAuthorizedRuns interface {
 	app.WikiCompileRunFactory
-	CurrentNativeSession(context.Context) (wikiNativeSession, error)
+	CurrentNativeSession(context.Context) (app.WikiCompileModelSession, error)
 }
 
 // The caller owns these borrowed provider clients and closes their transports
@@ -68,20 +59,17 @@ func wikiNilDependency(value any) bool {
 	}
 }
 
-func wikiNativeBearer(raw string) bool {
-	if !strings.HasPrefix(raw, "wh_access_") || strings.TrimSpace(raw) != raw ||
-		strings.ContainsAny(raw, "\r\n") {
-		return false
-	}
-	suffix := strings.TrimPrefix(raw, "wh_access_")
-	decoded, err := base64.RawURLEncoding.DecodeString(suffix)
-	return err == nil && len(decoded) == 32 &&
-		base64.RawURLEncoding.EncodeToString(decoded) == suffix
-}
-
 // wikiCompileStartupGate runs before telemetry, PG, job Claim or model access.
 // A syntactically valid enable flag cannot bypass missing owned capabilities.
 func wikiCompileStartupGate(ctx context.Context, cfg config, d wikiCompileStartDeps) error {
+	_, err := wikiCompileStartupSession(ctx, cfg, d)
+	return err
+}
+
+// wikiCompileStartupSession freezes exactly one validated native session from
+// the same factory that later opens the request-specific official DC model.
+func wikiCompileStartupSession(ctx context.Context, cfg config,
+	d wikiCompileStartDeps) (app.WikiCompileModelSession, error) {
 	if ctx == nil || cfg.JobType != app.WikiCompileJobType || cfg.Wiki == nil ||
 		!cfg.Wiki.Enabled || cfg.Wiki.NativeSessionSource != wikiCompileNativeSessionSource ||
 		cfg.Wiki.ModelCallpoint != wikiCompileModelCallpoint ||
@@ -90,29 +78,32 @@ func wikiCompileStartupGate(ctx context.Context, cfg config, d wikiCompileStartD
 		d.CompletionRef == nil || d.ResultRefContractID == "" ||
 		d.ResultRefContractID != cfg.Wiki.ResultRefContractID ||
 		d.ObjectBackend != cfg.Wiki.ObjectBackend {
-		return errWikiCompileStartup
+		return app.WikiCompileModelSession{}, errWikiCompileStartup
 	}
 	switch cfg.Wiki.ObjectBackend {
 	case "s3":
 		store, ok := d.Objects.(wikiBucketStore)
 		if !ok || store.Bucket() == "" || store.Bucket() != cfg.Wiki.ObjectBucket ||
 			d.RTWObjectBucket != store.Bucket() || d.RTWObjectBucket != cfg.Wiki.RTWObjectBucket {
-			return errWikiCompileStartup
+			return app.WikiCompileModelSession{}, errWikiCompileStartup
 		}
 	case "shared-local":
 		if d.SharedObjectRoot == "" || d.SharedObjectRoot != cfg.Wiki.SharedObjectRoot ||
 			d.RTWObjectRoot != d.SharedObjectRoot || d.RTWObjectRoot != cfg.Wiki.RTWObjectRoot {
-			return errWikiCompileStartup
+			return app.WikiCompileModelSession{}, errWikiCompileStartup
 		}
 	default:
-		return errWikiCompileStartup
+		return app.WikiCompileModelSession{}, errWikiCompileStartup
 	}
 	current, err := d.Runs.CurrentNativeSession(ctx)
-	if err != nil || !wikiNativeAccountID.MatchString(current.AccountID) ||
-		!wikiNativeBearer(current.Bearer) {
-		return errWikiCompileStartup
+	if err != nil {
+		return app.WikiCompileModelSession{}, errWikiCompileStartup
 	}
-	return nil
+	frozen, err := app.NewWikiCompileModelSession(current.AccountID, current.NativeBearer())
+	if err != nil || frozen.Proof() != current.Proof() {
+		return app.WikiCompileModelSession{}, errWikiCompileStartup
+	}
+	return frozen, nil
 }
 
 // The main binary deliberately passes no provider here until the platform
@@ -124,7 +115,8 @@ func serveWikiCompile(ctx context.Context, cfg config, output io.Writer) error {
 
 func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 	d wikiCompileStartDeps) (resultErr error) {
-	if err := wikiCompileStartupGate(ctx, cfg, d); err != nil {
+	frozen, err := wikiCompileStartupSession(ctx, cfg, d)
+	if err != nil {
 		bootstrapLogger(output, cfg).ErrorContext(ctx, "Wiki compile worker startup denied",
 			"event", "content.wiki_compile.start_rejected", "outcome", "rejected",
 			"error_code", "SIGNED_DEPENDENCIES_MISSING")
@@ -176,7 +168,8 @@ func serveWikiCompileWithDeps(ctx context.Context, cfg config, output io.Writer,
 	}
 	worker, err := app.NewWikiCompileWorker(app.WikiCompileWorkerConfig{
 		WorkerID: cfg.WorkerID, LeaseSeconds: cfg.LeaseSeconds,
-		CompletionRef: d.CompletionRef}, d.Jobs, d.Owner, d.Runs, d.Objects, bundle)
+		CompletionRef: d.CompletionRef, ModelSession: frozen},
+		d.Jobs, d.Owner, d.Runs, d.Objects, bundle)
 	if err != nil {
 		logger.ErrorContext(ctx, "Wiki worker assembly failed",
 			"event", "content.wiki_compile.start_failed", "outcome", "failed",
