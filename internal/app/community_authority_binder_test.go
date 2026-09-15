@@ -51,7 +51,7 @@ func communityEvidence(t *testing.T, producer, eventType, eventID, aggregateID, 
 		ReceiptID: "receipt-" + eventID, InputHash: hash, Offset: offset, ReceivedAt: "2026-09-15T08:00:02.123456Z"}
 	source := FactSourceEvidence{Event: event, InputHash: hash, Offset: offset, Receipt: receipt}
 	authority := communityAuthorityResponse{Event: event,
-		SubjectRef:         usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: subject},
+		SubjectRef:         communitySourceSubjectRef{Issuer: "rtw-user-center", Realm: "platform", SubjectID: subject},
 		PredecessorEventID: predecessor, TechnicalReceipt: receipt, SourceEventHash: hash}
 	return source, authority
 }
@@ -168,8 +168,10 @@ func TestBindCommunityAuthorityMapsSourceTransitions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			expectedSubject := usermodel.SubjectRef{AuthorityID: "rtw-user-center", TenantID: "platform",
+				SubjectID: test.authority.SubjectRef.SubjectID}
 			if fact.Action != test.action || fact.Predicate != test.predicate || fact.Kind != usermodel.ProductAction ||
-				fact.Subject != test.authority.SubjectRef || fact.ImpressionID != "" || fact.VisibilityEvidenceRef != "" {
+				fact.Subject != expectedSubject || fact.ImpressionID != "" || fact.VisibilityEvidenceRef != "" {
 				t.Fatalf("semantic fact: %+v", fact)
 			}
 			if test.predecessor == "" && fact.Supersedes != nil || test.predecessor != "" &&

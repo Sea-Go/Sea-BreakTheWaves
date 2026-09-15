@@ -63,11 +63,19 @@ func NewCommunityAuthorityBinder(cfg CommunityAuthorityBinderConfig) (*Community
 }
 
 type communityAuthorityResponse struct {
-	Event              eventing.Event       `json:"event"`
-	SubjectRef         usermodel.SubjectRef `json:"subject_ref"`
-	PredecessorEventID string               `json:"predecessor_event_id,omitempty"`
-	TechnicalReceipt   eventing.Receipt     `json:"technical_receipt"`
-	SourceEventHash    string               `json:"source_event_hash"`
+	Event              eventing.Event            `json:"event"`
+	SubjectRef         communitySourceSubjectRef `json:"subject_ref"`
+	PredecessorEventID string                    `json:"predecessor_event_id,omitempty"`
+	TechnicalReceipt   eventing.Receipt          `json:"technical_receipt"`
+	SourceEventHash    string                    `json:"source_event_hash"`
+}
+
+// communitySourceSubjectRef is the RTW product identity contract. Realm is a
+// fixed issuer namespace, not a tenant and never comes from client input.
+type communitySourceSubjectRef struct {
+	Issuer    string `json:"issuer"`
+	Realm     string `json:"realm"`
+	SubjectID string `json:"subject_id"`
 }
 
 type communityAuthorityPayload struct {
@@ -178,9 +186,9 @@ func bindCommunityAuthority(source FactSourceEvidence, authority communityAuthor
 }
 
 func validateCommunityPayload(event eventing.Event, authority communityAuthorityResponse, payload communityAuthorityPayload) error {
-	expectedSubject := authority.SubjectRef.AuthorityID + "/" + authority.SubjectRef.TenantID + "/" + authority.SubjectRef.SubjectID
+	expectedSubject := "rtw.identity/" + authority.SubjectRef.Realm + "/" + authority.SubjectRef.SubjectID
 	uid, uidErr := strconv.ParseInt(authority.SubjectRef.SubjectID, 10, 64)
-	if authority.SubjectRef.AuthorityID != "rtw.identity" || authority.SubjectRef.TenantID != "platform" ||
+	if authority.SubjectRef.Issuer != "rtw-user-center" || authority.SubjectRef.Realm != "platform" ||
 		uidErr != nil || uid <= 0 || strconv.FormatInt(uid, 10) != authority.SubjectRef.SubjectID ||
 		payload.SubjectRef != expectedSubject || payload.SchemaVersion != "rtw.community-fact.v1" ||
 		payload.EventID != event.EventID || payload.EventType != event.EventType || payload.Producer != event.Producer ||
@@ -205,7 +213,12 @@ func validateCommunityPayload(event eventing.Event, authority communityAuthority
 }
 
 func communitySemanticFact(event eventing.Event, authority communityAuthorityResponse, payload communityAuthorityPayload) (usermodel.Event, error) {
-	fact := usermodel.Event{Subject: authority.SubjectRef, Kind: usermodel.ProductAction, ItemID: payload.TargetID}
+	// usermodel.SubjectRef still names its fixed namespace compatibility slot
+	// TenantID. This adapter writes the RTW realm there; no tenant is accepted,
+	// derived, or exposed by the community authority contract.
+	fact := usermodel.Event{Subject: usermodel.SubjectRef{AuthorityID: authority.SubjectRef.Issuer,
+		TenantID: authority.SubjectRef.Realm, SubjectID: authority.SubjectRef.SubjectID},
+		Kind: usermodel.ProductAction, ItemID: payload.TargetID}
 	switch event.Producer {
 	case commentFactProducer:
 		if payload.CommentID == "" || event.AggregateID != payload.CommentID || payload.VisibilityState == nil ||
