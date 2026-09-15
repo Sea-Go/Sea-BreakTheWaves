@@ -14,10 +14,13 @@ conflicts as (
     or toInt64OrNull(n.subject_uid)<=0
     or toString(toInt64OrNull(n.subject_uid))!=n.subject_uid
     or not match(n.origin_ods_sha256,'^[0-9a-f]{64}$')
+    or n.origin_ods_sha256!='{{ var('favorite_subjectref_v2_old_ods_sha256', '') }}'
     or n.event_type!=o.event_type or n.favorite_id!=o.favorite_id
     or n.folder_id!=o.folder_id or n.target_type!=o.target_type
     or n.target_id!=o.target_id
-    or ifNull(n.target_revision,'')!=ifNull(o.target_revision,'')
+    or isNull(n.target_revision)!=isNull(o.target_revision)
+    or (not isNull(n.target_revision) and not isNull(o.target_revision)
+      and n.target_revision!=o.target_revision)
     or n.operation!=o.operation or n.predecessor_event_id!=o.predecessor_event_id
     or n.event_time!=o.event_time or n.available_at!=o.available_at
     or n.dc_received_at!=o.dc_received_at
