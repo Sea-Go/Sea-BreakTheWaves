@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: community_landing
+    schema: "{{ var('community_landing_schema') }}"
+    tables:
+      - name: ods_community_event
+        description: RTW-authorized immutable comment and target-reaction events committed before each independent DC ACK.
