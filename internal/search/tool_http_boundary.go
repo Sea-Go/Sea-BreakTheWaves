@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
@@ -71,19 +72,62 @@ func validToolRunResult(found SearchResult, q ToolRunRequest) bool {
 // ToolRunBoundary owns a tRPC-Agent-Go Graph/Runner and private attempt
 // sessions. RTW owns the durable parent budget and accepted citation rows.
 type ToolRunBoundary struct {
-	runtime  *btwruntime.Runtime
-	attempts *inmemory.SessionService
+	runtime   *btwruntime.Runtime
+	attempts  *inmemory.SessionService
+	nodes     *toolRunNodeLifetime
+	mu        sync.Mutex
+	closed    bool
+	next      uint64
+	active    map[uint64]context.CancelFunc
+	activeWG  sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Runner.Close cancels its event loop but need not wait for a Graph node that
+// is already inside the borrowed RTW CitationAcceptor. Track the actual node
+// separately from the public Search goroutine, which can return on cancel.
+type toolRunNodeLifetime struct {
+	mu     sync.Mutex
+	closed bool
+	active sync.WaitGroup
+}
+
+func (n *toolRunNodeLifetime) begin() (func(), error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed {
+		return nil, btwruntime.ErrClosed
+	}
+	n.active.Add(1)
+	return n.active.Done, nil
+}
+
+func (n *toolRunNodeLifetime) closeAndWait() {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	n.closed = true
+	n.mu.Unlock()
+	n.active.Wait()
 }
 
 func NewToolRunBoundary(delivery *Delivery, observed *telemetry.Bundle) (*ToolRunBoundary, error) {
 	if delivery == nil || observed == nil || !observed.Installed() || observed.Closed() {
 		return nil, ErrInvalid
 	}
+	nodes := &toolRunNodeLifetime{}
 	schema := graph.NewStateSchema().
 		AddField(toolRunRequestKey, graph.StateField{Type: reflect.TypeOf(ToolRunRequest{}), Reducer: graph.DefaultReducer}).
 		AddField(toolRunResultKey, graph.StateField{Type: reflect.TypeOf(SearchResult{}), Reducer: graph.DefaultReducer})
 	compiled, err := graph.NewStateGraph(schema).
 		AddNode(toolRunNode, func(ctx context.Context, state graph.State) (any, error) {
+			finish, err := nodes.begin()
+			if err != nil {
+				return nil, err
+			}
+			defer finish()
 			q, ok := graph.GetStateValue[ToolRunRequest](state, toolRunRequestKey)
 			if !ok || !validToolRunRequest(q) {
 				return nil, ErrInvalid
@@ -111,7 +155,28 @@ func NewToolRunBoundary(delivery *Delivery, observed *telemetry.Bundle) (*ToolRu
 		_ = attempts.Close()
 		return nil, err
 	}
-	return &ToolRunBoundary{runtime: runtime, attempts: attempts}, nil
+	return &ToolRunBoundary{runtime: runtime, attempts: attempts, nodes: nodes,
+		active: make(map[uint64]context.CancelFunc)}, nil
+}
+
+func (b *ToolRunBoundary) beginAttempt(parent context.Context) (context.Context, func(), error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil, nil, btwruntime.ErrClosed
+	}
+	ctx, cancel := context.WithCancel(parent)
+	b.next++
+	id := b.next
+	b.active[id] = cancel
+	b.activeWG.Add(1)
+	return ctx, func() {
+		cancel()
+		b.mu.Lock()
+		delete(b.active, id)
+		b.mu.Unlock()
+		b.activeWG.Done()
+	}, nil
 }
 
 // Search consumes the complete Runner stream, deletes its private session and
@@ -121,6 +186,16 @@ func (b *ToolRunBoundary) Search(ctx context.Context, q ToolRunRequest) (SearchR
 	if b == nil || b.runtime == nil || b.attempts == nil || ctx == nil || !validToolRunRequest(q) {
 		return SearchResult{}, ErrInvalid
 	}
+	if err := ctx.Err(); err != nil {
+		return SearchResult{}, err
+	}
+	var done func()
+	var err error
+	ctx, done, err = b.beginAttempt(ctx)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	defer done()
 	q.Search.Snapshot = cloneSnapshot(q.Search.Snapshot)
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -162,12 +237,29 @@ func (b *ToolRunBoundary) Close() error {
 	if b == nil {
 		return nil
 	}
-	var err error
-	if b.runtime != nil {
-		err = b.runtime.Close()
-	}
-	if b.attempts != nil {
-		err = errors.Join(err, b.attempts.Close())
-	}
-	return err
+	b.closeOnce.Do(func() {
+		b.mu.Lock()
+		b.closed = true
+		cancels := make([]context.CancelFunc, 0, len(b.active))
+		for _, cancel := range b.active {
+			cancels = append(cancels, cancel)
+		}
+		b.mu.Unlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
+		var errs []error
+		if b.runtime != nil {
+			errs = append(errs, b.runtime.Close())
+		}
+		// Closing the Runner cancels the caller, but the Graph may still be in
+		// the RTW acceptor. First stop new node registration and await its work.
+		b.nodes.closeAndWait()
+		b.activeWG.Wait()
+		if b.attempts != nil {
+			errs = append(errs, b.attempts.Close())
+		}
+		b.closeErr = errors.Join(errs...)
+	})
+	return b.closeErr
 }
