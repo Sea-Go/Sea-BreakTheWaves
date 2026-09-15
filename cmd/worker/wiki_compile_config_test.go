@@ -211,3 +211,26 @@ func TestWikiCompileCommandS3StoreMustReportRTWBucket(t *testing.T) {
 		t.Fatal("config let BTW candidate target a different RTW bucket")
 	}
 }
+
+func TestWikiCompileCommandLogsConfiguredStartupFailureBeforeClaim(t *testing.T) {
+	v := wikiCompileConfigFixture(t)
+	cfg, err := loadConfig(func(key string) string { return v[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps, jobsFixture, runs := wikiGateFixtureDeps(t, cfg)
+	cfg.OTLPTracesURL = "" // Directly inject one runtime failure after the owned gate.
+	var output bytes.Buffer
+	if err := serveWikiCompileWithDeps(context.Background(), cfg, &output, deps); err == nil ||
+		jobsFixture.claims != 0 || runs.checks != 1 {
+		t.Fatalf("configured Wiki failure claimed DC job or hid error: err=%v claims=%d checks=%d",
+			err, jobsFixture.claims, runs.checks)
+	}
+	var record map[string]any
+	if json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record) != nil ||
+		record["event"] != "content.wiki_compile.start_failed" ||
+		record["error_code"] != "TELEMETRY_INIT_FAILED" ||
+		strings.Contains(output.String(), v["BTW_DC_TOKEN"]) {
+		t.Fatalf("Wiki startup failure lacked bounded JSON or exposed token: %s", output.Bytes())
+	}
+}
