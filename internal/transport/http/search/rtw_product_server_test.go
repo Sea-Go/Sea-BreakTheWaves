@@ -294,10 +294,18 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM)
 	defer signal.Stop(stop)
+	parentTimeout := 120 * time.Second
+	if value := os.Getenv("SEA_RTW_PRODUCT_SERVER_PARENT_TIMEOUT"); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil || parsed < 120*time.Second || parsed > 20*time.Minute {
+			t.Fatalf("invalid RTW product server parent timeout: %q", value)
+		}
+		parentTimeout = parsed
+	}
 	select {
 	case <-stop:
-	case <-time.After(120 * time.Second):
-		t.Error("RTW parent did not terminate product search child within 120 seconds")
+	case <-time.After(parentTimeout):
+		t.Errorf("RTW parent did not terminate product search child within %s", parentTimeout)
 	}
 }
 
