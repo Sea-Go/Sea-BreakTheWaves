@@ -33,7 +33,10 @@ func New(config httpclient.Config) (*Client, error) {
 	return &Client{c}, nil
 }
 
-var ErrNoWork = errors.New("DataCenter has no claimable work")
+var (
+	ErrNoWork                   = errors.New("DataCenter has no claimable work")
+	ErrPredictionOutcomeUnknown = errors.New("DataCenter prediction outcome is unknown")
+)
 
 func call[T any](ctx context.Context, c *Client, method, path string, query url.Values, input any, key string) (T, error) {
 	var value T
@@ -109,13 +112,17 @@ func (c *Client) Predict(ctx context.Context, q prediction.Request, key string) 
 	}
 	raw, _, err := c.http.Do(ctx, http.MethodPost, "/v1/predictions", nil, q, key)
 	if err != nil {
-		return result, err
+		var response *httpclient.HTTPError
+		if errors.As(err, &response) {
+			return result, err
+		}
+		return result, fmt.Errorf("%w: %v", ErrPredictionOutcomeUnknown, err)
 	}
 	if err := prediction.Decode(raw, &result.Response); err != nil {
-		return PredictionResult{}, err
+		return PredictionResult{}, fmt.Errorf("%w: invalid response JSON", ErrPredictionOutcomeUnknown)
 	}
 	if err := result.Response.Validate(q); err != nil {
-		return PredictionResult{}, fmt.Errorf("DataCenter prediction contract: %w", err)
+		return PredictionResult{}, fmt.Errorf("%w: response contract: %v", ErrPredictionOutcomeUnknown, err)
 	}
 	result.Body = append([]byte(nil), raw...)
 	return result, nil
