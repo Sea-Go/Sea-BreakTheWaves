@@ -10,6 +10,9 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter"
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/graphagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
@@ -33,15 +36,18 @@ type PredictionCandidateBuilder interface {
 }
 
 type predictionGraphFailure struct {
-	Code string `json:"error_code"`
+	Code      string `json:"error_code"`
+	Retryable bool   `json:"retryable"`
 }
+
+type predictionInvokeSpanKey struct{}
 
 func predictionFailureState(err error) predictionGraphFailure {
 	_, code := predictionCandidateOutcome(err)
 	if code == "" {
 		code = "PREDICTION_GRAPH_FAILED"
 	}
-	return predictionGraphFailure{Code: code}
+	return predictionGraphFailure{Code: code, Retryable: predictionRetryable(err)}
 }
 
 func (f predictionGraphFailure) err() error {
@@ -56,6 +62,8 @@ func (f predictionGraphFailure) err() error {
 		return context.DeadlineExceeded
 	case "DC_PREDICTION_UNKNOWN":
 		return datacenter.ErrPredictionOutcomeUnknown
+	case "DC_PREDICTION_INFLIGHT":
+		return datacenter.ErrPredictionInFlight
 	case "DC_PREDICTION_FAILED", "PREDICTION_GRAPH_FAILED":
 		return ErrPredictionGraphOutput
 	default:
@@ -81,18 +89,22 @@ func NewPredictionGraphAgent(builder PredictionCandidateBuilder) (*graphagent.Gr
 	compiled, err := graph.NewStateGraph(schema).
 		AddNode(predictionGraphNodeName, func(ctx context.Context, state graph.State) (any, error) {
 			if err := ctx.Err(); err != nil {
+				recordPredictionNodeFailure(ctx, err)
 				return nil, err
 			}
 			request, ok := graph.GetStateValue[PredictionCandidateRequest](state, predictionGraphRequestKey)
 			if !ok || request.validate() != nil {
+				recordPredictionNodeFailure(ctx, ErrInvalid)
 				return graph.State{predictionGraphFailureKey: predictionFailureState(ErrInvalid)}, nil
 			}
 			candidate, err := builder.BuildCandidate(ctx, request)
 			if err != nil {
+				recordPredictionNodeFailure(ctx, err)
 				return graph.State{predictionGraphFailureKey: predictionFailureState(err)}, nil
 			}
 			if !validPredictionCandidate(candidate) || candidate.Subject != request.Subject ||
 				candidate.Status != "candidate_default_off" || candidate.BusinessActivation != "none" {
+				recordPredictionNodeFailure(ctx, ErrPredictionContract)
 				return graph.State{predictionGraphFailureKey: predictionFailureState(ErrPredictionContract)}, nil
 			}
 			return graph.State{predictionGraphResultKey: candidate}, nil
@@ -103,12 +115,44 @@ func NewPredictionGraphAgent(builder PredictionCandidateBuilder) (*graphagent.Gr
 	if err != nil {
 		return nil, fmt.Errorf("compile prediction candidate graph: %w", err)
 	}
+	callbacks := agent.NewCallbacks().RegisterBeforeAgent(func(ctx context.Context, _ *agent.BeforeAgentArgs) (*agent.BeforeAgentResult, error) {
+		// The built-in invoke_agent span is current here. Pass only its public
+		// handle in this Run's context so a typed Graph-state failure can mark
+		// both native agent and function-node spans before either one ends.
+		return &agent.BeforeAgentResult{Context: context.WithValue(ctx, predictionInvokeSpanKey{}, trace.SpanFromContext(ctx))}, nil
+	})
 	ag, err := graphagent.New(predictionGraphAgentName, compiled,
-		graphagent.WithDescription("Build one default-off recommendation prediction candidate"))
+		graphagent.WithDescription("Build one default-off recommendation prediction candidate"),
+		graphagent.WithAgentCallbacks(callbacks))
 	if err != nil {
 		return nil, fmt.Errorf("construct prediction candidate GraphAgent: %w", err)
 	}
 	return ag, nil
+}
+
+// Domain failures travel through typed Graph state to preserve stable
+// completion semantics. The locked tRPC wrapper owns the active function span;
+// BeforeAgent put the native invoke_agent span in this Run's context. Mark both
+// before their owners end them, without replacing the framework's event loop.
+func recordPredictionNodeFailure(ctx context.Context, err error) {
+	if err == nil {
+		return
+	}
+	outcome, code := predictionCandidateOutcome(err)
+	mark := func(span trace.Span) {
+		if span == nil || !span.IsRecording() {
+			return
+		}
+		span.SetAttributes(attribute.String("sea.prediction.outcome", outcome),
+			attribute.String("sea.prediction.error_code", code),
+			attribute.Bool("sea.prediction.retryable", predictionRetryable(err)))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, code)
+	}
+	mark(trace.SpanFromContext(ctx))
+	if parent, ok := ctx.Value(predictionInvokeSpanKey{}).(trace.Span); ok {
+		mark(parent)
+	}
 }
 
 func nilPredictionBuilder(builder PredictionCandidateBuilder) bool {
@@ -129,6 +173,9 @@ func predictionCandidateFromCompletion(e *event.Event) (PredictionCandidate, boo
 			return PredictionCandidate{}, true, ErrPredictionGraphOutput
 		}
 		if failure.Code != "" {
+			if failure.Retryable != (failure.Code == "DC_PREDICTION_UNKNOWN" || failure.Code == "DC_PREDICTION_INFLIGHT") {
+				return PredictionCandidate{}, true, ErrPredictionGraphOutput
+			}
 			return PredictionCandidate{}, true, failure.err()
 		}
 	}

@@ -11,10 +11,12 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/prediction"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 	"github.com/google/uuid"
 )
@@ -235,6 +237,7 @@ func (u *PredictionCandidateUseCase) call(ctx context.Context, request predictio
 	defer func() {
 		outcome, code := predictionCandidateOutcome(err)
 		stage.End(ctx, outcome, code, err, slog.String("model_call_id", receipt.ModelCallID),
+			slog.Bool("retryable", predictionRetryable(err)),
 			slog.Int("attempts", attempts), slog.Int64("input_rows", receipt.Usage.InputRows),
 			slog.Int64("input_feature_values", receipt.Usage.InputFeatureValues),
 			slog.Int64("output_rows", receipt.Usage.OutputRows), slog.Int64("output_values", receipt.Usage.OutputValues))
@@ -263,15 +266,46 @@ func (u *PredictionCandidateUseCase) call(ctx context.Context, request predictio
 
 func (u *PredictionCandidateUseCase) predictWithRecovery(ctx context.Context, request prediction.Request,
 	logicalCall string) (datacenter.PredictionResult, int, error) {
-	result, err := u.caller.Predict(ctx, request, logicalCall)
-	if err == nil {
-		return result, 1, nil
+	// The caller owns logicalCall. This bounded poll never creates a second
+	// logical key or publishes a partial candidate. If a lease stays active,
+	// the caller may run the Graph again with a fresh RunID and the same
+	// PredictionCandidateRequest.LogicalCall after the reported wait.
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result, err := u.caller.Predict(ctx, request, logicalCall)
+		if err == nil {
+			return result, attempt, nil
+		}
+		if !predictionRetryable(err) || ctx.Err() != nil || attempt == maxAttempts {
+			return datacenter.PredictionResult{}, attempt, err
+		}
+		if errors.Is(err, datacenter.ErrPredictionInFlight) {
+			delay := predictionInFlightDelay(err)
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return datacenter.PredictionResult{}, attempt, ctx.Err()
+			case <-timer.C:
+			}
+		}
 	}
-	if !errors.Is(err, datacenter.ErrPredictionOutcomeUnknown) || ctx.Err() != nil {
-		return datacenter.PredictionResult{}, 1, err
+	return datacenter.PredictionResult{}, maxAttempts, datacenter.ErrPredictionOutcomeUnknown
+}
+
+func predictionRetryable(err error) bool {
+	return errors.Is(err, datacenter.ErrPredictionOutcomeUnknown) || errors.Is(err, datacenter.ErrPredictionInFlight)
+}
+
+func predictionInFlightDelay(err error) time.Duration {
+	var receipt *httpclient.HTTPError
+	if errors.As(err, &receipt) {
+		seconds, parseErr := strconv.Atoi(receipt.RetryAfter)
+		if parseErr == nil && seconds > 0 {
+			return min(time.Duration(seconds)*time.Second, time.Second)
+		}
 	}
-	result, err = u.caller.Predict(ctx, request, logicalCall)
-	return result, 2, err
+	return time.Second
 }
 
 func validPredictionCandidate(candidate PredictionCandidate) bool {
@@ -396,8 +430,10 @@ func predictionCandidateOutcome(err error) (string, string) {
 		return "rejected", "PREDICTION_DISABLED"
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrPredictionContract):
 		return "rejected", "PREDICTION_CONTRACT"
+	case errors.Is(err, datacenter.ErrPredictionInFlight):
+		return "partial", "DC_PREDICTION_INFLIGHT"
 	case errors.Is(err, datacenter.ErrPredictionOutcomeUnknown):
-		return "failed", "DC_PREDICTION_UNKNOWN"
+		return "partial", "DC_PREDICTION_UNKNOWN"
 	default:
 		return "failed", "DC_PREDICTION_FAILED"
 	}
