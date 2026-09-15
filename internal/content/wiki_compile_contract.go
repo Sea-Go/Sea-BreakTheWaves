@@ -135,7 +135,10 @@ func normalizeWikiCompileInput(in WikiCompileInput) (WikiCompileInput, error) {
 }
 
 func sourceParagraphs(content string) []string {
-	parts := strings.Split(strings.TrimSpace(strings.ReplaceAll(content, "\r\n", "\n")), "\n\n")
+	// RTW's fixed citationParagraph normalizes CRLF and skips empty blocks, but
+	// returns nonempty blocks with their indentation and trailing bytes intact.
+	// Trimming the whole source would turn four-space Markdown code into prose.
+	parts := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n\n")
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if strings.TrimSpace(part) != "" {
