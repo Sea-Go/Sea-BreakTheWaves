@@ -49,3 +49,12 @@ dbt DAG 的四个模型分别为完整 `dwd_wiki_source_prefix`、每 Fact 的 `
 两实例的`ch-stop-status.json`均 SHA `719f747e91eff9b2704b89fdd29a4a9a1bc9d42cd8b002021e1bacef8580bd37`，独立显示`process_exited=true,endpoint_unreachable=true`。这两轮没有把真实 RTW/DC/PG14事件再输进 CH；既有 SourceProof Reader的前一真PG链只能证明 Reader，不能自动给本离线 CH 层签同父 L3。生产 ClickHouse、生产 ODS、线上D07/数据仓调度尚未验证。
 
 下一交接是由 RTW Holder/BTW root 在**一个同父**临时PG/RTW/DC来源轮让真实目录1、质量判定3、技术skip10按共享 producer ACK14；在 PG/DC/RTW仍可读时，用已核`sourceproof.PGODSReader`、`RTWHTTPReader`、`HTTPDCAckReader`和由原 Catalog payload给出的明确目标/Scope调用 `wikiqualitydwd.Freeze`，把四原字节工件 `Write`到新任务目录并交其 `ManifestSHA`。父轮再以`acceptance.py --bundle <该目录> --expected-manifest-sha256 <该 SHA>`构建**新的**隔离CH generation，连同RTW/DC/PG真实测试、ACK水位、PG stop/status3、CH进程关闭、CH/dbt Manifest/results原SHA一起验。该轮可签来源同父PG→CH；即使通过，仍不把 Admin完整声明或技术ACK升为`observed`/D07，也不发布Dataset/Serving。
+
+
+## 内容开发集成来源CH/dbt复验
+
+独立叶子`feat/wiki-factset-dwd-source-20260916@e8ba622a19d28d1bee19a7310cf85865af55bd23`四笔`a6aea4a/54cb5ed/c92e984/e8ba622`远端洁；主任务精确合入既有BTW内容开发头为`138570c/0859e4a/03e0f50/f40fe0d`，保留原DC consumer/PG ODS/既有CH项目不动。新离线出口从已确认的SourceProof Reader取RTW Worker原Event/Admin历史FactSet、DC ACK与同PG证据SHA，再第三次只读固定ODS整行原bytes，生成三流JSONL＋Manifest；当前开发HEAD**尚未实际用RTW真ACK14调用此Freeze/Write**，本轮CH只验已冻合成Golden→landing/dbt。
+
+固定开发代码头聚焦Go `wikiqualitydwd` race PASS testSHA=`55f816e1f1fad6d6b8dd49119ae519142b68ed70fa2f94918367d3da8d28b1ff`（合成两个Fact截止3/5原字节、无ACK/第三次ODS字节变化拒）、vet空SHAe3b0/mod verify/diff0。首轮系统Python3.14执行loader在导入旧`warehouse/scripts/receipt.py`时因未安装`jsonschema`红于**测试运行前**，日志SHA=`29217619319360091a67a9cae5a2062d8284464ca30f39f65eb05e973653f99b`保留；不把此环境红记业务失败或为它改冻结工件。按本仓锁定`.venv`重跑真正五项 loader 反例全部PASS日志SHA=`78eef06a986d8417523e74a16d2bb14e35ab64ab86924c647f2bc690902433d9`。另开全新本机loopback CH实例运行源码`acceptance.py` cutoff3＋5 dbt各4模型/4data test共16个`pass|success`、prefix3/5、技术skip0/1、每Fact最后已运输K从1/1变2/1，旧generation首INSERT前拒；reportSHA=`51c3c88a2e2e075802750a488ab07e85c50688c6672e16cdacaa53b20edf36e8`、停机statusSHA=`719f747e91eff9b2704b89fdd29a4a9a1bc9d42cd8b002021e1bacef8580bd37`，`process_exited=true,endpoint_unreachable=true`，证据`sea-wiki-factset-dwd-integrated.6vr0Gc`。`quality_state=not_evaluable,activation=none,d07_evaluable=false,production_verified=false`。
+
+这签独立来源层**合成Go-JCS→真实隔离CH/dbt的L2**，不自动继承前述BTW真RTW/DC/PG Reader L3；真`ACK14`的已验PG父轮至今还未在PG/DC/RTW可读时调用此Go Freeze并将Caller-pinned四份0600原文件加载新CH generation。该桥接需另一次同父测试并保留Manifest SHA、PG/CH两层水位，仍不生成D07 observed或Dataset/Serving。
