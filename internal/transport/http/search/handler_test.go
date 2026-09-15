@@ -368,6 +368,49 @@ func TestHTTPHandlerFrameworkRootAndPublicProjection(t *testing.T) {
 		!strings.Contains(logs.String(), `"outcome":"failed"`) {
 		t.Fatalf("missing policy did not use bounded OBS terminal fields")
 	}
+	for _, hidden := range []struct {
+		name         string
+		intelligence searchdomain.Intelligence
+	}{
+		{name: "medium_to_low", intelligence: searchdomain.Medium},
+		{name: "high_to_low", intelligence: searchdomain.High},
+	} {
+		t.Run(hidden.name, func(t *testing.T) {
+			allowScope := missingScope
+			allowScope.AllowLowerIntelligence = true
+			allowScope.SearchID, allowScope.AnswerID = "search-hidden-"+hidden.name, "answer-hidden-"+hidden.name
+			allowHandler, err := NewHandler(ScopeFunc(func(context.Context, *http.Request, PublicRequest) (TrustedScope, error) {
+				return allowScope, nil
+			}), missingBoundary, bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowServer := httptest.NewServer(allowHandler)
+			defer allowServer.Close()
+			allowRequest, err := http.NewRequest(http.MethodPost, allowServer.URL+Route,
+				strings.NewReader(fmt.Sprintf(`{"module_id":"module-1","query":"why","depth":"fast","intelligence":%q}`, hidden.intelligence)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowRequest.Header.Set("Content-Type", "application/json")
+			beforeHiddenModel := m.calls.Load()
+			allowResponse, err := allowServer.Client().Do(allowRequest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var allowBody bytes.Buffer
+			_, _ = io.Copy(&allowBody, allowResponse.Body)
+			allowResponse.Body.Close()
+			if allowResponse.StatusCode != http.StatusServiceUnavailable ||
+				!strings.Contains(allowBody.String(), "SEARCH_PROFILE_UNAVAILABLE") ||
+				missingLaneCalls.Load() != 0 || missingEffects.Load() != 0 || m.calls.Load() != beforeHiddenModel ||
+				len(history.turns) != 1 {
+				t.Fatalf("RTW allow-lower hid %s in an HTTP200: status=%d body=%s lane/model/history=%d/%d/%d",
+					hidden.name, allowResponse.StatusCode, allowBody.String(), missingLaneCalls.Load(),
+					m.calls.Load()-beforeHiddenModel, len(history.turns))
+			}
+		})
+	}
 	metrics := httptest.NewRecorder()
 	bundle.MetricsHandler().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if metrics.Code != http.StatusOK || !strings.Contains(metrics.Body.String(), "trpc_agent_go_agent_") ||

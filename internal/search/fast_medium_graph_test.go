@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/corpus"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/dense"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/multivector"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/sparse"
@@ -29,6 +30,10 @@ type mediumPlannerFixture struct {
 	calls    atomic.Int32
 	scope    atomic.Bool
 	tokens   atomic.Bool
+}
+
+func newSummaryModelFixture(receipt *atomic.Bool) *summaryModel {
+	return &summaryModel{receipt: receipt}
 }
 
 type deadlineAcceptedHistory struct{ commits atomic.Int32 }
@@ -225,6 +230,18 @@ func TestFastMediumNativePlannerChangesThreeLaneSummaryRetrieval(t *testing.T) {
 		plannerModel.calls.Load() != beforePlan || summaryModel.calls.Load() != beforeSummary {
 		t.Fatalf("old low request invoked model planning or changed policy: %+v, err=%v", insufficient, err)
 	}
+	highShift := rootFixtureRequest("high-would-hide-medium-downgrade")
+	highShift.Search.Intelligence, highShift.Search.AllowLowerIntelligence = High, true
+	preflightProfile, _, preflightErr := d.search.(*Service).effective(highShift.Search)
+	if preflightErr != nil || preflightProfile.EffectiveIntelligence != Medium {
+		t.Fatalf("test did not exercise high-to-medium policy shift: %+v, err=%v", preflightProfile, preflightErr)
+	}
+	beforeHiddenLanes := len(laneCalls.dense)
+	hiddenHigh, hiddenErr := root.Summarize(context.Background(), highShift)
+	if !errors.Is(hiddenErr, ErrUnavailable) || hiddenHigh.Answer != "" || len(laneCalls.dense) != beforeHiddenLanes ||
+		plannerModel.calls.Load() != beforePlan || summaryModel.calls.Load() != beforeSummary {
+		t.Fatalf("signed high-to-medium shift escaped without public profile disclosure: %+v, err=%v", hiddenHigh, hiddenErr)
+	}
 	beforeLane := len(laneCalls.dense)
 	for _, malformed := range []struct{ id, raw string }{
 		{"repeat-original", `{"queries":["where"]}`},
@@ -272,7 +289,44 @@ func TestFastMediumNativePlannerChangesThreeLaneSummaryRetrieval(t *testing.T) {
 		plannerModel.calls.Load() != beforePlan || summaryModel.calls.Load() != beforeSummary {
 		t.Fatalf("no medium policy was silently upgraded: %+v, err=%v", missing, err)
 	}
+	allowHiddenMedium := rootFixtureRequest("missing-medium-but-allow-lower")
+	allowHiddenMedium.Search.Intelligence, allowHiddenMedium.Search.AllowLowerIntelligence = Medium, true
+	hiddenMedium, hiddenMediumErr := oldRoot.Summarize(context.Background(), allowHiddenMedium)
+	if !errors.Is(hiddenMediumErr, ErrUnavailable) || hiddenMedium.Answer != "" || len(lowOnlyCalls.dense) != 0 ||
+		plannerModel.calls.Load() != beforePlan || summaryModel.calls.Load() != beforeSummary {
+		t.Fatalf("signed allow-lower flag concealed missing medium policy: %+v, err=%v", hiddenMedium, hiddenMediumErr)
+	}
 	if err := oldRoot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var uncheckedReceipt atomic.Bool
+	uncheckedDelivery := fixtureDelivery(t, []corpus.Chunk{sourceChunk("a")}, SourceReadFunc(exactSource),
+		AcceptFunc(func(ctx context.Context, p EvidencePack) (CitationReceipt, error) {
+			uncheckedReceipt.Store(true)
+			return accepted(ctx, p)
+		}))
+	uncheckedService := uncheckedDelivery.search.(*Service)
+	uncheckedService.policy = Policy{Version: "hidden-low-v1", Profiles: map[Depth]map[Intelligence]Limits{
+		Fast: {Low: {1, 1, 2, 1, 5 * time.Second}},
+	}}
+	uncheckedDelivery.search = ExecuteFunc(uncheckedService.Execute) // no preflight interface
+	uncheckedHistory := &acceptedHistoryFixture{turns: make(map[acceptedHistoryKey][]AcceptedRootTurn)}
+	uncheckedSummary := newSummaryModelFixture(&uncheckedReceipt)
+	uncheckedBoundary, err := NewRootSessionBoundary(uncheckedDelivery, uncheckedSummary, uncheckedHistory, observed,
+		SummaryModelLimits{MaxOutputTokens: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uncheckedQ := rootFixtureRequest("unchecked-executor-hidden-shift")
+	uncheckedQ.Search.Intelligence, uncheckedQ.Search.AllowLowerIntelligence = Medium, true
+	unchecked, uncheckedErr := uncheckedBoundary.Summarize(context.Background(), uncheckedQ)
+	if !errors.Is(uncheckedErr, ErrUnavailable) || unchecked.Answer != "" || uncheckedSummary.calls.Load() != 1 ||
+		!uncheckedSummary.sawReceipt.Load() {
+		t.Fatalf("non-Service executor published hidden downgraded answer: %+v, err=%v, model=%+v",
+			unchecked, uncheckedErr, uncheckedSummary)
+	}
+	assertAcceptedHistory(t, uncheckedBoundary, uncheckedQ.Subject, uncheckedQ.SessionID, 0)
+	if err := uncheckedBoundary.Close(); err != nil {
 		t.Fatal(err)
 	}
 	plannerModel.output.Store(`{"queries":["pet proactive feedback","desktop reflection"]}`)
