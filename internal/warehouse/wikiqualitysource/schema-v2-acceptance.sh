@@ -45,7 +45,8 @@ export WIKI_QUALITY_SCHEMA_V2_DISPOSABLE=1
 cd "$wiki_v2_repo"
 GOFLAGS='-mod=readonly -p=1' GOMAXPROCS=2 \
   go test -race -count=1 -v ./internal/warehouse/wikiqualitysource \
-  -run '^TestFactSetSchema' >"$wiki_v2_evidence/go-test.log" 2>&1
+  -run '^(TestFactSetSchema|TestDisabledFactSetConsumerStillCommitsOnUnmigratedV1PG$)' \
+  >"$wiki_v2_evidence/go-test.log" 2>&1
 GOFLAGS='-mod=readonly -p=1' GOMAXPROCS=2 \
   go vet ./internal/warehouse/wikiqualitysource >"$wiki_v2_evidence/go-vet.log" 2>&1
-printf 'Explicit v1→v2 FactSet ODS migration, weak-schema refusal and parent/sidecar CAS passed.\n'
+printf 'Explicit FactSet ODS migration, old v1 consumer, weak-schema refusal and parent/sidecar CAS passed.\n'
