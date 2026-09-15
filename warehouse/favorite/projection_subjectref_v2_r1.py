@@ -15,6 +15,22 @@ MAPPING_FIELDS = ("producer", "source_offset", "event_id", "authority_id", "tena
 UID = re.compile(r"[1-9][0-9]*\Z")
 
 
+def strict_json(value: bytes | str) -> object:
+    def unique_pairs(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("JSON contains a duplicate key")
+            result[key] = item
+        return result
+
+    def invalid_constant(value: str) -> None:
+        raise ValueError(f"JSON contains non-finite number {value}")
+
+    return json.loads(value, object_pairs_hook=unique_pairs,
+                      parse_constant=invalid_constant)
+
+
 def digest(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
@@ -27,9 +43,11 @@ def canonical(value: object) -> bytes:
 def parse_lines(body: bytes, fields: tuple[str, ...]) -> list[dict]:
     if not body or not body.endswith(b"\n"):
         raise ValueError("JSONL must have a final newline")
-    values = [json.loads(line) for line in body.splitlines()]
+    values = [strict_json(line) for line in body.splitlines()]
     if not values or any(not isinstance(v, dict) or set(v) != set(fields) for v in values):
         raise ValueError("row shape differs from pinned contract")
+    if any(type(v["source_offset"]) is not int or v["source_offset"] < 1 for v in values):
+        raise ValueError("source_offset must be a positive JSON integer")
     return values
 
 
@@ -41,8 +59,13 @@ def original_proof(row: dict) -> None:
     uid = row["subject_id"]
     if not isinstance(uid, str) or not UID.fullmatch(uid) or int(uid) > 2**63 - 1:
         raise ValueError("historic RTW UID is not canonical positive int64")
-    spec = json.loads(row["event_spec"])
-    receipt = json.loads(row["technical_receipt"])
+    if not isinstance(row["event_spec"], str) or not isinstance(row["technical_receipt"], str):
+        raise ValueError("frozen source proof must be JSON text")
+    spec = strict_json(row["event_spec"])
+    receipt = strict_json(row["technical_receipt"])
+    if (not isinstance(spec, dict) or not isinstance(receipt, dict) or
+            type(receipt.get("offset")) is not int):
+        raise ValueError("frozen EventSpec or receipt structure differs")
     payload = spec.get("payload", {})
     if digest(canonical(spec)) != row["source_event_hash"] or \
             receipt.get("input_hash") != row["source_event_hash"] or \
