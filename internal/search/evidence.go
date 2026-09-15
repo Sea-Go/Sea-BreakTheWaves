@@ -88,6 +88,10 @@ type SearchExecutor interface {
 	Execute(context.Context, Request) (Result, error)
 }
 
+type searchProfileAvailability interface {
+	profileAvailability(Request) (Profile, error)
+}
+
 type ExecuteFunc func(context.Context, Request) (Result, error)
 
 func (f ExecuteFunc) Execute(ctx context.Context, r Request) (Result, error) { return f(ctx, r) }
@@ -98,6 +102,18 @@ type Delivery struct {
 	source  SourceReader
 	accept  CitationAcceptor
 	limits  EvidenceLimits
+}
+
+func (d *Delivery) preflightProfile(r Request) (Profile, bool, error) {
+	if d == nil || isNil(d.search) {
+		return Profile{}, false, ErrInvalid
+	}
+	availability, ok := d.search.(searchProfileAvailability)
+	if !ok {
+		return Profile{}, false, nil
+	}
+	profile, err := availability.profileAvailability(r)
+	return profile, true, err
 }
 
 // NewDelivery borrows all dependencies. The RTW adapter is mandatory so an

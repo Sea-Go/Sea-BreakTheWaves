@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 
 	btwruntime "github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
@@ -22,13 +23,18 @@ import (
 )
 
 const (
-	rootSummaryRequestKey = "root_summary_request"
-	rootSearchResultKey   = "root_search_result"
-	rootModelOutputKey    = "root_model_output"
-	rootSummaryResultKey  = "root_summary_result"
-	rootSearchNode        = "search_and_accept"
-	rootSummaryAgent      = "search_summary"
-	rootFinishNode        = "validate_answer"
+	rootSummaryRequestKey   = "root_summary_request"
+	rootSearchResultKey     = "root_search_result"
+	rootModelOutputKey      = "root_model_output"
+	rootSummaryResultKey    = "root_summary_result"
+	rootSearchNode          = "search_and_accept"
+	rootSummaryAgent        = "search_summary"
+	rootFinishNode          = "validate_answer"
+	rootFastMediumGateNode  = "fast_medium_gate"
+	rootFastMediumAgent     = "plan_fast_medium"
+	rootFastMediumCheckNode = "validate_fast_medium_plan"
+	rootFastMediumOutputKey = "fast_medium_model_output"
+	rootFastMediumPlanKey   = "fast_medium_checked_queries"
 )
 
 var ErrRootSummaryOutput = errors.New("root search summary graph output missing or invalid")
@@ -37,7 +43,16 @@ var ErrRootSummaryOutput = errors.New("root search summary graph output missing 
 // summary sequence. The source, citation acceptor, model, sessions and telemetry
 // are borrowed; only this Runner is closed by Close.
 type RootSummarizer struct {
-	runtime *btwruntime.Runtime
+	runtime    *btwruntime.Runtime
+	delivery   *Delivery
+	fastMedium *FastMediumModelLimits
+}
+
+// FastMediumModelLimits bounds one optional model planning stage. The search
+// policy separately fixes one batch and three total query slots.
+type FastMediumModelLimits struct {
+	MaxOutputTokens int
+	WallTime        time.Duration
 }
 
 // RootSummaryRunOption fixes the authoritative snapshot and public identity for
@@ -70,6 +85,21 @@ func validateRootSummaryRequest(q SummaryRequest) error {
 // operation; the Graph and Runner own Agent execution and native observability.
 func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, observed *telemetry.Bundle,
 	limits ...SummaryModelLimits) (*RootSummarizer, error) {
+	return newRootSummarizer(d, m, nil, sessions, observed, nil, limits...)
+}
+
+// NewRootSummarizerWithFastMedium adds one native no-tool LLMAgent planning
+// stage before the existing retrieval/citation/summary sequence.
+func NewRootSummarizerWithFastMedium(d *Delivery, m, plannerModel model.Model, sessions session.Service, observed *telemetry.Bundle,
+	medium FastMediumModelLimits, limits ...SummaryModelLimits) (*RootSummarizer, error) {
+	if isNil(plannerModel) || medium.MaxOutputTokens < 64 || medium.MaxOutputTokens > 512 || medium.WallTime < time.Second || medium.WallTime > 30*time.Second {
+		return nil, ErrInvalid
+	}
+	return newRootSummarizer(d, m, plannerModel, sessions, observed, &medium, limits...)
+}
+
+func newRootSummarizer(d *Delivery, m, plannerModel model.Model, sessions session.Service, observed *telemetry.Bundle,
+	medium *FastMediumModelLimits, limits ...SummaryModelLimits) (*RootSummarizer, error) {
 	if d == nil || isNil(m) || isNil(sessions) || observed == nil || !observed.Installed() {
 		return nil, ErrInvalid
 	}
@@ -80,16 +110,24 @@ func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, obs
 	if len(limits) == 1 {
 		config.MaxTokens = model.IntPtr(limits[0].MaxOutputTokens)
 	}
-	summaryAgent := llmagent.New(rootSummaryAgent, llmagent.WithModel(m), llmagent.WithInstruction(summaryInstruction),
+	summaryOptions := []llmagent.Option{llmagent.WithModel(m), llmagent.WithInstruction(summaryInstruction),
 		llmagent.WithTools([]tool.Tool{}), llmagent.WithEnableCodeExecutionResponseProcessor(false),
-		llmagent.WithGenerationConfig(config))
+		llmagent.WithGenerationConfig(config)}
+	if medium != nil {
+		summaryOptions = append(summaryOptions, llmagent.WithMaxLLMCalls(1))
+	}
+	summaryAgent := llmagent.New(rootSummaryAgent, summaryOptions...)
 	schema := graph.NewStateSchema().
 		AddField(rootSummaryRequestKey, graph.StateField{Type: reflect.TypeOf(SummaryRequest{}), Reducer: graph.DefaultReducer}).
 		AddField(rootSearchResultKey, graph.StateField{Type: reflect.TypeOf(SearchResult{}), Reducer: graph.DefaultReducer}).
 		AddField(rootModelOutputKey, graph.StateField{Type: reflect.TypeOf(""), Reducer: graph.DefaultReducer}).
 		AddField(rootSummaryResultKey, graph.StateField{Type: reflect.TypeOf(SummaryResult{}), Reducer: graph.DefaultReducer}).
 		AddField(graph.StateKeyLastResponse, graph.StateField{Type: reflect.TypeOf(""), Reducer: graph.DefaultReducer})
-	compiled, err := graph.NewStateGraph(schema).
+	if medium != nil {
+		schema.AddField(rootFastMediumOutputKey, graph.StateField{Type: reflect.TypeOf(""), Reducer: graph.DefaultReducer}).
+			AddField(rootFastMediumPlanKey, graph.StateField{Type: reflect.TypeOf([]string{}), Reducer: graph.DefaultReducer})
+	}
+	builder := graph.NewStateGraph(schema).
 		AddNode(rootSearchNode, func(ctx context.Context, state graph.State) (any, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -97,6 +135,17 @@ func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, obs
 			q, ok := graph.GetStateValue[SummaryRequest](state, rootSummaryRequestKey)
 			if !ok || validateRootSummaryRequest(q) != nil {
 				return nil, ErrInvalid
+			}
+			if medium != nil && q.Search.Depth == Fast && q.Search.Intelligence == Medium && len(q.Search.Snapshot.ValidRevisionIDs) > 0 {
+				planned, ok := graph.GetStateValue[[]string](state, rootFastMediumPlanKey)
+				if !ok {
+					return nil, ErrFastMediumPlan
+				}
+				var err error
+				ctx, err = WithFastMediumPlan(ctx, q.Search.Query, planned)
+				if err != nil {
+					return nil, err
+				}
 			}
 			found, err := d.Search(ctx, q.SearchID, q.Search)
 			if err != nil {
@@ -165,13 +214,77 @@ func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, obs
 			return "summary", nil
 		}, map[string]string{"insufficient": rootFinishNode, "summary": rootSummaryAgent}).
 		AddEdge(rootSummaryAgent, rootFinishNode).
-		SetEntryPoint(rootSearchNode).
-		SetFinishPoint(rootFinishNode).
-		Compile()
+		SetFinishPoint(rootFinishNode)
+	subAgents := []agent.Agent{summaryAgent}
+	if medium != nil {
+		plannerConfig := model.GenerationConfig{Stream: false, MaxTokens: model.IntPtr(medium.MaxOutputTokens)}
+		plannerAgent := llmagent.New(rootFastMediumAgent, llmagent.WithModel(plannerModel),
+			llmagent.WithInstruction(fastMediumInstruction), llmagent.WithTools([]tool.Tool{}),
+			llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithGenerationConfig(plannerConfig),
+			llmagent.WithMaxLLMCalls(1))
+		subAgents = append(subAgents, plannerAgent)
+		builder = builder.
+			AddNode(rootFastMediumGateNode, func(ctx context.Context, state graph.State) (any, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				q, ok := graph.GetStateValue[SummaryRequest](state, rootSummaryRequestKey)
+				if !ok || validateRootSummaryRequest(q) != nil {
+					return nil, ErrInvalid
+				}
+				if q.Search.Depth != Fast || q.Search.Intelligence != Medium || len(q.Search.Snapshot.ValidRevisionIDs) == 0 {
+					return graph.State{}, nil
+				}
+				prompt, err := json.Marshal(struct {
+					Question      string `json:"question"`
+					MaxNewQueries int    `json:"max_new_queries"`
+				}{q.Search.Query, maxFastMediumNewQueries})
+				if err != nil {
+					return nil, fmt.Errorf("encode fast medium planning question: %w", err)
+				}
+				return graph.State{graph.StateKeyLastResponse: string(prompt)}, nil
+			}).
+			AddAgentNode(rootFastMediumAgent, graph.WithSubgraphInputFromLastResponse(),
+				graph.WithSubgraphIsolatedMessages(true),
+				graph.WithSubgraphOutputMapper(func(_ graph.State, result graph.SubgraphResult) graph.State {
+					return graph.State{rootFastMediumOutputKey: result.LastResponse}
+				})).
+			AddNode(rootFastMediumCheckNode, func(ctx context.Context, state graph.State) (any, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				q, ok := graph.GetStateValue[SummaryRequest](state, rootSummaryRequestKey)
+				raw, outputOK := graph.GetStateValue[string](state, rootFastMediumOutputKey)
+				if !ok || !outputOK || q.Search.Depth != Fast || q.Search.Intelligence != Medium {
+					return nil, ErrFastMediumPlan
+				}
+				queries, err := ParseFastMediumPlan(raw, q.Search.Query)
+				if err != nil {
+					return nil, err
+				}
+				return graph.State{rootFastMediumPlanKey: queries}, nil
+			}).
+			AddConditionalEdges(rootFastMediumGateNode, func(_ context.Context, state graph.State) (string, error) {
+				q, ok := graph.GetStateValue[SummaryRequest](state, rootSummaryRequestKey)
+				if !ok {
+					return "", ErrInvalid
+				}
+				if q.Search.Depth == Fast && q.Search.Intelligence == Medium && len(q.Search.Snapshot.ValidRevisionIDs) > 0 {
+					return "plan", nil
+				}
+				return "direct", nil
+			}, map[string]string{"plan": rootFastMediumAgent, "direct": rootSearchNode}).
+			AddEdge(rootFastMediumAgent, rootFastMediumCheckNode).
+			AddEdge(rootFastMediumCheckNode, rootSearchNode).
+			SetEntryPoint(rootFastMediumGateNode)
+	} else {
+		builder = builder.SetEntryPoint(rootSearchNode)
+	}
+	compiled, err := builder.Compile()
 	if err != nil {
 		return nil, fmt.Errorf("compile root search summary graph: %w", err)
 	}
-	ag, err := graphagent.New("search_summary_root", compiled, graphagent.WithSubAgents([]agent.Agent{summaryAgent}))
+	ag, err := graphagent.New("search_summary_root", compiled, graphagent.WithSubAgents(subAgents))
 	if err != nil {
 		return nil, fmt.Errorf("create root search summary agent: %w", err)
 	}
@@ -179,7 +292,12 @@ func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, obs
 	if err != nil {
 		return nil, err
 	}
-	return &RootSummarizer{runtime: r}, nil
+	root := &RootSummarizer{runtime: r, delivery: d}
+	if medium != nil {
+		owned := *medium
+		root.fastMedium = &owned
+	}
+	return root, nil
 }
 
 // Summarize consumes the complete framework event stream before returning an
@@ -187,12 +305,25 @@ func NewRootSummarizer(d *Delivery, m model.Model, sessions session.Service, obs
 // output before the citation receipt and final validation are both complete.
 func (s *RootSummarizer) Summarize(ctx context.Context, q SummaryRequest) (SummaryResult, error) {
 	out := SummaryResult{AnswerID: q.AnswerID, SummaryStatus: "failed"}
-	if s == nil || s.runtime == nil || ctx == nil {
+	if s == nil || s.runtime == nil || s.delivery == nil || ctx == nil {
 		return out, ErrInvalid
 	}
 	option, err := RootSummaryRunOption(q)
 	if err != nil {
 		return out, err
+	}
+	profile, checked, err := s.delivery.preflightProfile(q.Search)
+	if err != nil {
+		return out, err
+	}
+	if checked && s.fastMedium != nil && profile.EffectiveIntelligence == Medium &&
+		(q.Search.Depth != Fast || q.Search.Intelligence != Medium) {
+		return out, ErrUnavailable
+	}
+	if s.fastMedium != nil && q.Search.Depth == Fast && q.Search.Intelligence == Medium {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.fastMedium.WallTime)
+		defer cancel()
 	}
 	fixed := q
 	fixed.Search.Snapshot = cloneSnapshot(q.Search.Snapshot)
