@@ -14,8 +14,11 @@ CREATE TABLE IF NOT EXISTS warehouse_community.read_batch_evidence (
   to_offset bigint NOT NULL CHECK (to_offset >= from_offset),
   batch_hash char(64) NOT NULL,
   committed_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (consumer, producer, from_offset)
+  PRIMARY KEY (consumer, producer, from_offset, to_offset, batch_hash)
 );
+
+CREATE INDEX IF NOT EXISTS read_batch_evidence_prefix
+  ON warehouse_community.read_batch_evidence (consumer, producer, from_offset, to_offset);
 
 CREATE TABLE IF NOT EXISTS warehouse_community.ods_event (
   producer text NOT NULL,

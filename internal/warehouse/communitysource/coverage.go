@@ -344,11 +344,12 @@ func (p *CoveragePublisher) readFrozen(ctx context.Context, through int64) ([]fr
 		}
 	}
 	batchRows, err := tx.Query(ctx, `SELECT from_offset,to_offset,batch_hash FROM warehouse_community.read_batch_evidence
-		WHERE consumer=$1 AND producer=$2 AND from_offset<=$3 ORDER BY from_offset`, p.Stream.Consumer, p.Stream.Producer, through)
+		WHERE consumer=$1 AND producer=$2 AND from_offset<=$3 AND to_offset<=$3
+		ORDER BY from_offset,to_offset,batch_hash`, p.Stream.Consumer, p.Stream.Producer, through)
 	if err != nil {
 		return nil, nil, err
 	}
-	batches := []CoverageBatch{}
+	observed := []CoverageBatch{}
 	for batchRows.Next() {
 		var from, to int64
 		var hash string
@@ -356,10 +357,7 @@ func (p *CoveragePublisher) readFrozen(ctx context.Context, through int64) ([]fr
 			batchRows.Close()
 			return nil, nil, err
 		}
-		if to > through {
-			continue
-		}
-		batches = append(batches, CoverageBatch{FromOffset: strconv.FormatInt(from, 10),
+		observed = append(observed, CoverageBatch{FromOffset: strconv.FormatInt(from, 10),
 			ToOffset: strconv.FormatInt(to, 10), BatchHash: hash})
 	}
 	if err := batchRows.Err(); err != nil {
@@ -367,13 +365,95 @@ func (p *CoveragePublisher) readFrozen(ctx context.Context, through int64) ([]fr
 		return nil, nil, err
 	}
 	batchRows.Close()
-	if len(batches) == 0 || batches[len(batches)-1].ToOffset != strconv.FormatInt(through, 10) {
-		return nil, nil, ErrCoveragePending
+	batches, err := selectBatchChain(items, observed, through)
+	if err != nil {
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, err
 	}
 	return items, batches, nil
+}
+
+// selectBatchChain audits every saved window against the immutable ODS, then
+// chooses one deterministic contiguous path from 1 to W. Overlapping windows
+// remain stored; their hashes describe read attempts, not business watermarks.
+func selectBatchChain(rows []frozenCoverageRow, observed []CoverageBatch, through int64) ([]CoverageBatch, error) {
+	if int64(len(rows)) != through || through < 1 {
+		return nil, ErrCoveragePending
+	}
+	type candidate struct {
+		batch CoverageBatch
+		from  int64
+		to    int64
+	}
+	candidates := make([]candidate, 0, len(observed))
+	windowHash := map[[2]int64]string{}
+	for _, batch := range observed {
+		from, fromErr := strconv.ParseInt(batch.FromOffset, 10, 64)
+		to, toErr := strconv.ParseInt(batch.ToOffset, 10, 64)
+		if fromErr != nil || toErr != nil || from < 1 || to < from || to > through ||
+			strconv.FormatInt(from, 10) != batch.FromOffset || strconv.FormatInt(to, 10) != batch.ToOffset ||
+			!digest.MatchString(batch.BatchHash) || to-from >= 128 {
+			return nil, ErrCoverageConflict
+		}
+		items := make([]eventing.Item, 0, to-from+1)
+		for _, row := range rows[from-1 : to] {
+			items = append(items, eventing.Item{Offset: row.Offset, InputHash: row.Hash, Event: row.Event})
+		}
+		canonical, err := canonicalJSON(items)
+		if err != nil || contentHash(canonical) != batch.BatchHash {
+			return nil, ErrCoverageConflict
+		}
+		key := [2]int64{from, to}
+		if old, exists := windowHash[key]; exists && old != batch.BatchHash {
+			return nil, ErrCoverageConflict
+		}
+		windowHash[key] = batch.BatchHash
+		candidates = append(candidates, candidate{batch: batch, from: from, to: to})
+	}
+	// A window ending farther right is preferred when it can still reach W.
+	// Equal paths are ordered by hash for reproducible manifest bytes.
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].from != candidates[j].from {
+			return candidates[i].from > candidates[j].from
+		}
+		if candidates[i].to != candidates[j].to {
+			return candidates[i].to > candidates[j].to
+		}
+		return candidates[i].batch.BatchHash < candidates[j].batch.BatchHash
+	})
+	type chain struct {
+		batch CoverageBatch
+		next  *chain
+		cost  int
+	}
+	best := map[int64]*chain{through + 1: {cost: 0}}
+	for _, item := range candidates {
+		suffix, ok := best[item.to+1]
+		if !ok {
+			continue
+		}
+		cost := suffix.cost + 1
+		if current, exists := best[item.from]; !exists || cost < current.cost ||
+			(cost == current.cost && item.to > batchEnd(current.batch)) {
+			best[item.from] = &chain{batch: item.batch, next: suffix, cost: cost}
+		}
+	}
+	first, ok := best[1]
+	if !ok {
+		return nil, ErrCoveragePending
+	}
+	selected := make([]CoverageBatch, 0, first.cost)
+	for step := first; step != nil && step.cost > 0; step = step.next {
+		selected = append(selected, step.batch)
+	}
+	return selected, nil
+}
+
+func batchEnd(batch CoverageBatch) int64 {
+	value, _ := strconv.ParseInt(batch.ToOffset, 10, 64)
+	return value
 }
 
 func (p *CoveragePublisher) verifyAuthority(ctx context.Context, rows []frozenCoverageRow) error {

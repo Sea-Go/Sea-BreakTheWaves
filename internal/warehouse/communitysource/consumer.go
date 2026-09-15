@@ -69,11 +69,17 @@ type Consumer struct {
 //go:embed schema.sql
 var schema string
 
+//go:embed 002_batch_window_evidence.sql
+var batchWindowMigration string
+
 func Initialize(ctx context.Context, db *pgxpool.Pool) error {
 	if db == nil {
 		return ErrContract
 	}
-	_, err := db.Exec(ctx, schema)
+	if _, err := db.Exec(ctx, schema); err != nil {
+		return err
+	}
+	_, err := db.Exec(ctx, batchWindowMigration)
 	return err
 }
 
@@ -522,16 +528,18 @@ func (c *Consumer) commit(ctx context.Context, batch eventing.Batch, rows []admi
 }
 
 func recordBatchEvidence(ctx context.Context, tx pgx.Tx, stream Stream, batch eventing.Batch) error {
+	// Every actual DC read window is distinct provenance. A lost ACK may yield
+	// another valid window with the same start after the source grows or the
+	// configured limit changes. ODS identity and cursor still decide admission.
 	if _, err := tx.Exec(ctx, `INSERT INTO warehouse_community.read_batch_evidence
 		(consumer,producer,from_offset,to_offset,batch_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
 		stream.Consumer, stream.Producer, batch.FromOffset, batch.ToOffset, batch.BatchHash); err != nil {
 		return err
 	}
-	var to int64
-	var hash string
-	if err := tx.QueryRow(ctx, `SELECT to_offset,batch_hash FROM warehouse_community.read_batch_evidence
-		WHERE consumer=$1 AND producer=$2 AND from_offset=$3`, stream.Consumer, stream.Producer, batch.FromOffset).
-		Scan(&to, &hash); err != nil || to != batch.ToOffset || hash != batch.BatchHash {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM warehouse_community.read_batch_evidence
+		WHERE consumer=$1 AND producer=$2 AND from_offset=$3 AND to_offset=$4 AND batch_hash=$5)`,
+		stream.Consumer, stream.Producer, batch.FromOffset, batch.ToOffset, batch.BatchHash).Scan(&exists); err != nil || !exists {
 		return ErrContract
 	}
 	return nil
