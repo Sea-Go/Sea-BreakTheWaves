@@ -22,6 +22,25 @@ type fixtureDCAck struct {
 	badReceiptPage bool
 }
 
+// A separate ODS read can keep the same EventID/DC JCS index while changing
+// raw receipt bytes. The full fixed-cutoff evidence must remain identical.
+type changedReceiptODS struct {
+	fixtureODS
+	reads int
+}
+
+func (s *changedReceiptODS) ReadPrefix(ctx context.Context, cutoff int64) (ODSSnapshot, error) {
+	snapshot, err := s.fixtureODS.ReadPrefix(ctx, cutoff)
+	if err != nil {
+		return snapshot, err
+	}
+	s.reads++
+	if s.reads == 2 {
+		snapshot.Rows[0].DCReceipt = append(append([]byte(nil), snapshot.Rows[0].DCReceipt...), ' ')
+	}
+	return snapshot, nil
+}
+
 func (f fixtureDCAck) ReadAcknowledgedPrefix(_ context.Context, consumer, producer string,
 	cutoff, from int64, _ int) (DCAckPage, error) {
 	to := from + f.chunk - 1
@@ -101,6 +120,16 @@ func TestAcknowledgedReaderJoinsDCPagesToImmutableODSPrefix(t *testing.T) {
 	if err != nil || len(ack.DCBatchReceipts) != 2 ||
 		ack.DCBatchReceipts[1].FromOffset != 4 {
 		t.Fatalf("second acknowledged batch was dropped at cutoff4: %+v %v", ack, err)
+	}
+}
+
+func TestAcknowledgedReaderRejectsChangedOriginalReceiptAcrossODSSnapshots(t *testing.T) {
+	reader, req := sourceReaderFixture(t)
+	first := reader.ODS.(fixtureODS)
+	reader.ODS = &changedReceiptODS{fixtureODS: first}
+	dc := fixtureDCAck{rows: first.snapshot.Rows, chunk: 2}
+	if _, err := reader.ReadAcknowledgedPinnedSource(context.Background(), req, dc); !errors.Is(err, ErrPrefix) {
+		t.Fatalf("same EventID/JCS with changed original receipt qualified: %v", err)
 	}
 }
 

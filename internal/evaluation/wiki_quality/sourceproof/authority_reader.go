@@ -90,12 +90,13 @@ type TransportedJudgment struct {
 // ODS prefix at cutoff. It has no DC ACK/batch or RTW as-of-head/withdrawal
 // witness, and cannot be passed to Freeze as authority.
 type SourceProjection struct {
-	Catalog         CatalogProof
-	Transported     []TransportedJudgment
-	Selected        []PrefixEvent
-	CutoffOffset    int64
-	CommittedOffset int64
-	ODSPrefixSHA256 string
+	Catalog           CatalogProof
+	Transported       []TransportedJudgment
+	Selected          []PrefixEvent
+	CutoffOffset      int64
+	CommittedOffset   int64
+	ODSPrefixSHA256   string
+	ODSEvidenceSHA256 string // all committed raw Event/receipt/Catalog bytes at cutoff
 }
 
 type AuthorityReader struct {
@@ -390,7 +391,12 @@ func (r AuthorityReader) ReadPinnedSource(ctx context.Context, req PinnedRequest
 	if err != nil {
 		return SourceProjection{}, ErrProof
 	}
+	_, evidenceSHA, err := jcs(snapshot.Rows)
+	if err != nil {
+		return SourceProjection{}, ErrProof
+	}
 	out.Catalog, out.CutoffOffset, out.CommittedOffset, out.ODSPrefixSHA256 =
 		proof, req.CutoffOffset, snapshot.CommittedOffset, indexSHA
+	out.ODSEvidenceSHA256 = evidenceSHA
 	return out, nil
 }

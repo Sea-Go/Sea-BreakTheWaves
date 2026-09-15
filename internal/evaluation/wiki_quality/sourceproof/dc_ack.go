@@ -98,6 +98,10 @@ func (r AuthorityReader) ReadAcknowledgedPinnedSource(ctx context.Context,
 	if err != nil || sourceIndexSHA != source.ODSPrefixSHA256 {
 		return out, ErrPrefix
 	}
+	_, sourceEvidenceSHA, err := jcs(snapshot.Rows)
+	if err != nil || sourceEvidenceSHA != source.ODSEvidenceSHA256 {
+		return out, ErrPrefix
+	}
 	pageItems := make([]DCAckItem, 0, req.CutoffOffset)
 	receipts := map[int64]DCBatchReceipt{}
 	minACK := int64(0)
