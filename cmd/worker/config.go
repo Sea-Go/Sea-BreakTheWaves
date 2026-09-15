@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/app"
 )
 
 var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -58,12 +60,16 @@ type config struct {
 	AuthorityURL   string
 	AuthorityToken string
 	FactProducer   string
+	Wiki           *wikiCompileConfig
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
 	var c config
 	if isFactJobType(getenv("BTW_JOB_TYPE")) {
 		return loadFactConfig(getenv)
+	}
+	if getenv("BTW_JOB_TYPE") == app.WikiCompileJobType {
+		return loadWikiCompileConfig(getenv)
 	}
 	if getenv("BTW_MODE") != "local" || getenv("BTW_ARTIFACT_STORE") != "local" {
 		return c, errors.New("BTW_MODE and BTW_ARTIFACT_STORE must explicitly be local")
