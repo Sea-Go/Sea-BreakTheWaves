@@ -22,7 +22,7 @@ stdout 是单个 JSON 业务报告，只有规则、表名、计数和 SHA；std
 | L2 | 阻断 | 预期 FK 的逻辑 orphan；旧 schema 没有物理 FK 的 outbox、水位、binding/已绑定未映射事件主体缺失；接纳、Outbox、投影、覆盖、特征和历史候选版本越过状态；水位断档或指针所指 bundle 的 pair 与 pointer pair 不一致。|
 | L3 | 需复核 | Ontology 活动投影落后于当前定义/状态，或 scoped 表出现额外结构键。它提示重建或确认，不单独证明数据身份可迁。|
 
-旧测试中的 `tenant-a/issued-user-1` 是早期 synthetic 样例。负例将它保留为旧行并报告 L1；审核不会把它推断成 RTW 正式 UID，也不会归并到其他用户。成功运行只证明被审核库在该快照的**这些结构和匿名计数规则**没有发现阻断。旧事件 normalized hash、原 JSON/bytea、外部 object manifest、Recommend 配对批准真实性和不可变触发器行为不是本切片的内容验证，不能凭此报告切换写者或 serving。
+旧测试中的非 platform、非数字主体是早期 synthetic 样例。负例将它保留为旧行并报告 L1；审核不会把它推断成 RTW 正式 UID，也不会归并到其他用户。成功运行只证明被审核库在该快照的**这些结构和匿名计数规则**没有发现阻断。旧事件 normalized hash、原 JSON/bytea、外部 object manifest、Recommend 配对批准真实性和不可变触发器行为不是本切片的内容验证，不能凭此报告切换写者或 serving。
 
 `bash internal/usermodel/preflight/test-postgres.sh` 启动隔离 PG16，只在随机 schema/临时进程写测试 fixture，做七份迁移结构一致性、空库匿名审计、synthetic 非规范主体、正 int64 边界、去槽碰撞、缺失 FK/orphan、Outbox 版本空洞和 Serving pair 错 owner 的负例，随后验证 CLI 默认关闭、结构化 stderr 与只读结果。测试只跑本包和 CLI，`-p=2` 限制磁盘/构建并行。`generate-contract.sh` 和 `render-inventory.py` 只在冻结 migration 源与隔离 PG16 一致时生成本切片 oracle/清单；源 SHA 改动会使隔离测试失败，不能用生产库刷新 oracle 掩盖漂移。
 
