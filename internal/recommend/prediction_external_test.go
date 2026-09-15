@@ -93,12 +93,30 @@ type lostPredictionProxy struct {
 	lostKey   string
 	client    *http.Client
 	mu        sync.Mutex
-	dropped   bool
 	captured  []byte
 	keyCounts map[string]int
 }
 
 func (p *lostPredictionProxy) ServeHTTP(w http.ResponseWriter, incoming *http.Request) {
+	key := incoming.Header.Get("Idempotency-Key")
+	p.mu.Lock()
+	if p.keyCounts == nil {
+		p.keyCounts = map[string]int{}
+	}
+	p.keyCounts[key]++
+	attempt := p.keyCounts[key]
+	p.mu.Unlock()
+	// The second response is an explicit intermediary fault: DC has already
+	// committed the first response, but BTW must treat this exact lease
+	// envelope as pending and poll the original key. The third request reaches
+	// real DC and reads its immutable completed replay.
+	if key == p.lostKey && attempt == 2 {
+		w.Header().Set("Retry-After", "1")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":"prediction logical call is still in progress"}`)
+		return
+	}
 	body, err := io.ReadAll(incoming.Body)
 	if err != nil {
 		http.Error(w, "read", http.StatusBadGateway)
@@ -126,20 +144,18 @@ func (p *lostPredictionProxy) ServeHTTP(w http.ResponseWriter, incoming *http.Re
 		http.Error(w, "upstream-read", http.StatusBadGateway)
 		return
 	}
-	key := incoming.Header.Get("Idempotency-Key")
-	p.mu.Lock()
-	if p.keyCounts == nil {
-		p.keyCounts = map[string]int{}
-	}
-	p.keyCounts[key]++
-	drop := key == p.lostKey && !p.dropped && response.StatusCode == http.StatusOK
-	if drop {
-		p.dropped = true
+	unknown := key == p.lostKey && attempt == 1 && response.StatusCode == http.StatusOK
+	if unknown {
+		p.mu.Lock()
 		p.captured = append([]byte(nil), responseBody...)
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
-	if drop {
-		panic(http.ErrAbortHandler)
+	if unknown {
+		w.Header().Set("Retry-After", "1")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":"prediction outcome is unknown; retry the same idempotency key"}`)
+		return
 	}
 	for key, values := range response.Header {
 		for _, value := range values {
@@ -449,8 +465,8 @@ func TestPredictionCandidateThroughRealDC(t *testing.T) {
 	requirePredictionNumbers(t, candidateA, expected)
 	lostBody, proxyCounts := proxy.evidence()
 	if len(lostBody) == 0 || digestPrediction(lostBody) != candidateA.UserTower.ResponseSHA256 ||
-		proxyCounts[logicalCall+".user"] != 2 {
-		t.Fatalf("lost response was not recovered with same key: hash=%s receipt=%s counts=%v",
+		proxyCounts[logicalCall+".user"] != 3 {
+		t.Fatalf("503/409/replay sequence did not recover with same key: hash=%s receipt=%s counts=%v",
 			digestPrediction(lostBody), candidateA.UserTower.ResponseSHA256, proxyCounts)
 	}
 	replayedA, err := graphA.Run(ctx, PredictionGraphRequest{Candidate: requestA,
@@ -524,6 +540,23 @@ func TestPredictionCandidateThroughRealDC(t *testing.T) {
 			t.Fatalf("DC non-token usage duplicated for actor %s: %+v", userID, aggregate)
 		}
 	}
+	byID := make(map[string]predictionReceiptRow, len(receipts))
+	for _, receipt := range receipts {
+		byID[receipt.ID] = receipt
+	}
+	for actor, candidate := range map[string]PredictionCandidate{
+		sessionA.User.ID: candidateA, sessionB.User.ID: candidateB,
+	} {
+		for _, task := range []PredictionTaskReceipt{candidate.UserTower, candidate.ItemTower, candidate.Ranker} {
+			row, ok := byID[task.ModelCallID]
+			if !ok || row.UserID != actor || row.Task != string(task.Task) || row.Attempt != 1 ||
+				row.InputValues != task.Usage.InputFeatureValues || row.OutputValues != task.Usage.OutputValues {
+				t.Fatalf("Graph task did not match one durable actor-scoped PG receipt: actor=%s task=%+v row=%+v", actor, task, row)
+			}
+		}
+	}
+	firstPG := byID[candidateA.UserTower.ModelCallID]
+	actorARows := perUser[sessionA.User.ID].rows
 	var distinctKeys int
 	if err := pool.QueryRow(context.Background(), `SELECT count(DISTINCT idempotency_key_hash)
 		FROM telemetry.prediction_call WHERE user_id::text=ANY($1)`, []string{sessionA.User.ID, sessionB.User.ID}).Scan(&distinctKeys); err != nil || distinctKeys != 3 {
@@ -641,8 +674,13 @@ func TestPredictionCandidateThroughRealDC(t *testing.T) {
 		"business_status":   "candidate_default_off", "business_activation": "none",
 		"quality_claim": "not_evaluated", "candidate_a": candidateA, "candidate_a_replay": replayedA,
 		"candidate_b": candidateB, "exporter_expected": expected,
-		"lost_response": map[string]any{"same_key_requests": proxyCounts[logicalCall+".user"],
-			"captured_response_sha256": digestPrediction(lostBody), "replayed_candidate_equal": replayedA.ID == candidateA.ID},
+		"recovery_sequence": map[string]any{"http_statuses": []int{503, 409, 200},
+			"same_key_requests":   proxyCounts[logicalCall+".user"],
+			"fault_origin":        "intermediary injected 503 and 409 after DC completed first response",
+			"dc_pg_first_attempt": firstPG.Attempt, "dc_pg_logical_rows_for_actor": actorARows,
+			"dc_pg_model_call_id":                firstPG.ID,
+			"captured_completed_response_sha256": digestPrediction(lostBody),
+			"replayed_candidate_equal":           replayedA.ID == candidateA.ID},
 		"postgres_receipts": receipts, "distinct_logical_key_hashes_across_two_actors": distinctKeys,
 		"metrics_verified": true, "trpc_native_spans_verified": true, "span_names": spanNames,
 		"contract_rejections": map[string]any{"wrong_configuration": "dc_http_409", "wrong_pair": "dc_http_409",
