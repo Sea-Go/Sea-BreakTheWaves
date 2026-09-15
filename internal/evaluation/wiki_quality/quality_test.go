@@ -380,6 +380,22 @@ func TestWikiQualityMissingPinnedCitationStaysVisible(t *testing.T) {
 	}
 }
 
+func TestWikiQualityRequiredUndeterminedDoesNotBecomeZeroCoverage(t *testing.T) {
+	input := qualityFixture(t)
+	input.Review.Facts = append([]Fact(nil), input.Review.Facts...)
+	input.Review.Facts[0].Required = true // The fifth source fact is human-undetermined.
+	frozen, err := EvaluateCase(context.Background(), input, Verifiers{})
+	if err != nil || frozen.Report.State != Observed ||
+		frozen.Report.FactCounts.Required != 5 ||
+		frozen.Report.FactCounts.Undetermined != 1 ||
+		frozen.Report.RequiredCoverage.State != NotEvaluable ||
+		frozen.Report.RequiredCoverage.Reason != "required_human_fact_undetermined" ||
+		frozen.Report.RequiredCoverage.Denominator != 0 {
+		t.Fatalf("required pending human fact was counted as coverage failure: %+v %v",
+			frozen.Report, err)
+	}
+}
+
 func TestWikiQualityJCSReadersRejectTamperAndKeepReviewVersions(t *testing.T) {
 	firstInput := qualityFixture(t)
 	first, err := EvaluateCase(context.Background(), firstInput, Verifiers{})

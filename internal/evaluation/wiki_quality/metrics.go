@@ -7,9 +7,10 @@ import (
 )
 
 type Fraction struct {
-	State       State `json:"state"`
-	Numerator   int   `json:"numerator"`
-	Denominator int   `json:"denominator"`
+	State       State  `json:"state"`
+	Reason      string `json:"reason,omitempty"`
+	Numerator   int    `json:"numerator"`
+	Denominator int    `json:"denominator"`
 }
 
 type GradeCount struct {
@@ -281,12 +282,19 @@ func factMetrics(input Input, judgments map[string]FactJudgment,
 		}
 	}
 	requiredCovered := 0
+	requiredUndetermined := 0
 	for _, outcome := range report.Outcomes {
 		if outcome.Required && outcome.Disposition == Covered {
 			requiredCovered++
 		}
+		if outcome.Required && outcome.Disposition == Undetermined {
+			requiredUndetermined++
+		}
 	}
-	if report.FactCounts.Required > 0 {
+	if requiredUndetermined > 0 {
+		report.RequiredCoverage = Fraction{State: NotEvaluable,
+			Reason: "required_human_fact_undetermined"}
+	} else if report.FactCounts.Required > 0 {
 		report.RequiredCoverage = Fraction{State: Observed,
 			Numerator: requiredCovered, Denominator: report.FactCounts.Required}
 	} else {
