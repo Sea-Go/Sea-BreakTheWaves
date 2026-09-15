@@ -179,6 +179,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	operationID = scope.AnswerID
 	searchID, releaseID, generation, publicationRevision = scope.SearchID,
 		scope.Snapshot.ReleaseID, scope.Snapshot.Generation, scope.Snapshot.PublicationRevision
+	stage.SetAttributes(slog.String("operation_id", operationID), slog.String("search_id", searchID),
+		slog.String("release_id", releaseID), slog.Int64("generation", generation),
+		slog.String("publication_revision", publicationRevision))
 	q := searchdomain.SummaryRequest{Subject: scope.Subject, SessionID: scope.SessionID,
 		SearchID: scope.SearchID, AnswerID: scope.AnswerID,
 		Search: searchdomain.Request{Query: body.Query, Depth: body.Depth, Intelligence: body.Intelligence,

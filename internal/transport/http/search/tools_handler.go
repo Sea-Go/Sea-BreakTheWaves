@@ -132,6 +132,9 @@ func (h *toolsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeToolsError(w, status, code)
 		return
 	}
+	stage.SetAttributes(slog.String("operation_id", operationID), slog.String("search_id", searchID),
+		slog.String("release_id", scope.Snapshot.ReleaseID), slog.Int64("generation", scope.Snapshot.Generation),
+		slog.String("publication_revision", scope.Snapshot.PublicationRevision))
 	// The production process currently has exactly the local-exact fast/low
 	// policy. A signed request for other profiles is explicit unavailability.
 	if body.Depth != searchdomain.Fast || body.Intelligence != searchdomain.Low {
