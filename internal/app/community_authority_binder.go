@@ -70,11 +70,10 @@ type communityAuthorityResponse struct {
 	SourceEventHash    string                    `json:"source_event_hash"`
 }
 
-// communitySourceSubjectRef is the RTW product identity contract. Realm is a
-// fixed issuer namespace, not a tenant and never comes from client input.
+// communitySourceSubjectRef is the RTW v2 product identity contract. It has no
+// tenant or realm selector; the issuer owns the globally scoped subject ID.
 type communitySourceSubjectRef struct {
 	Issuer    string `json:"issuer"`
-	Realm     string `json:"realm"`
 	SubjectID string `json:"subject_id"`
 }
 
@@ -186,9 +185,9 @@ func bindCommunityAuthority(source FactSourceEvidence, authority communityAuthor
 }
 
 func validateCommunityPayload(event eventing.Event, authority communityAuthorityResponse, payload communityAuthorityPayload) error {
-	expectedSubject := "rtw.identity/" + authority.SubjectRef.Realm + "/" + authority.SubjectRef.SubjectID
+	expectedSubject := "rtw.identity/platform/" + authority.SubjectRef.SubjectID
 	uid, uidErr := strconv.ParseInt(authority.SubjectRef.SubjectID, 10, 64)
-	if authority.SubjectRef.Issuer != "rtw.identity" || authority.SubjectRef.Realm != "platform" ||
+	if authority.SubjectRef.Issuer != "rtw.identity" ||
 		uidErr != nil || uid <= 0 || strconv.FormatInt(uid, 10) != authority.SubjectRef.SubjectID ||
 		payload.SubjectRef != expectedSubject || payload.SchemaVersion != "rtw.community-fact.v1" ||
 		payload.EventID != event.EventID || payload.EventType != event.EventType || payload.Producer != event.Producer ||
@@ -213,11 +212,11 @@ func validateCommunityPayload(event eventing.Event, authority communityAuthority
 }
 
 func communitySemanticFact(event eventing.Event, authority communityAuthorityResponse, payload communityAuthorityPayload) (usermodel.Event, error) {
-	// usermodel.SubjectRef still names its fixed namespace compatibility slot
-	// TenantID. This adapter writes the RTW realm there; no tenant is accepted,
-	// derived, or exposed by the community authority contract.
+	// usermodel.SubjectRef still names its historical namespace compatibility
+	// slot TenantID. This adapter writes the constant "platform" there; no
+	// tenant or realm is accepted or exposed by the v2 authority contract.
 	fact := usermodel.Event{Subject: usermodel.SubjectRef{AuthorityID: authority.SubjectRef.Issuer,
-		TenantID: authority.SubjectRef.Realm, SubjectID: authority.SubjectRef.SubjectID},
+		TenantID: "platform", SubjectID: authority.SubjectRef.SubjectID},
 		Kind: usermodel.ProductAction, ItemID: payload.TargetID}
 	switch event.Producer {
 	case commentFactProducer:

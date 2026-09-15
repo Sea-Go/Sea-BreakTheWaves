@@ -51,7 +51,7 @@ func communityEvidence(t *testing.T, producer, eventType, eventID, aggregateID, 
 		ReceiptID: "receipt-" + eventID, InputHash: hash, Offset: offset, ReceivedAt: "2026-09-15T08:00:02.123456Z"}
 	source := FactSourceEvidence{Event: event, InputHash: hash, Offset: offset, Receipt: receipt}
 	authority := communityAuthorityResponse{Event: event,
-		SubjectRef:         communitySourceSubjectRef{Issuer: "rtw.identity", Realm: "platform", SubjectID: subject},
+		SubjectRef:         communitySourceSubjectRef{Issuer: "rtw.identity", SubjectID: subject},
 		PredecessorEventID: predecessor, TechnicalReceipt: receipt, SourceEventHash: hash}
 	return source, authority
 }
@@ -241,5 +241,12 @@ func TestCommunityAndLegacyFavoriteResolveSameRTWSubject(t *testing.T) {
 		community.Subject.SubjectID != "1001" {
 		t.Fatalf("legacy favorite and community facts split one RTW user: favorite=%+v community=%+v",
 			favorite.Subject, community.Subject)
+	}
+}
+
+func TestCommunityAuthoritySubjectWireV2HasNoRealm(t *testing.T) {
+	raw, err := json.Marshal(communitySourceSubjectRef{Issuer: "rtw.identity", SubjectID: "1001"})
+	if err != nil || string(raw) != `{"issuer":"rtw.identity","subject_id":"1001"}` {
+		t.Fatalf("community authority SubjectRef wire is not v2: %s %v", raw, err)
 	}
 }
