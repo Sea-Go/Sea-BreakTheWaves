@@ -132,7 +132,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return c, fmt.Errorf("BTW_SEARCH_INDEX_FILE: %w", err)
 	}
 	var p policySettings
-	if err = readJSON(getenv("BTW_SEARCH_POLICY_FILE"), &p); err != nil {
+	if err = readPolicyJSON(getenv("BTW_SEARCH_POLICY_FILE"), &p); err != nil {
 		return c, fmt.Errorf("BTW_SEARCH_POLICY_FILE: %w", err)
 	}
 	wall, err := time.ParseDuration(p.FastLow.WallTime)
@@ -189,6 +189,106 @@ func readJSON(path string, out any) error {
 		return errors.New("configuration file must contain one strict JSON object")
 	}
 	return nil
+}
+
+// readPolicyJSON preserves the historical low-only parser while requiring the
+// optional medium object to have one literal root key and unique literal field
+// names. A duplicate medium key followed by null must not silently disable it.
+func readPolicyJSON(path string, out *policySettings) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return errors.New("configuration file unavailable")
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, 64*1024+1))
+	if err != nil || len(raw) > 64*1024 {
+		return errors.New("configuration file must be at most 64 KiB")
+	}
+	if !literalFastMediumPolicyKeys(raw) {
+		return errors.New("fast_medium policy requires one literal object with unique keys")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(out) != nil || decoder.Decode(new(any)) != io.EOF {
+		return errors.New("configuration file must contain one strict JSON object")
+	}
+	return nil
+}
+
+func literalFastMediumPolicyKeys(raw []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return false
+	}
+	seenMedium := false
+	for decoder.More() {
+		keyStart := decoder.InputOffset()
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return false
+		}
+		keyEnd := decoder.InputOffset()
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return false
+		}
+		if key != "fast_medium" {
+			continue
+		}
+		if seenMedium || !literalJSONKeySpelling(raw, keyStart, keyEnd, "fast_medium") ||
+			!literalFastMediumObjectKeys(value) {
+			return false
+		}
+		seenMedium = true
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return false
+	}
+	_, err = decoder.Token()
+	return err == io.EOF
+}
+
+func literalFastMediumObjectKeys(raw []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return false
+	}
+	allowed := map[string]bool{"version": true, "max_batches": true, "max_subqueries": true,
+		"top_k_per_lane": true, "max_evidence": true, "wall_time": true,
+		"planner_max_output_tokens": true}
+	seen := make(map[string]bool, len(allowed))
+	for decoder.More() {
+		keyStart := decoder.InputOffset()
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok || !allowed[key] || seen[key] ||
+			!literalJSONKeySpelling(raw, keyStart, decoder.InputOffset(), key) {
+			return false
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return false
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return false
+	}
+	_, err = decoder.Token()
+	return err == io.EOF
+}
+
+func literalJSONKeySpelling(raw []byte, start, end int64, key string) bool {
+	spelling := bytes.TrimSpace(raw[start:end])
+	if len(spelling) > 0 && spelling[0] == ',' {
+		spelling = bytes.TrimSpace(spelling[1:])
+	}
+	return bytes.Equal(spelling, []byte(strconv.Quote(key)))
 }
 
 func endpoint(raw string) error {
