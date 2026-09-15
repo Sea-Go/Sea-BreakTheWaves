@@ -62,3 +62,12 @@ RTW留存的`observability/wiki-fact-set-cross-source.json` v3 SHA=`e8f9bec02e2b
 前述真PG轮固定在BTW`dd0bb31`字节；同行只读审查后，叶子再收紧两处测试门禁。退出陷阱现在保留原测试失败码、要求`pg_ctl stop`成功，且紧接着`pg_ctl status`必须返回**3/no server**才能让脚本保持退出0；`started`在`pg_ctl start`前置位，覆盖启动返回错误却已留下postmaster的情况。任务专用假`pg_ctl`探针依序确认stop成功/status3可退出0、仍运行/status0必退出1、stop失败/status3必退出1、start失败仍尝试stop且退出1；此探针没有启动真PG。旧Warehouse结果另严格固定八个字面JSON键，拒重复/未知`tenant_id`，把全部三条quality EventID和目标两条Catalog quality EventID数组与新12键fixture逐项对齐；旧11键fixture、新12键fixture及旧结果文件均必须是**精确普通0600**文件，0400/0700反例拒。
 
 修复后的纯SourceProof包race退出0日志SHA=`594de0c107c327d416f06e7bc0d3696b94f68db41d3d423fba9b4e298c82f638`，vet退出0/空日志SHA=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`，`bash -n`及diff check退出0。**这组新代码尚未重新跑三仓真PG**；上段L3不能自动转签到后续修复提交。
+
+
+## 内容开发集成最终同父复验
+
+独立BTW真源叶子远端`feat/wiki-sourceproof-real-source-20260916@62b73ef4798cbfa33f051eb198c2fb3cdc443bb0`洁；主任务把`dcc986e/dd0bb31/0f33cab/6334476/62b73ef`五笔精确合入既有BTW内容开发分支为`ece6039/feb0962/c4a340d/7516682/3fd2827`。最终本包纯race PASS/testSHA=`0464c6a59f7a2586c2a2ee11631078293686841d64f3276d89952abe66fb2faa`，vet空SHAe3b0、bash-n/mod verify/diff0；真源script的EXIT trap现在**失败必拒exit0**，旧八键技术结果逐质量EventID数组和精确0600门禁已在主线代码实际运行。之前独立叶子基旧dd的本机L3只说明原父轮；下面是从新的BTW开发代码头另签。
+
+固定RTW知识开发`4d723a2`×DC平台开发`ebea5f8`×本BTW内容开发`3fd2827`新开两侧PG16同父：真RTW14 Producer offset、Catalog1＋目标质量2＋旧基线质量1＋技术skip10，DC历史批ACK1/同consumer cursor14；本脚本**同一PG**先旧Warehouse真源测试 PASS/testSHA=`2d4dfbfe84fc1988e6f032e8daa29949ceaebe645d6fd18a7b68a508b0e909ad`，再本包SourceProof真历史Reader PASS/testSHA=`8e31638f53183f784caa15086a491360f4761c80f090f7a29a57aaef0b787afa`，vet空SHAe3b0、BTW PG stopSHA=`ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d`/status3；证据`sea-wiki-sourceproof-real.xvFFPk`。RTW父脚本exit0/testSHA=`1aaa665968fee12400c941814f2f14678eca55ee9273cfab020c97383e047a45`、0600 reportv3SHA=`1cce5c7fc63054955741df136eabe5d87c83f4de4365af345153cb1a8176282d`、PG stopca/status3，证据`sea-knowledge-acceptance.OzBtUK`。RTW独立DC GET与Reader全DC索引 SHA均为`390a5273eb25d29fc4e726c81bebfa40ed0c360638f5575b578ea2895f4cabab`，Reader ODS前缀索引SHA=`4c8c302359d38599905f56c9c5927d325578af02165499b09e7e649c4bb2c3ec`；报告`sourceproof_reader_verified=true,sourceproof_result_sha256=638923b0b4e706a016127ef57c158838acefdf3b6c768d9ebba113009ecbb182`。旧＋新0600结果测试退出后随RTW`t.TempDir()`删除，报告的结果SHA只可由当轮源断言背书，不再作为留存原字节工件。
+
+这只接纳**BTW真实ODS+DC已ACK源与RTW原事实目录/判断最后已运输投影**的本机L3。结果仍`quality_state=not_evaluable`且`human_catalog_verified=false,d07_evaluable=false,production_verified=false`；未证RTW业务as-of头/截止撤回资格、真人目录列全/逐事实质量、CH/dbt离线DWD/ADS或生产部署，`Freeze`和Dataset仍不调用。
