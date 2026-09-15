@@ -51,12 +51,14 @@ CREATE TABLE IF NOT EXISTS warehouse_community.ods_event (
   PRIMARY KEY (producer, source_offset),
   UNIQUE (producer, event_id),
   CHECK (issuer = 'rtw.identity'),
+  CHECK (source_event_hash ~ '^[a-f0-9]{64}$'),
   CHECK (subject_id ~ '^[1-9][0-9]*$' AND length(subject_id) <= 19
          AND subject_id::numeric <= 9223372036854775807),
   CHECK ((producer = 'rtw.comment-rpc' AND event_type IN
          ('community.comment.created','community.comment.deleted','community.comment.interaction'))
       OR (producer = 'rtw.like-mq' AND event_type = 'community.target.interaction')),
   CHECK (target_revision IS NULL),
+  CHECK (operation IN ('create','retract','like','unlike','dislike','undislike')),
   CHECK ((producer = 'rtw.comment-rpc' AND search_evidence = false AND comment_id IS NOT NULL)
       OR (producer = 'rtw.like-mq' AND search_evidence IS NULL AND comment_id IS NULL))
 );
