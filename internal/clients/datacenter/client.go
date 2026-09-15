@@ -13,11 +13,17 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/eventing"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/jobs"
+	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/prediction"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/clients/datacenter/wire/representation"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 )
 
 type Client struct{ http *httpclient.Client }
+
+type PredictionResult struct {
+	Response prediction.Response
+	Body     []byte
+}
 
 func New(config httpclient.Config) (*Client, error) {
 	c, e := httpclient.New(config)
@@ -87,6 +93,31 @@ func (c *Client) RepresentWithKey(ctx context.Context, q representation.Request,
 	if err = result.Validate(q, contract, physicalModel); err != nil {
 		return result, fmt.Errorf("DataCenter representation contract: %w", err)
 	}
+	return result, nil
+}
+
+// Predict executes one caller-owned logical prediction call. The caller must
+// persist and reuse key after an unknown response; this client never invents a
+// replacement key or retries a mutation on its own.
+func (c *Client) Predict(ctx context.Context, q prediction.Request, key string) (PredictionResult, error) {
+	var result PredictionResult
+	if !representationKeyPattern.MatchString(key) {
+		return result, errors.New("prediction requires a valid logical call Idempotency-Key")
+	}
+	if err := q.Validate(); err != nil {
+		return result, err
+	}
+	raw, _, err := c.http.Do(ctx, http.MethodPost, "/v1/predictions", nil, q, key)
+	if err != nil {
+		return result, err
+	}
+	if err := prediction.Decode(raw, &result.Response); err != nil {
+		return PredictionResult{}, err
+	}
+	if err := result.Response.Validate(q); err != nil {
+		return PredictionResult{}, fmt.Errorf("DataCenter prediction contract: %w", err)
+	}
+	result.Body = append([]byte(nil), raw...)
 	return result, nil
 }
 func (c *Client) PublishEvent(ctx context.Context, q eventing.Event) (eventing.Receipt, error) {
