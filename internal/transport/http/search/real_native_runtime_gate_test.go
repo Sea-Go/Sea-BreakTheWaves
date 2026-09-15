@@ -13,10 +13,11 @@ import (
 func TestNativeProjectionRejectsUnownedOrWrongEngineRuntimeBeforeSDK(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "runtime.json")
-	base := realNativeRuntime{SchemaVersion: "sea.search.native-lite-runtime.v1",
+	base := realNativeRuntime{SchemaVersion: "sea.search.native-lite-runtime.v2",
 		Owner: realNativeOwner, Endpoint: "127.0.0.1:19530", Engine: "lite",
-		MilvusLite: "3.2.1", BinarySHA256: strings.Repeat("a", 64),
-		Directory: dir, ReleasePath: filepath.Join(dir, "release")}
+		MilvusLite: "3.2.1", EnginePackageSHA256: strings.Repeat("a", 64),
+		FAISSVersion: "1.15.0",
+		Directory:    dir, ReleasePath: filepath.Join(dir, "release")}
 	write := func(value realNativeRuntime, perm os.FileMode) {
 		t.Helper()
 		raw, err := json.Marshal(value)
@@ -42,8 +43,9 @@ func TestNativeProjectionRejectsUnownedOrWrongEngineRuntimeBeforeSDK(t *testing.
 	}{
 		{"unowned process", func(r *realNativeRuntime) { r.Owner = "old Sparse process" }, 0600},
 		{"Sparse-only old version", func(r *realNativeRuntime) { r.MilvusLite = "2.5.1" }, 0600},
+		{"wrong HNSW library version", func(r *realNativeRuntime) { r.FAISSVersion = "older" }, 0600},
 		{"nonlocal engine", func(r *realNativeRuntime) { r.Endpoint = "production:19530" }, 0600},
-		{"missing binary identity", func(r *realNativeRuntime) { r.BinarySHA256 = "" }, 0600},
+		{"missing package identity", func(r *realNativeRuntime) { r.EnginePackageSHA256 = "" }, 0600},
 		{"different release path", func(r *realNativeRuntime) { r.ReleasePath = "/tmp/another/release" }, 0600},
 		{"public fixture", func(*realNativeRuntime) {}, 0644},
 	} {
@@ -60,7 +62,7 @@ func TestNativeProjectionRejectsUnownedOrWrongEngineRuntimeBeforeSDK(t *testing.
 
 func TestNativeProjectionReceiptUsesFormalAPIPhysicalConfigKeys(t *testing.T) {
 	p := &realNativeProjector{runtime: realNativeRuntime{Endpoint: "127.0.0.1:19530",
-		BinarySHA256: strings.Repeat("a", 64)},
+		EnginePackageSHA256: strings.Repeat("a", 64)},
 		setting: realNativeSettings{SchemaVersion: "sea.search.native-milvus.v1",
 			Engine: "lite", Namespace: "native_fixed",
 			Dense:       realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64},

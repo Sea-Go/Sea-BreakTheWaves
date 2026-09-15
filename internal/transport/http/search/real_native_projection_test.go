@@ -23,14 +23,15 @@ import (
 const realNativeOwner = "Search native three-lane isolated acceptance only"
 
 type realNativeRuntime struct {
-	SchemaVersion string `json:"schema_version"`
-	Owner         string `json:"owner"`
-	Endpoint      string `json:"endpoint"`
-	Engine        string `json:"engine"`
-	MilvusLite    string `json:"milvus_lite"`
-	BinarySHA256  string `json:"binary_sha256"`
-	Directory     string `json:"directory"`
-	ReleasePath   string `json:"release_path"`
+	SchemaVersion       string `json:"schema_version"`
+	Owner               string `json:"owner"`
+	Endpoint            string `json:"endpoint"`
+	Engine              string `json:"engine"`
+	MilvusLite          string `json:"milvus_lite"`
+	EnginePackageSHA256 string `json:"engine_package_sha256"`
+	FAISSVersion        string `json:"faiss_version"`
+	Directory           string `json:"directory"`
+	ReleasePath         string `json:"release_path"`
 }
 
 type realNativeHNSW struct {
@@ -51,12 +52,12 @@ type realNativeSettings struct {
 // v1. Production content workers still need an authority-bound physical config
 // receipt before READY; this isolated projection cannot certify that rollout.
 type realNativeProjection struct {
-	Status             string          `json:"status"`
-	Endpoint           string          `json:"endpoint"`
-	RuntimeSHA256      string          `json:"runtime_sha256"`
-	EngineBinarySHA256 string          `json:"engine_binary_sha256"`
-	Settings           json.RawMessage `json:"settings"`
-	PhysicalQualified  bool            `json:"physical_qualified"`
+	Status              string          `json:"status"`
+	Endpoint            string          `json:"endpoint"`
+	RuntimeSHA256       string          `json:"runtime_sha256"`
+	EnginePackageSHA256 string          `json:"engine_package_sha256"`
+	Settings            json.RawMessage `json:"settings"`
+	PhysicalQualified   bool            `json:"physical_qualified"`
 }
 
 type realNativeProjector struct {
@@ -86,13 +87,15 @@ func readRealNativeRuntime(path string) (realNativeRuntime, string, error) {
 	}
 	host, port, err := net.SplitHostPort(runtime.Endpoint)
 	if err != nil || host != "127.0.0.1" || port == "" ||
-		runtime.SchemaVersion != "sea.search.native-lite-runtime.v1" ||
+		runtime.SchemaVersion != "sea.search.native-lite-runtime.v2" ||
 		runtime.Owner != realNativeOwner || runtime.Engine != "lite" ||
-		runtime.MilvusLite != "3.2.1" || !artifacts.ValidHash(runtime.BinarySHA256) ||
+		runtime.MilvusLite != "3.2.1" ||
+		!artifacts.ValidHash(runtime.EnginePackageSHA256) ||
+		runtime.FAISSVersion != "1.15.0" ||
 		!filepath.IsAbs(runtime.Directory) ||
 		runtime.ReleasePath != filepath.Join(runtime.Directory, "release") ||
 		filepath.Dir(path) != runtime.Directory {
-		return realNativeRuntime{}, "", errors.New("native runtime owner/version/binary/scope differs")
+		return realNativeRuntime{}, "", errors.New("native runtime owner/version/package/scope differs")
 	}
 	return runtime, artifacts.Hash(raw), nil
 }
@@ -160,7 +163,7 @@ func (p *realNativeProjector) Receipt() *realNativeProjection {
 	raw, _ := json.Marshal(p.setting)
 	return &realNativeProjection{Status: "test_projection_before_RTW_READY",
 		Endpoint: p.runtime.Endpoint, RuntimeSHA256: p.rawSHA,
-		EngineBinarySHA256: p.runtime.BinarySHA256, Settings: raw,
+		EnginePackageSHA256: p.runtime.EnginePackageSHA256, Settings: raw,
 		PhysicalQualified: false}
 }
 

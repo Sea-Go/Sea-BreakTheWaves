@@ -56,7 +56,7 @@ type nativeUniqueResult struct {
 	PublicationRevision   string   `json:"publication_revision"`
 	Query                 string   `json:"query"`
 	NativeRuntimeSHA256   string   `json:"native_runtime_sha256"`
-	EngineBinarySHA256    string   `json:"engine_binary_sha256"`
+	EnginePackageSHA256   string   `json:"engine_package_sha256"`
 	DenseChunkIDs         []string `json:"dense_chunk_ids"`
 	SparseChunkIDs        []string `json:"sparse_chunk_ids"`
 	MultiVectorChunkIDs   []string `json:"multivector_chunk_ids"`
@@ -226,7 +226,7 @@ func TestRTWNativePublishedIndependentMultiDiscovery(t *testing.T) {
 	receipt := projector.Receipt()
 	if receipt.Endpoint != built.NativeProjection.Endpoint ||
 		receipt.RuntimeSHA256 != built.NativeProjection.RuntimeSHA256 ||
-		receipt.EngineBinarySHA256 != built.NativeProjection.EngineBinarySHA256 ||
+		receipt.EnginePackageSHA256 != built.NativeProjection.EnginePackageSHA256 ||
 		!reflect.DeepEqual(receipt.Settings, built.NativeProjection.Settings) {
 		t.Fatal("native physical settings drifted between Build and published Search")
 	}
@@ -314,8 +314,8 @@ func TestRTWNativePublishedIndependentMultiDiscovery(t *testing.T) {
 		ModuleID: snapshot.ModuleID, ReleaseID: snapshot.ReleaseID,
 		Generation: snapshot.Generation, PublicationRevision: snapshot.PublicationRevision,
 		Query: fixture.Query, NativeRuntimeSHA256: receipt.RuntimeSHA256,
-		EngineBinarySHA256: receipt.EngineBinarySHA256,
-		DenseChunkIDs:      getDense, SparseChunkIDs: getSparse,
+		EnginePackageSHA256: receipt.EnginePackageSHA256,
+		DenseChunkIDs:       getDense, SparseChunkIDs: getSparse,
 		MultiVectorChunkIDs: getMulti, UniqueMultiChunkID: unique.Chunk.ID,
 		UniqueRevisionID:      unique.Chunk.RevisionID,
 		UniqueQuoteSHA256:     original.TextHash,
