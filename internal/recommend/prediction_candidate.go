@@ -55,6 +55,8 @@ func (f SyntheticPredictionFeatures) valid() bool {
 }
 
 type PredictionCandidateConfig struct {
+	// SyntheticEvaluationEnabled gates only this explicit fixture evaluation.
+	// It never authorizes a recommend pair, bundle, slate or business pointer.
 	SyntheticEvaluationEnabled bool   `json:"synthetic_evaluation_enabled"`
 	Model                      string `json:"model"`
 	ConfigurationID            string `json:"configuration_id"`
