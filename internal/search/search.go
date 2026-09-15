@@ -82,8 +82,9 @@ type Limits struct {
 	WallTime      time.Duration
 }
 type Policy struct {
-	Version  string
-	Profiles map[Depth]map[Intelligence]Limits
+	Version         string
+	Profiles        map[Depth]map[Intelligence]Limits
+	ProfileVersions map[Depth]map[Intelligence]string
 }
 type Profile struct {
 	RequestedDepth        Depth        `json:"requested_depth"`
@@ -141,6 +142,15 @@ type Service struct {
 	policy  Policy
 }
 
+func (s *Service) profileAvailability(r Request) (Profile, error) {
+	if s == nil || (r.Depth != Fast && r.Depth != Detailed) ||
+		(r.Intelligence != Low && r.Intelligence != Medium && r.Intelligence != High) {
+		return Profile{}, ErrInvalid
+	}
+	profile, _, err := s.effective(r)
+	return profile, err
+}
+
 func New(d DenseReader, s SparseReader, m MultiVectorReader, p Planner, v EffectiveRevisionChecker, policy Policy) (*Service, error) {
 	if isNil(d) || isNil(s) || isNil(m) || isNil(p) || isNil(v) || policy.Version == "" || len(policy.Profiles) == 0 {
 		return nil, ErrInvalid
@@ -169,11 +179,29 @@ func New(d DenseReader, s SparseReader, m MultiVectorReader, p Planner, v Effect
 			}
 		}
 	}
-	copyPolicy := Policy{Version: policy.Version, Profiles: make(map[Depth]map[Intelligence]Limits, len(policy.Profiles))}
+	for depth, levels := range policy.ProfileVersions {
+		if len(levels) == 0 {
+			return nil, ErrInvalid
+		}
+		for level, version := range levels {
+			_, registered := policy.Profiles[depth][level]
+			if version == "" || !registered {
+				return nil, ErrInvalid
+			}
+		}
+	}
+	copyPolicy := Policy{Version: policy.Version, Profiles: make(map[Depth]map[Intelligence]Limits, len(policy.Profiles)),
+		ProfileVersions: make(map[Depth]map[Intelligence]string, len(policy.ProfileVersions))}
 	for depth, levels := range policy.Profiles {
 		copyPolicy.Profiles[depth] = make(map[Intelligence]Limits, len(levels))
 		for level, limits := range levels {
 			copyPolicy.Profiles[depth][level] = limits
+		}
+	}
+	for depth, levels := range policy.ProfileVersions {
+		copyPolicy.ProfileVersions[depth] = make(map[Intelligence]string, len(levels))
+		for level, version := range levels {
+			copyPolicy.ProfileVersions[depth][level] = version
 		}
 	}
 	return &Service{d, s, m, p, v, copyPolicy}, nil
@@ -256,6 +284,9 @@ func (s *Service) effective(r Request) (Profile, Limits, error) {
 	p := Profile{r.Depth, r.Depth, r.Intelligence, r.Intelligence, s.policy.Version, ""}
 	byLevel := s.policy.Profiles[r.Depth]
 	if x, ok := byLevel[r.Intelligence]; ok {
+		if version := s.policy.ProfileVersions[r.Depth][r.Intelligence]; version != "" {
+			p.PolicyVersion = version
+		}
 		return p, x, nil
 	}
 	if !r.AllowLowerIntelligence {
@@ -272,6 +303,9 @@ func (s *Service) effective(r Request) (Profile, Limits, error) {
 		if x, ok := byLevel[level]; ok {
 			p.EffectiveIntelligence = level
 			p.ChangeReason = "requested_level_unavailable"
+			if version := s.policy.ProfileVersions[r.Depth][level]; version != "" {
+				p.PolicyVersion = version
+			}
 			return p, x, nil
 		}
 	}

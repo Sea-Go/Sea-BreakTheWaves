@@ -98,6 +98,25 @@ func oneQuery(_ context.Context, in PlanInput) ([]string, error) {
 	}
 	return []string{in.Query}, nil
 }
+
+func TestOptionalMediumProfileVersionPreservesLowAndFollowsExplicitDowngrade(t *testing.T) {
+	p := Policy{Version: "low-v1", Profiles: map[Depth]map[Intelligence]Limits{
+		Fast: {Low: {1, 1, 2, 1, time.Second}, Medium: {1, 3, 2, 2, time.Second}},
+	}, ProfileVersions: map[Depth]map[Intelligence]string{Fast: {Medium: "medium-v1"}}}
+	s := service(new(calls), PlanFunc(oneQuery), CheckFunc(allow), p)
+	low, _, err := s.effective(Request{Depth: Fast, Intelligence: Low})
+	medium, _, mediumErr := s.effective(Request{Depth: Fast, Intelligence: Medium})
+	shifted, _, shiftErr := s.effective(Request{Depth: Fast, Intelligence: High, AllowLowerIntelligence: true})
+	if err != nil || mediumErr != nil || shiftErr != nil || low.PolicyVersion != "low-v1" ||
+		medium.PolicyVersion != "medium-v1" || shifted.PolicyVersion != "medium-v1" ||
+		shifted.EffectiveIntelligence != Medium || shifted.ChangeReason == "" {
+		t.Fatalf("versioned profiles low=%+v medium=%+v shifted=%+v errors=%v/%v/%v", low, medium, shifted, err, mediumErr, shiftErr)
+	}
+	p.ProfileVersions[Fast][High] = "unconfigured"
+	if _, err := New(denseStub{new(calls), nil}, sparseStub{new(calls), nil}, multiStub{new(calls), nil}, PlanFunc(oneQuery), CheckFunc(allow), p); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("version for absent high profile accepted: %v", err)
+	}
+}
 func allow(_ context.Context, _ Snapshot, _ corpus.Chunk) (bool, error) { return true, nil }
 
 func TestThreeIndependentLanesAndRRF(t *testing.T) {
