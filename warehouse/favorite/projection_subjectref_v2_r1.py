@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 
 ODS_FIELDS = ("producer", "source_offset", "event_id", "event_type", "authority_id",
               "tenant_id", "subject_id", "favorite_id", "folder_id", "target_type",
@@ -13,6 +14,8 @@ ODS_FIELDS = ("producer", "source_offset", "event_id", "event_type", "authority_
 MAPPING_FIELDS = ("producer", "source_offset", "event_id", "authority_id", "tenant_id",
                   "subject_id", "issuer", "subject_uid")
 UID = re.compile(r"[1-9][0-9]*\Z")
+RFC3339_NANO = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})\Z")
 
 
 def strict_json(value: bytes | str) -> object:
@@ -38,6 +41,27 @@ def digest(body: bytes) -> str:
 def canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
                       allow_nan=False).encode("utf-8")
+
+
+def pg_timestamp_matches(stored: object, source: object) -> bool:
+    """Compare Go ExportODS's UTC microsecond value with frozen RFC3339Nano.
+
+    PostgreSQL timestamptz stores whole microseconds; source EventSpec and DC
+    receipt bytes can legitimately retain the additional nanosecond digits.
+    Go's source preflight truncates the parsed instant rather than rewriting
+    either immutable source. The stored ODS value must be Go's canonical UTC
+    RFC3339Nano spelling of precisely that truncated instant.
+    """
+    if not isinstance(stored, str) or not isinstance(source, str) or not RFC3339_NANO.fullmatch(source):
+        return False
+    try:
+        point = datetime.fromisoformat(source.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return False
+    expected = point.strftime("%Y-%m-%dT%H:%M:%S")
+    if point.microsecond:
+        expected += "." + f"{point.microsecond:06d}".rstrip("0")
+    return stored == expected + "Z"
 
 
 def parse_lines(body: bytes, fields: tuple[str, ...]) -> list[dict]:
@@ -72,7 +96,7 @@ def original_proof(row: dict) -> None:
             receipt.get("offset") != row["source_offset"] or \
             receipt.get("event_id") != row["event_id"] or \
             receipt.get("producer") != row["producer"] or \
-            receipt.get("received_at") != row["dc_received_at"] or \
+            not pg_timestamp_matches(row["dc_received_at"], receipt.get("received_at")) or \
             receipt.get("technical_status") != "accepted" or \
             spec.get("event_id") != row["event_id"] or \
             spec.get("producer") != row["producer"] or \
@@ -81,7 +105,7 @@ def original_proof(row: dict) -> None:
                 "authority_id": row["authority_id"], "tenant_id": row["tenant_id"],
                 "subject_id": uid} or \
             spec.get("aggregate_id") != row["favorite_id"] or \
-            spec.get("occurred_at") != row["event_time"] or \
+            not pg_timestamp_matches(row["event_time"], spec.get("occurred_at")) or \
             payload.get("event_id") != row["event_id"] or \
             payload.get("operation") != row["operation"] or \
             payload.get("favorite_id") != row["favorite_id"] or \
@@ -89,8 +113,8 @@ def original_proof(row: dict) -> None:
             payload.get("target_type") != row["target_type"] or \
             payload.get("target_id") != row["target_id"] or \
             payload.get("target_revision") != row["target_revision"] or \
-            payload.get("event_time") != row["event_time"] or \
-            payload.get("available_at") != row["available_at"]:
+            not pg_timestamp_matches(row["event_time"], payload.get("event_time")) or \
+            not pg_timestamp_matches(row["available_at"], payload.get("available_at")):
         raise ValueError("frozen EventSpec/JCS or technical receipt differs")
 
 
