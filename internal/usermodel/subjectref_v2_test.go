@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 )
@@ -48,6 +49,43 @@ func v2TestStore(t *testing.T) (*Store, *Store) {
 	return old, NewStore(old.db, nil, WithSubjectRefV2Candidate())
 }
 
+func TestSubjectRefV2MigrationRetryRejectsMissingGuard(t *testing.T) {
+	old, _ := v2TestStore(t)
+	ctx := context.Background()
+	if _, err := old.db.Exec(ctx, `ALTER TABLE usermodel_subjectref_v2_projection
+		DROP CONSTRAINT usermodel_sr_v2_canonical_uq`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err == nil {
+		t.Fatal("retry silently accepted a table without v2 issuer/UID uniqueness")
+	}
+}
+
+func TestSubjectRefV2MigrationRetryRejectsWeakSameNamedGuard(t *testing.T) {
+	old, _ := v2TestStore(t)
+	ctx := context.Background()
+	if _, err := old.db.Exec(ctx, `ALTER TABLE usermodel_subjectref_v2_projection
+		DROP CONSTRAINT usermodel_sr_v2_identity_ck,
+		ADD CONSTRAINT usermodel_sr_v2_identity_ck CHECK (issuer='rtw.identity')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err == nil {
+		t.Fatal("retry accepted a same-named CHECK that no longer binds the old platform slot")
+	}
+}
+
+func TestSubjectRefV2MigrationRetryRejectsMissingProjectedAtDefault(t *testing.T) {
+	old, _ := v2TestStore(t)
+	ctx := context.Background()
+	if _, err := old.db.Exec(ctx, `ALTER TABLE usermodel_subjectref_v2_projection
+		ALTER COLUMN projected_at DROP DEFAULT`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err == nil {
+		t.Fatal("retry accepted a sidecar that can no longer insert a projected_at value")
+	}
+}
+
 func v2Fact(id string, sequence int64) Event {
 	e := fixture(id, sequence)
 	e.Subject = SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "9223372036854775807"}
@@ -82,6 +120,18 @@ func TestSubjectRefV2HistoricalProjectionAndRollback(t *testing.T) {
 	}
 	if err := candidate.ProjectExistingSubjectV2(ctx, e.Subject); err != nil {
 		t.Fatalf("same projection must replay: %v", err)
+	}
+	var projectedAtBefore, projectedAtAfter string
+	if err := old.db.QueryRow(ctx, `SELECT projected_at::text FROM usermodel_subjectref_v2_projection
+		WHERE issuer=$1 AND subject_id=$2`, ref.Issuer, ref.SubjectID).Scan(&projectedAtBefore); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err != nil {
+		t.Fatalf("additive migration could not be retried: %v", err)
+	}
+	if err := old.db.QueryRow(ctx, `SELECT projected_at::text FROM usermodel_subjectref_v2_projection
+		WHERE issuer=$1 AND subject_id=$2`, ref.Issuer, ref.SubjectID).Scan(&projectedAtAfter); err != nil || projectedAtBefore != projectedAtAfter {
+		t.Fatalf("migration retry rewrote the identity projection: %q %q %v", projectedAtBefore, projectedAtAfter, err)
 	}
 	oldProjection, err := old.Current(ctx, e.Subject)
 	if err != nil {
@@ -205,6 +255,187 @@ func TestSubjectRefV2MixedReplayConflictAndAtomicProjection(t *testing.T) {
 	}
 	if err := candidate.ProjectExistingSubjectV2(ctx, SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "43"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("nonexistent old user was fabricated: %v", err)
+	}
+}
+
+func TestSubjectRefV2ProjectAndAppendConcurrentLockOrder(t *testing.T) {
+	old, candidate := v2TestStore(t)
+	ctx := context.Background()
+	first := v2Fact("v2-lock-first", 1)
+	first.Subject.SubjectID = "42"
+	requireAppend(t, old, first)
+	second := v2Fact("v2-lock-second", 2)
+	second.Subject = first.Subject
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				if err := candidate.ProjectExistingSubjectV2(ctx, first.Subject); err != nil {
+					t.Errorf("concurrent projection: %v", err)
+				}
+			} else if receipt, err := candidate.Append(ctx, second); err != nil || receipt.StateVersion != 2 {
+				t.Errorf("concurrent append %+v %v", receipt, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	var mappings, facts, outboxes int
+	if err := old.db.QueryRow(ctx, `SELECT count(*) FROM usermodel_subjectref_v2_projection`).Scan(&mappings); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.db.QueryRow(ctx, `SELECT count(*) FROM usermodel_events`).Scan(&facts); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.db.QueryRow(ctx, `SELECT count(*) FROM usermodel_outbox`).Scan(&outboxes); err != nil {
+		t.Fatal(err)
+	}
+	if mappings != 1 || facts != 2 || outboxes != 2 {
+		t.Fatalf("concurrent projection/append split one subject: %d %d %d", mappings, facts, outboxes)
+	}
+}
+
+func TestSubjectRefV2BindUnmappedProjectsAtomicFactAndRejectsBadSlot(t *testing.T) {
+	old, candidate := v2TestStore(t)
+	ctx := context.Background()
+	e := v2Fact("v2-bound", 1)
+	e.Subject.SubjectID = ""
+	ref := UnmappedRef{AuthorityID: "rtw.identity", TenantID: "platform", ExternalSubjectID: "source-alias-42"}
+	if parked, err := candidate.ParkUnmapped(ctx, ref, e); err != nil || parked.Status != "pending_subject" {
+		t.Fatalf("canonical source was not parked: %+v %v", parked, err)
+	}
+	var mappings int
+	if err := old.db.QueryRow(ctx, `SELECT count(*) FROM usermodel_subjectref_v2_projection`).Scan(&mappings); err != nil || mappings != 0 {
+		t.Fatalf("unbound source fabricated a user: %d %v", mappings, err)
+	}
+	subject := SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "42"}
+	bound, err := candidate.BindUnmapped(ctx, ref, e.EventKey, subject)
+	if err != nil || bound.StateVersion != 1 || bound.Status != "accepted" {
+		t.Fatalf("candidate binding failed %+v %v", bound, err)
+	}
+	refV2 := SubjectRefV2{Issuer: "rtw.identity", SubjectID: "42"}
+	oldCurrent, err := old.Current(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCurrent, err := candidate.CurrentV2(ctx, refV2)
+	if err != nil || !reflect.DeepEqual(oldCurrent, newCurrent) || len(newCurrent.Active) != 1 {
+		t.Fatalf("bound v1/v2 current differs: %+v %v", newCurrent, err)
+	}
+	if replay, err := candidate.BindUnmapped(ctx, ref, e.EventKey, subject); err != nil || !replay.Replay {
+		t.Fatalf("bound identity replay failed: %+v %v", replay, err)
+	}
+	oldPending := v2Fact("v2-old-bound", 2)
+	oldPending.Subject.SubjectID = ""
+	otherRef := UnmappedRef{AuthorityID: "rtw.identity", TenantID: "platform", ExternalSubjectID: "other-source-alias-44"}
+	otherSubject := SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "44"}
+	if _, err := old.ParkUnmapped(ctx, otherRef, oldPending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.BindUnmapped(ctx, otherRef, oldPending.EventKey, otherSubject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := candidate.CurrentV2(ctx, SubjectRefV2{Issuer: "rtw.identity", SubjectID: "44"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unprojected old binding was assumed empty: %v", err)
+	}
+	if replay, err := candidate.BindUnmapped(ctx, otherRef, oldPending.EventKey, otherSubject); err != nil || !replay.Replay {
+		t.Fatalf("already bound v1 history was not projected: %+v %v", replay, err)
+	}
+	if p, err := candidate.CurrentV2(ctx, SubjectRefV2{Issuer: "rtw.identity", SubjectID: "44"}); err != nil || len(p.Active) != 1 {
+		t.Fatalf("replayed old binding did not project its other subject: %+v %v", p, err)
+	}
+	badRef := UnmappedRef{AuthorityID: "rtw.identity", TenantID: "other", ExternalSubjectID: "bad-source-alias"}
+	bad := v2Fact("v2-bad-bound", 1)
+	bad.Subject = SubjectRef{AuthorityID: "rtw.identity", TenantID: "other"}
+	if _, err := candidate.ParkUnmapped(ctx, badRef, bad); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("candidate parked non-platform source: %v", err)
+	}
+	if _, err := old.ParkUnmapped(ctx, badRef, bad); err != nil {
+		t.Fatal(err)
+	}
+	badSubject := SubjectRef{AuthorityID: "rtw.identity", TenantID: "other", SubjectID: "43"}
+	if _, err := candidate.BindUnmapped(ctx, badRef, bad.EventKey, badSubject); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("candidate bound non-platform source: %v", err)
+	}
+	var boundSubject *string
+	if err := old.db.QueryRow(ctx, `SELECT bound_subject_id FROM usermodel_unmapped_events
+		WHERE authority_id=$1 AND tenant_id=$2 AND external_subject_id=$3`,
+		badRef.AuthorityID, badRef.TenantID, badRef.ExternalSubjectID).Scan(&boundSubject); err != nil || boundSubject != nil {
+		t.Fatalf("failed candidate binding changed parked source: %+v %v", boundSubject, err)
+	}
+	badUIDRef := UnmappedRef{AuthorityID: "rtw.identity", TenantID: "platform", ExternalSubjectID: "bad-uid-alias"}
+	badUIDEvent := v2Fact("v2-bad-uid-bound", 1)
+	badUIDEvent.Subject = SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform"}
+	if _, err := candidate.ParkUnmapped(ctx, badUIDRef, badUIDEvent); err != nil {
+		t.Fatal(err)
+	}
+	badUIDSubject := SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "01"}
+	if _, err := candidate.BindUnmapped(ctx, badUIDRef, badUIDEvent.EventKey, badUIDSubject); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("candidate bound noncanonical UID: %v", err)
+	}
+	if err := old.db.QueryRow(ctx, `SELECT bound_subject_id FROM usermodel_unmapped_events
+		WHERE authority_id=$1 AND tenant_id=$2 AND external_subject_id=$3`,
+		badUIDRef.AuthorityID, badUIDRef.TenantID, badUIDRef.ExternalSubjectID).Scan(&boundSubject); err != nil || boundSubject != nil {
+		t.Fatalf("bad UID candidate binding changed parked source: %+v %v", boundSubject, err)
+	}
+	var v2Facts, v2Outboxes int
+	if err := old.db.QueryRow(ctx, `SELECT count(*) FROM usermodel_events_subjectref_v2 WHERE issuer='rtw.identity' AND subject_id='42'`).Scan(&v2Facts); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.db.QueryRow(ctx, `SELECT count(*) FROM usermodel_outbox_subjectref_v2 WHERE issuer='rtw.identity' AND subject_id='42'`).Scan(&v2Outboxes); err != nil {
+		t.Fatal(err)
+	}
+	if v2Facts != 1 || v2Outboxes != 1 {
+		t.Fatalf("binding created an unprojected or duplicate fact: %d %d", v2Facts, v2Outboxes)
+	}
+}
+
+func TestSubjectRefV2AttributionAndRecoveryUseTheSameProjectionGuard(t *testing.T) {
+	old, candidate := v2TestStore(t)
+	ctx := context.Background()
+	reading := v2Fact("v2-link-reading", 1)
+	reading.Subject.SubjectID = "42"
+	reading.RequestID = "request-42"
+	requireAppend(t, old, reading)
+	display := v2Fact("v2-link-display", 2)
+	display.Subject = reading.Subject
+	display.Kind, display.Predicate = Impression, "display"
+	display.ImpressionID = "impression-42"
+	display.VisibilityEvidenceRef = "visible/42"
+	display.RequestID = reading.RequestID
+	display.OccurredAt = reading.OccurredAt.Add(-time.Second)
+	requireAppend(t, old, display)
+	version, err := candidate.LinkImpression(ctx, reading.Subject, reading.EventKey,
+		display.ImpressionID, display.VisibilityEvidenceRef)
+	if err != nil || version != 3 {
+		t.Fatalf("candidate attribution failed: %d %v", version, err)
+	}
+	ref := SubjectRefV2{Issuer: "rtw.identity", SubjectID: "42"}
+	if p, err := candidate.CurrentV2(ctx, ref); err != nil || p.StateVersion != 3 {
+		t.Fatalf("attribution left v2 state unprojected: %+v %v", p, err)
+	}
+	if outbox, err := candidate.OutboxAfterV2(ctx, ref, 0, 10); err != nil || len(outbox) != 3 {
+		t.Fatalf("attribution left v2 Outbox unprojected: %+v %v", outbox, err)
+	}
+	other := v2Fact("v2-recovery-existing", 1)
+	other.Subject.SubjectID = "44"
+	requireAppend(t, old, other)
+	if count, err := candidate.ReconcilePending(ctx, other.Subject); err != nil || count != 0 {
+		t.Fatalf("candidate recovery failed: %d %v", count, err)
+	}
+	if p, err := candidate.CurrentV2(ctx, SubjectRefV2{Issuer: "rtw.identity", SubjectID: "44"}); err != nil || p.StateVersion != 1 {
+		t.Fatalf("recovery did not project existing subject: %+v %v", p, err)
+	}
+	bad := v2Fact("v2-recovery-bad-slot", 1)
+	bad.Subject = SubjectRef{AuthorityID: "rtw.identity", TenantID: "other", SubjectID: "43"}
+	requireAppend(t, old, bad)
+	if _, err := candidate.ReconcilePending(ctx, bad.Subject); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("recovery admitted bad legacy slot: %v", err)
+	}
+	if _, err := candidate.LinkImpression(ctx, bad.Subject, bad.EventKey,
+		display.ImpressionID, display.VisibilityEvidenceRef); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("attribution admitted bad legacy slot: %v", err)
 	}
 }
 
