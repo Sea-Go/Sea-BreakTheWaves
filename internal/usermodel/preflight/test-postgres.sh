@@ -29,13 +29,15 @@ git archive 1150534399849ab43a2751e9be32870e8746c26f \
   internal/usermodel/preflight/contract.json | tar -x -C "$preflight_tmp/old-src"
 (
   cd "$preflight_tmp/old-src"
-  GOMAXPROCS=2 go build -mod=readonly -p=2 -o "$preflight_tmp/old-preflight" \
+  GOMAXPROCS=2 go build -mod=readonly -p=1 -o "$preflight_tmp/old-preflight" \
     ./cmd/usermodel-subjectref-preflight
 )
 export USERMODEL_PREFLIGHT_OLD_BIN="$preflight_tmp/old-preflight"
-GOMAXPROCS=2 go test -mod=readonly -p=2 -race -count=1 -v ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
-GOMAXPROCS=2 go vet -mod=readonly -p=2 ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
-GOMAXPROCS=2 go build -mod=readonly -p=2 -o "$preflight_tmp/preflight" ./cmd/usermodel-subjectref-preflight
+preflight_filter="${USERMODEL_PREFLIGHT_TEST_FILTER:-.}"
+GOMAXPROCS=2 go test -mod=readonly -p=1 -race -count=1 -v -run "$preflight_filter" \
+  ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
+GOMAXPROCS=2 go vet -mod=readonly -p=1 ./internal/usermodel/preflight ./cmd/usermodel-subjectref-preflight
+GOMAXPROCS=2 go build -mod=readonly -p=1 -o "$preflight_tmp/preflight" ./cmd/usermodel-subjectref-preflight
 if "$preflight_tmp/preflight" >"$preflight_tmp/offline.out" 2>"$preflight_tmp/offline.log"; then
   printf 'default-off CLI unexpectedly connected\n' >&2
   exit 1

@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	usermodel "github.com/Sea-Go/Sea-BreakTheWaves/internal/usermodel"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func oldAuditClean(t *testing.T, schema string) int64 {
@@ -145,6 +148,82 @@ func TestP1WatermarkMissing(t *testing.T) {
 	insertOutbox(t, conn, "103", "accepted", 1)
 	insertActive(t, conn, "103", "accepted")
 	requireNewP1(t, conn, schema, "missing_source_watermark", "usermodel_events")
+}
+
+func TestStoreUnsequencedZeroNeedsNoWatermark(t *testing.T) {
+	conn, schema := fixtureDB(t)
+	ctx := context.Background()
+	cfg, err := pgxpool.ParseConfig(os.Getenv("USERMODEL_PREFLIGHT_TEST_POSTGRES_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fixtureDB uses a quoted mixed-case schema name; the pool startup setting
+	// must preserve its exact identifier instead of folding it to lowercase.
+	cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{schema}.Sanitize()
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store := usermodel.NewStore(pool, nil)
+	at := time.Date(2026, 9, 14, 5, 0, 0, 0, time.UTC)
+	evidence := sha256.Sum256([]byte("source:unsequenced"))
+	event := usermodel.Event{
+		Subject:  usermodel.SubjectRef{AuthorityID: "rtw.identity", TenantID: "platform", SubjectID: "111"},
+		EventKey: usermodel.EventKey{Producer: "fixture", EventID: "unsequenced"},
+		Action:   usermodel.Assert, Kind: usermodel.Reading, Predicate: "read", ValueRef: "article/rev-1",
+		EvidenceRef: "rtw/event/unsequenced", EvidenceHash: hex.EncodeToString(evidence[:]),
+		OccurredAt: at, ObservedAt: at, SourcePartition: "product-1", SourceSequence: 0,
+		ItemID: "article-1",
+	}
+	receipt, err := store.Append(ctx, event)
+	if err != nil {
+		t.Fatal("real Store.Append rejected unsequenced fixture", err)
+	}
+	if receipt.Status != "accepted" || receipt.StateVersion != 1 {
+		t.Fatal("real Store did not commit state version one")
+	}
+	var sequence pgtype.Int8
+	var stateVersion, outboxRows, activeRows, watermarkRows int64
+	if err := conn.QueryRow(ctx, `SELECT source_sequence FROM usermodel_events WHERE event_id='unsequenced'`).Scan(&sequence); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT state_version FROM usermodel_subject_state WHERE subject_id='111'`).Scan(&stateVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM usermodel_outbox`).Scan(&outboxRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM usermodel_active_facts`).Scan(&activeRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM usermodel_watermarks`).Scan(&watermarkRows); err != nil {
+		t.Fatal(err)
+	}
+	if event.SourceSequence != 0 || sequence.Valid || stateVersion != 1 || outboxRows != 1 || activeRows != 1 || watermarkRows != 0 {
+		t.Fatal("real Store did not map logical position zero to PG NULL with no watermark")
+	}
+	if oldAuditClean(t, schema) != 0 {
+		t.Fatal("old 115 preflight unexpectedly rejected Store zero position")
+	}
+	var legacyFalsePositive int64
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM usermodel_events e WHERE e.source_sequence IS NOT NULL
+		AND NOT EXISTS (SELECT 1 FROM usermodel_watermarks w WHERE
+		(w.authority_id,w.tenant_id,w.subject_id,w.producer,w.source_partition)=
+		(e.authority_id,e.tenant_id,e.subject_id,e.producer,e.source_partition))`).Scan(&legacyFalsePositive); err != nil {
+		t.Fatal(err)
+	}
+	if legacyFalsePositive != 0 {
+		t.Fatal("old non-NULL predicate incorrectly classified the real Store fixture")
+	}
+	report, err := Run(ctx, conn, schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.L1+report.L2+report.L3 != 0 || findingCount(report, "missing_source_watermark", "usermodel_events") != 0 || report.TotalRows != 4 {
+		t.Fatalf("unsequenced Store fixture was falsely blocked: %+v", report.Findings)
+	}
+	t.Logf("real Store input0/PG-NULL: old115=0, prior predicate=0, fixed L1/L2/L3=0 contentSHA=%s", report.ReportSHA256)
 }
 
 func insertBoundUnmapped(t *testing.T, conn *pgx.Conn) {
