@@ -4,11 +4,20 @@ set -euo pipefail
 fact_root="$(cd "$(dirname "$0")/../.." && pwd)"
 fact_dc_root="${SEA_DC_PLATFORM_ROOT:?set SEA_DC_PLATFORM_ROOT to an isolated DataCenter checkout}"
 fact_rtw_root="${SEA_RTW_FAVORITE_ROOT:?set SEA_RTW_FAVORITE_ROOT to the RTW authority checkout}"
-: "${SEA_EXPECT_FAVORITE_REVISION:?set the frozen r1 revision expected from the RTW shared fixture}"
 fact_pg_bin="${FACT_PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 fact_tmp="$(mktemp -d "${TMPDIR:-/tmp}/sea-fact-process.XXXXXX")"
 fact_ready="$fact_tmp/ready.json"
 fact_release="$fact_tmp/release"
+fact_fixture_test="${FAVORITE_ACCEPTANCE_FIXTURE_TEST:-TestFavoriteDeliverySharedAuthorityFixture}"
+fact_btw_test="${FAVORITE_ACCEPTANCE_BTW_TEST:-TestFavoriteFactWorkerProcessReal}"
+if [[ "$fact_fixture_test:$fact_btw_test" != "TestFavoriteDeliverySharedAuthorityFixture:TestFavoriteFactWorkerProcessReal" &&
+      "$fact_fixture_test:$fact_btw_test" != "TestFavoriteDeliveryTwoUsersSharedAuthorityFixture:TestFactWorkerFavoriteAuthorityV2MixedUsers" ]]; then
+  printf 'unknown favorite acceptance fixture/test pairing\n' >&2
+  exit 1
+fi
+if [[ "$fact_fixture_test" == "TestFavoriteDeliverySharedAuthorityFixture" ]]; then
+  : "${SEA_EXPECT_FAVORITE_REVISION:?set the frozen r1 revision expected from the RTW shared fixture}"
+fi
 fact_dc_pid=""
 fact_rtw_pid=""
 fact_pg_started=false
@@ -57,10 +66,14 @@ export FAVORITE_DC_URL="http://127.0.0.1:$fact_dc_port"
 export FAVORITE_DC_TOKEN="$PLATFORM_SERVICE_TOKEN"
 export FAVORITE_SHARED_READY_FILE="$fact_ready"
 export FAVORITE_SHARED_RELEASE_FILE="$fact_release"
+export FAVORITE_TWO_READY_FILE="$fact_ready"
+export FAVORITE_TWO_RELEASE_FILE="$fact_release"
 (cd "$fact_dc_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go build -mod=readonly -o "$fact_tmp/dc-platform" ./cmd/platform)
 (cd "$fact_rtw_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go build -mod=readonly -o "$fact_tmp/favorite-fact-dispatch" ./service/favorite/rpc/cmd/fact-dispatch)
 (cd "$fact_rtw_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go build -mod=readonly -o "$fact_tmp/favorite-fact-authority" ./service/favorite/rpc/cmd/fact-authority)
-(cd "$fact_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go build -race -mod=readonly -o "$fact_tmp/btw-worker" ./cmd/worker)
+if [[ "$fact_btw_test" == "TestFavoriteFactWorkerProcessReal" ]]; then
+  (cd "$fact_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go build -race -mod=readonly -o "$fact_tmp/btw-worker" ./cmd/worker)
+fi
 export FAVORITE_DISPATCH_BIN="$fact_tmp/favorite-fact-dispatch"
 export FAVORITE_AUTHORITY_BIN="$fact_tmp/favorite-fact-authority"
 "$fact_tmp/dc-platform" -listen "127.0.0.1:$fact_dc_port" -migrate >"$fact_tmp/dc-platform.log" 2>&1 &
@@ -79,7 +92,7 @@ if ! "$fact_ready_http"; then
   exit 1
 fi
 (cd "$fact_rtw_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go test -mod=readonly -race -count=1 -v \
-  -run '^TestFavoriteDeliverySharedAuthorityFixture$' ./service/favorite/rpc/internal/model) >"$fact_tmp/rtw-test.log" 2>&1 &
+  -run "^${fact_fixture_test}$" ./service/favorite/rpc/internal/model) >"$fact_tmp/rtw-test.log" 2>&1 &
 fact_rtw_pid=$!
 fact_ready_file=false
 for _ in $(seq 1 600); do
@@ -99,13 +112,13 @@ if ! "$fact_ready_file"; then
 fi
 # The ready file holds credentials. Pass them only as child process environment;
 # never source/eval it or print it into logs.
-python3 - "$fact_ready" "$fact_root" "$fact_tmp/btw-test.log" "$fact_tmp/btw-worker" <<'PY'
+python3 - "$fact_ready" "$fact_root" "$fact_tmp/btw-test.log" "$fact_tmp/btw-worker" "$fact_btw_test" <<'PY'
 import json
 import os
 import subprocess
 import sys
 
-ready_path, root, log_path, worker_bin = sys.argv[1:]
+ready_path, root, log_path, worker_bin, test_name = sys.argv[1:]
 with open(ready_path, encoding='utf-8') as handle:
     ready = json.load(handle)
 env = os.environ.copy()
@@ -114,16 +127,22 @@ env.update({
     'SEA_FACT_AUTHORITY_TOKEN': ready['authority_token'],
     'SEA_FACT_DC_URL': ready['dc_url'],
     'SEA_FACT_DC_TOKEN': ready['dc_token'],
-    'SEA_FACT_ASSERT_EVENT_ID': ready['assert_event_id'],
-    'SEA_FACT_RETRACT_EVENT_ID': ready['retract_event_id'],
     'BTW_WORKER_BIN': worker_bin,
     'BTW_WORKER_VERSION': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
     'GOFLAGS': '-p=2',
     'GOMAXPROCS': '2',
 })
+if test_name == 'TestFactWorkerFavoriteAuthorityV2MixedUsers':
+    assert ready['schema_versions'] == [2, 1, 2]
+    assert len(ready['event_ids']) == 3 and len(ready['receipts']) == 3
+    env['SEA_FACT_EVENT_IDS'] = json.dumps(ready['event_ids'])
+    env['SEA_FACT_SCHEMA_VERSIONS'] = json.dumps(ready['schema_versions'])
+else:
+    env['SEA_FACT_ASSERT_EVENT_ID'] = ready['assert_event_id']
+    env['SEA_FACT_RETRACT_EVENT_ID'] = ready['retract_event_id']
 with open(log_path, 'w', encoding='utf-8') as output:
     result = subprocess.run(['go', 'test', '-mod=readonly', '-race', '-count=1', '-v',
-                             '-run', '^TestFavoriteFactWorkerProcessReal$', './cmd/worker'],
+                             '-run', '^' + test_name + '$', './internal/app' if test_name == 'TestFactWorkerFavoriteAuthorityV2MixedUsers' else './cmd/worker'],
                             cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT,
                             check=False)
 raise SystemExit(result.returncode)

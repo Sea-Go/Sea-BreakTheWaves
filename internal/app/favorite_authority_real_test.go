@@ -53,6 +53,8 @@ func favoriteAuthorityWorker(t *testing.T, source FactEventSource, binder Truste
 		Bindings: []FactEventBinding{
 			{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: binder},
 			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: binder},
+			{EventType: "rtw.favorite.assert", SchemaVersion: 2, Action: usermodel.Assert, EvidenceBinder: binder},
+			{EventType: "rtw.favorite.retract", SchemaVersion: 2, Action: usermodel.Retract, EvidenceBinder: binder},
 		}}, source, nil, graph, store, observed)
 	if err != nil {
 		t.Fatal(err)
