@@ -56,3 +56,9 @@ DataCenter已有开发集成只读ACK页`feat/platform-observability-20260914@eb
 RTW留存的`observability/wiki-fact-set-cross-source.json` v3 SHA=`e8f9bec02e2b1a9552cccfb9ea43cfcbec5b400af3039b07fa76e8852cf0b653`，锁真DC生产者连续14个事件=目录1、判断3、技术10、同一 BTW质量consumer ACK14、完整DC历史批次1。报告的`sourceproof_reader_verified=true`，Reader与RTW独立回查DC Event索引SHA同为`b9546c3d22642b6a9a0e5211b0fcfdf98ac08e03c58066730809527290735ce1`，Reader同一ODS原字节前缀SHA=`55e4f3c5fc5663a84b04165e6a19c76b49c7a6e7e168c4a2a44e9429a7d0a15a`。RTW在运行时读取SourceProof另一个0600/O_EXCL结果并断言目标两Fact分别有最后**已运输**判断、目录+两目标Event共3个被选、`quality_state=not_evaluable`以及人工完整性/D07/生产三个false；RTW报告签其结果原字节SHA=`b55ea564fad41622c995ed8c2a7ec3d72f0f5fd2acf9782c1e50e7ed0799ab3e`。该独立结果文件位于RTW测试`t.TempDir`，测试退出后已被框架清理，因此现在**不能再单独重算它的原字节SHA**；留存的RTW报告和测试断言给出当轮交接证据，但不应写成可持久复核的SourceProof结果字节工件。
 
 这轮签的是RTW历史目录/Worker原Event、DC完整ACK前缀、BTW同PG ODS父行/sidecar与Reader投影的L3来源链。截止时RTW是否另有未运输Judge head、Source撤回资格和人类判断的一致性仍无独立权威证明；Reader继续只返回`AcknowledgedSourceProjection`，**不调用Freeze，不产生D07页面质量达标结论**。
+
+## 后续脚本与收据门禁修复
+
+前述真PG轮固定在BTW`dd0bb31`字节；同行只读审查后，叶子再收紧两处测试门禁。退出陷阱现在保留原测试失败码、要求`pg_ctl stop`成功，且紧接着`pg_ctl status`必须返回**3/no server**才能让脚本保持退出0；`started`在`pg_ctl start`前置位，覆盖启动返回错误却已留下postmaster的情况。任务专用假`pg_ctl`探针依序确认stop成功/status3可退出0、仍运行/status0必退出1、stop失败/status3必退出1、start失败仍尝试stop且退出1；此探针没有启动真PG。旧Warehouse结果另严格固定八个字面JSON键，拒重复/未知`tenant_id`，把全部三条quality EventID和目标两条Catalog quality EventID数组与新12键fixture逐项对齐；旧11键fixture、新12键fixture及旧结果文件均必须是**精确普通0600**文件，0400/0700反例拒。
+
+修复后的纯SourceProof包race退出0日志SHA=`594de0c107c327d416f06e7bc0d3696b94f68db41d3d423fba9b4e298c82f638`，vet退出0/空日志SHA=`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`，`bash -n`及diff check退出0。**这组新代码尚未重新跑三仓真PG**；上段L3不能自动转签到后续修复提交。
