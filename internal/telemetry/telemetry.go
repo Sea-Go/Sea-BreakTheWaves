@@ -258,6 +258,7 @@ var spanField = map[string]bool{
 	"request_id": true, "operation_id": true, "run_id": true, "session_id": true,
 	"job_id": true, "build_id": true, "module_id": true, "release_id": true,
 	"revision_id": true, "generation": true, "attempt_id": true, "search_id": true,
+	"pair_id": true, "model_call_id": true, "logical_call_id": true, "candidate_id": true, "task": true,
 	"publication_revision": true,
 	"lease_epoch":          true, "cancel_version": true, "configuration_id": true, "representation_contract_id": true,
 	"representation_space": true, "lane": true,
