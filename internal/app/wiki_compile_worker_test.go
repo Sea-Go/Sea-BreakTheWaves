@@ -89,16 +89,18 @@ func rehashWikiFixtureJob(t *testing.T, job *jobs.Job) {
 }
 
 type wikiWorkerJobsFixture struct {
-	job                jobs.Job
-	owner              *wikiWorkerOwnerFixture
-	gets, completes    int
-	acks               int
-	cancelOnGet        int
-	cancelRequestOnGet int
-	terminalOnGet      int
-	lostAck            bool
-	rejectAck          bool
-	lostComplete       bool
+	job                 jobs.Job
+	owner               *wikiWorkerOwnerFixture
+	gets, completes     int
+	acks                int
+	appliedAcks         int
+	cancelOnGet         int
+	cancelRequestOnGet  int
+	terminalOnGet       int
+	lostAck             bool
+	rejectAck           bool
+	autoExpireBeforeAck bool
+	lostComplete        bool
 }
 
 func (f *wikiWorkerJobsFixture) ClaimJob(context.Context, jobs.Claim) (jobs.Job, error) {
@@ -124,9 +126,16 @@ func (f *wikiWorkerJobsFixture) AcknowledgeCancellation(_ context.Context, id st
 		lease.LeaseEpoch != f.job.LeaseEpoch || lease.CancelVersion != f.job.CancelVersion {
 		return jobs.Job{}, errors.New("wrong DC cancellation claimant")
 	}
+	if f.autoExpireBeforeAck {
+		// A concurrent DC Get/Claim can expire the lease before this endpoint
+		// locks the Job. DC then returns the already-cancelled same lease 200.
+		f.job.State, f.job.LeaseExpiresAt = "cancelled", ""
+		return f.job, nil
+	}
 	if f.rejectAck {
 		return jobs.Job{}, errors.New("fixture DC cancel ACK conflict")
 	}
+	f.appliedAcks++
 	f.job.State, f.job.LeaseExpiresAt = "cancelled", ""
 	if f.lostAck {
 		return jobs.Job{}, errors.New("fixture lost DC cancel ACK HTTP response")
@@ -387,9 +396,10 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result, err := worker3.ProcessClaim(context.Background(), job3); !errors.Is(err, ErrWikiCompileCancellationAcknowledged) ||
+	if result, err := worker3.ProcessClaim(context.Background(), job3); !errors.Is(err, ErrWikiCompileCancelTerminalConfirmed) ||
 		result.Accepted.State != "" || tracked.puts != 0 || owner3.accepts != 0 || jobs3.completes != 0 ||
 		jobs3.acks != 1 || jobs3.job.State != "cancelled" ||
+		jobs3.appliedAcks != 1 ||
 		model3.calls != 1 {
 		t.Fatalf("DC cancellation after model escaped into Wiki business/technical writes: %+v %v jobs=%+v", result, err, jobs3)
 	}
@@ -505,8 +515,8 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	}
 	if !native || !bytes.Contains(logs.Bytes(), []byte(`"event":"content.wiki_compile.process.finished"`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"partial"`)) ||
-		!bytes.Contains(logs.Bytes(), []byte(`"error_code":"DC_CANCEL_ACK"`)) ||
-		!bytes.Contains(logs.Bytes(), []byte(`"dc_cancel_ack":true`)) ||
+		!bytes.Contains(logs.Bytes(), []byte(`"error_code":"DC_CANCELLED_CONFIRMED"`)) ||
+		!bytes.Contains(logs.Bytes(), []byte(`"dc_cancel_terminal":true`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"rejected"`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"error_code":"MODEL_SESSION_MISMATCH"`)) ||
 		bytes.Contains(logs.Bytes(), []byte(frozen.NativeBearer())) {

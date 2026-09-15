@@ -27,8 +27,8 @@ var ErrWikiCompileRun = errors.New("wiki compile native Runner did not finish on
 var ErrWikiCompileObject = errors.New("wiki compile candidate object is not byte-readable")
 var ErrWikiCompileAcceptPending = errors.New("wiki compile RTW acceptance outcome is unconfirmed")
 var ErrWikiCompileTechnicalPending = errors.New("wiki compile DC technical completion contract is pending")
-var ErrWikiCompileCancellationAcknowledged = errors.New("wiki compile DC cancellation acknowledged by current attempt")
-var ErrWikiCompileCancelAckPending = errors.New("wiki compile DC cancellation acknowledgement is unconfirmed")
+var ErrWikiCompileCancelTerminalConfirmed = errors.New("wiki compile DC cancellation terminal state confirmed for current attempt")
+var ErrWikiCompileCancelTerminalPending = errors.New("wiki compile DC cancellation terminal state is unconfirmed")
 
 type WikiCompileJobClient interface {
 	ClaimJob(context.Context, jobs.Claim) (jobs.Job, error)
@@ -186,8 +186,9 @@ func sameWikiCompileJobAttempt(current, claimed jobs.Job) bool {
 }
 
 // DC's Cancel changes the running attempt to cancel_requested/CV+1. Only
-// that same claimant may acknowledge it. A lost ACK reply is recovered by a
-// fresh GetJob proving this exact attempt reached cancelled, never Complete.
+// that same claimant may attempt ACK. A lost reply is recovered by GetJob.
+// Even a 200 may return a Job already cancelled by concurrent lease expiry;
+// without an applied-ACK receipt, this only proves the exact terminal state.
 func (w *WikiCompileWorker) ackCancellation(ctx context.Context, claimed jobs.Job, cancelVersion int64) error {
 	lease := jobs.Lease{WorkerID: claimed.WorkerID, AttemptID: claimed.AttemptID,
 		LeaseEpoch: claimed.LeaseEpoch, CancelVersion: cancelVersion}
@@ -195,22 +196,22 @@ func (w *WikiCompileWorker) ackCancellation(ctx context.Context, claimed jobs.Jo
 	if err == nil {
 		if sameWikiCompileJobAttempt(ack, claimed) && ack.CancelVersion == cancelVersion &&
 			ack.State == "cancelled" && ack.Result == nil {
-			return ErrWikiCompileCancellationAcknowledged
+			return ErrWikiCompileCancelTerminalConfirmed
 		}
 		return ErrWikiCompileFence
 	}
 	current, readErr := w.jobs.GetJob(ctx, claimed.ID)
 	if readErr != nil {
-		return ErrWikiCompileCancelAckPending
+		return ErrWikiCompileCancelTerminalPending
 	}
 	if !sameWikiCompileJobAttempt(current, claimed) || current.CancelVersion != cancelVersion {
 		return ErrWikiCompileFence
 	}
 	if current.State == "cancelled" && current.Result == nil {
-		return ErrWikiCompileCancellationAcknowledged
+		return ErrWikiCompileCancelTerminalConfirmed
 	}
 	if current.State == "cancel_requested" {
-		return ErrWikiCompileCancelAckPending
+		return ErrWikiCompileCancelTerminalPending
 	}
 	return ErrWikiCompileFence
 }
@@ -348,10 +349,10 @@ func wikiCompileObservation(err error) (string, string, error) {
 		return "partial", "DC_COMPLETION_CONTRACT_PENDING", ErrWikiCompileTechnicalPending
 	case errors.Is(err, ErrWikiCompileAcceptPending):
 		return "partial", "RTW_ACCEPT_OUTCOME_UNKNOWN", ErrWikiCompileAcceptPending
-	case errors.Is(err, ErrWikiCompileCancellationAcknowledged):
-		return "cancelled", "DC_CANCEL_ACK", ErrWikiCompileCancellationAcknowledged
-	case errors.Is(err, ErrWikiCompileCancelAckPending):
-		return "partial", "DC_CANCEL_ACK_PENDING", ErrWikiCompileCancelAckPending
+	case errors.Is(err, ErrWikiCompileCancelTerminalConfirmed):
+		return "cancelled", "DC_CANCELLED_CONFIRMED", ErrWikiCompileCancelTerminalConfirmed
+	case errors.Is(err, ErrWikiCompileCancelTerminalPending):
+		return "partial", "DC_CANCEL_TERMINAL_PENDING", ErrWikiCompileCancelTerminalPending
 	case errors.Is(err, ErrWikiCompileModelIdentity):
 		return "rejected", "MODEL_SESSION_MISMATCH", ErrWikiCompileModelIdentity
 	case errors.Is(err, ErrWikiCompileJobContract), errors.Is(err, ErrWikiCompileSource),
@@ -384,7 +385,7 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 		stage.End(ctx, outcome, code, cause,
 			slog.Bool("rtw_accepted", result.Accepted.State == "ACCEPTED"),
 			slog.Bool("dc_completed", result.TechnicalComplete),
-			slog.Bool("dc_cancel_ack", errors.Is(resultErr, ErrWikiCompileCancellationAcknowledged)))
+			slog.Bool("dc_cancel_terminal", errors.Is(resultErr, ErrWikiCompileCancelTerminalConfirmed)))
 	}()
 	claim, err := DecodeWikiCompileClaim(job, w.config.WorkerID, time.Now())
 	if err != nil {
