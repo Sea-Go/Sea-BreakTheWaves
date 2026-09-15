@@ -34,13 +34,13 @@ flowchart LR
 | `rtw.comment-rpc` | `btw-warehouse-comment` | `1..4` | create、delete、comment interaction |
 | `rtw.like-mq` | `btw-warehouse-like` | `1..2` | target like、unlike |
 
-`consumer_cursor` 的主键是 `(consumer,producer)`。每批先逐事件读取 DC receipt 与 RTW authority，再在同一 PG 事务写 `ods_event`、`read_batch_evidence` 和 cursor；事务提交后才 ACK。ACK 响应丢失时，下次读取同一批并按 offset/event ID/hash/receipt ID 重放，不产生重复 ODS。缺 offset、错 hash、错 authority 或找不到同主体、目标、评论的前驱都会回滚整批且不 ACK。
+`consumer_cursor` 的主键是 `(consumer,producer)`。每批先逐事件读取 DC receipt 与 RTW authority，再在同一 PG 事务写 `ods_event`、`read_batch_evidence` 和 cursor；事务提交后才 ACK。ACK 响应丢失时，下次按 **DC 当前返回的窗口和 batch hash** 读取，已落 ODS 的 offset/event ID/hash/receipt ID 必须原值重放，新 offset 继续顺序落库。新的真实窗口可以比上次更长或更短；`read_batch_evidence` 以 `(consumer,producer,from_offset,to_offset,batch_hash)` 保存每一次窗口，不强制同一个起始 offset 永远对应同一个窗口。缺 offset、错 hash、错 authority 或找不到同主体、目标、评论的前驱都会回滚整批且不 ACK。
 
 `ods_event` 和 `read_batch_evidence` 有数据库触发器拒绝 UPDATE/DELETE。RTW issuer 与规范正整数 subject ID 同时由 Go 和 PG CHECK 约束。原 EventSpec 与完整技术回执保存为 JSONB；DWD 只取可审计的领域字段，不把 source offset 当成主体内连续序列。
 
 ## 覆盖对象与交接
 
-`CoveragePublisher.Publish` 一次只接收一个固定 `Stream`。它在 repeatable-read 快照里要求 ODS 恰好覆盖 `1..W`，且记录的 DC read window 从 1 连续到 W；W 必须是批次边界。发布前再次读取每条 DC receipt 和 RTW authority。
+`CoveragePublisher.Publish` 一次只接收一个固定 `Stream`。它在 repeatable-read 快照里要求 ODS 恰好覆盖 `1..W`，审计每个已保存窗口的原始 DC batch hash，再从可重叠的窗口中确定性选一条从 1 连续到 W 的批次证据链；W 必须是其中一个真实批次边界。已保存的其他窗口仍是不可变读取证据，**batch hash 不充当业务水位**。发布前再次读取每条 DC receipt 和 RTW authority。
 
 每个 producer 独立写入以下内容寻址对象：
 
