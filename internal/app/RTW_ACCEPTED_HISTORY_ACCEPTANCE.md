@@ -9,3 +9,9 @@
 后续两仓真实进程联验：RTW集成树设置`SEA_BTW_CITATION_CONSUMER_ROOT=<BTW固定集成树>`运行完整`service/knowledge/scripts/acceptance.sh`。它启动实际RTW go-zero HTTP与隔离PG16，BTW子进程先从固定已发布源生成并接纳一条引用，再用`RTWAcceptedRootHistory`提交**同一search_id/证据包/耐久引用**的`succeeded`产品turn；精确重放只留一条历史，按完整SubjectRef/SessionID列表读回引用，跨主体按AnswerID读取被RTW拒绝。RTW侧对同一AnswerID实际PG计数为1；原文、引用与答案接受的JSON终态共用BTW父Trace ID。双方race及RTW全知识服务vet通过。该测试仍使用结构性三路IndexManifest，不含真实模型/索引。
 
 本切片的**答案历史子合同**已在隔离环境达到`INTEGRATED`。真实RTW授权用户到完整SubjectRef、正式搜索/Answer HTTP与SSE、框架跨轮已接纳历史注入、Collector→DataCenter下钻均`NOT_VERIFIED`；H02/H07/WS02-D整体不得标ACCEPTED。RTW按完整scope返回的产品历史不能被BTW误用作未经校验的Agent模型上下文。
+
+## 2026-09-15 当前开发头的 AnswerID 回读
+
+上段是 2026-09-14 固定阶段的状态。当前 BTW 正式 `cmd/api`/HTTP 已只接受 `RootSessionBoundary` 并从本适配器访问 RTW 产品历史；RTW 产品 façade、真实 UserCenter/JWT、知识 PG、同版引用和 BTW 原生根 Graph 在后续开发头已有本机跨仓联验，跨轮模型上下文与生产仍未接纳。
+
+本适配器新增 `search.AcceptedRootLookup.Get`，按完整 SubjectRef/SessionID/AnswerID 调用 RTW Worker GET。只有 RTW scoped HTTP404 返回“无已接纳答案”；503、错误 Scope、缺接纳序号/时间、损坏 `TurnJson`、非 `succeeded/insufficient` 终态、Answer/Search/主体/会话/Status 任一回执漂移都拒绝。`RootSessionBoundary` 在启动 SourceReader/Agent 前校固定请求整体一致，再复制已接纳结果；相同 AnswerID 异输入不能以新结果覆盖老 turn。RTW 产品 façade 仍负责不可变 operation 请求 hash/当前发布和引用状态的最终复核，框架裸 Session 不参与回读。内存测试验证同键重试模型调用数不变、关闭时在途历史提交取消并等待；RTW Worker HTTP 夹具验证错主体 scoped404、损坏/503 不误作“无记录”。RTW 410652b 本机 PG16 完整知识/UserCenter 低并发脚本退出0，真实历史与旧 v1 `TurnJson`/GET 原字节保持一致。该联验仍不是生产部署或 12 组合模型质量验收。
