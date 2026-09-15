@@ -89,11 +89,16 @@ func rehashWikiFixtureJob(t *testing.T, job *jobs.Job) {
 }
 
 type wikiWorkerJobsFixture struct {
-	job             jobs.Job
-	owner           *wikiWorkerOwnerFixture
-	gets, completes int
-	cancelOnGet     int
-	lostComplete    bool
+	job                jobs.Job
+	owner              *wikiWorkerOwnerFixture
+	gets, completes    int
+	acks               int
+	cancelOnGet        int
+	cancelRequestOnGet int
+	terminalOnGet      int
+	lostAck            bool
+	rejectAck          bool
+	lostComplete       bool
 }
 
 func (f *wikiWorkerJobsFixture) ClaimJob(context.Context, jobs.Claim) (jobs.Job, error) {
@@ -103,6 +108,28 @@ func (f *wikiWorkerJobsFixture) GetJob(_ context.Context, _ string) (jobs.Job, e
 	f.gets++
 	if f.cancelOnGet > 0 && f.gets == f.cancelOnGet {
 		f.job.State, f.job.CancelVersion = "cancelled", f.job.CancelVersion+1
+	}
+	if f.cancelRequestOnGet > 0 && f.gets == f.cancelRequestOnGet {
+		f.job.State, f.job.CancelVersion = "cancel_requested", f.job.CancelVersion+1
+	}
+	if f.terminalOnGet > 0 && f.gets == f.terminalOnGet {
+		f.job.State, f.job.LeaseExpiresAt = "cancelled", ""
+	}
+	return f.job, nil
+}
+func (f *wikiWorkerJobsFixture) AcknowledgeCancellation(_ context.Context, id string, lease jobs.Lease) (jobs.Job, error) {
+	f.acks++
+	if id != f.job.ID || f.job.State != "cancel_requested" ||
+		lease.WorkerID != f.job.WorkerID || lease.AttemptID != f.job.AttemptID ||
+		lease.LeaseEpoch != f.job.LeaseEpoch || lease.CancelVersion != f.job.CancelVersion {
+		return jobs.Job{}, errors.New("wrong DC cancellation claimant")
+	}
+	if f.rejectAck {
+		return jobs.Job{}, errors.New("fixture DC cancel ACK conflict")
+	}
+	f.job.State, f.job.LeaseExpiresAt = "cancelled", ""
+	if f.lostAck {
+		return jobs.Job{}, errors.New("fixture lost DC cancel ACK HTTP response")
 	}
 	return f.job, nil
 }
@@ -352,7 +379,7 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	job3.ID, job3.AttemptID = "job-3", "attempt-3"
 	tracked := &wikiWorkerTrackedObjects{store: objects}
 	owner3 := &wikiWorkerOwnerFixture{compile: compile, revisions: revisions, objects: tracked}
-	jobs3 := &wikiWorkerJobsFixture{job: job3, owner: owner3, cancelOnGet: 3}
+	jobs3 := &wikiWorkerJobsFixture{job: job3, owner: owner3, cancelRequestOnGet: 3}
 	model3 := &wikiWorkerFixedModel{}
 	worker3, err := NewWikiCompileWorker(WikiCompileWorkerConfig{WorkerID: job3.WorkerID,
 		LeaseSeconds: 20, ModelSession: frozen}, jobs3, owner3,
@@ -360,10 +387,11 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result, err := worker3.ProcessClaim(context.Background(), job3); !errors.Is(err, ErrWikiCompileFence) ||
+	if result, err := worker3.ProcessClaim(context.Background(), job3); !errors.Is(err, ErrWikiCompileCancellationAcknowledged) ||
 		result.Accepted.State != "" || tracked.puts != 0 || owner3.accepts != 0 || jobs3.completes != 0 ||
+		jobs3.acks != 1 || jobs3.job.State != "cancelled" ||
 		model3.calls != 1 {
-		t.Fatalf("DC cancellation after model escaped into Wiki business/technical writes: %+v %v", result, err)
+		t.Fatalf("DC cancellation after model escaped into Wiki business/technical writes: %+v %v jobs=%+v", result, err, jobs3)
 	}
 	// A model-generated locator outside RTW's frozen source never becomes an
 	// object or a business/technical receipt, regardless of a valid job lease.
@@ -400,7 +428,7 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	}
 	if result, err := worker5.ProcessClaim(context.Background(), job5); !errors.Is(err, ErrWikiCompileFence) ||
 		result.Accepted.State != "" || model5.calls != 1 || oldObjects.puts != 0 ||
-		owner5.accepts != 0 || jobs5.completes != 0 {
+		owner5.accepts != 0 || jobs5.acks != 0 || jobs5.completes != 0 {
 		t.Fatalf("superseded Compile overwrote old Wiki generation: %+v %v", result, err)
 	}
 	// A session proof B is not interchangeable with startup's frozen account
@@ -477,6 +505,8 @@ func TestWikiCompileWorkerNativeAcceptedBeforeOptionalTechnicalACK(t *testing.T)
 	}
 	if !native || !bytes.Contains(logs.Bytes(), []byte(`"event":"content.wiki_compile.process.finished"`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"partial"`)) ||
+		!bytes.Contains(logs.Bytes(), []byte(`"error_code":"DC_CANCEL_ACK"`)) ||
+		!bytes.Contains(logs.Bytes(), []byte(`"dc_cancel_ack":true`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"outcome":"rejected"`)) ||
 		!bytes.Contains(logs.Bytes(), []byte(`"error_code":"MODEL_SESSION_MISMATCH"`)) ||
 		bytes.Contains(logs.Bytes(), []byte(frozen.NativeBearer())) {

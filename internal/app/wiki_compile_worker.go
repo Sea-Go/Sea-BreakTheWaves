@@ -27,10 +27,13 @@ var ErrWikiCompileRun = errors.New("wiki compile native Runner did not finish on
 var ErrWikiCompileObject = errors.New("wiki compile candidate object is not byte-readable")
 var ErrWikiCompileAcceptPending = errors.New("wiki compile RTW acceptance outcome is unconfirmed")
 var ErrWikiCompileTechnicalPending = errors.New("wiki compile DC technical completion contract is pending")
+var ErrWikiCompileCancellationAcknowledged = errors.New("wiki compile DC cancellation acknowledged by current attempt")
+var ErrWikiCompileCancelAckPending = errors.New("wiki compile DC cancellation acknowledgement is unconfirmed")
 
 type WikiCompileJobClient interface {
 	ClaimJob(context.Context, jobs.Claim) (jobs.Job, error)
 	GetJob(context.Context, string) (jobs.Job, error)
+	AcknowledgeCancellation(context.Context, string, jobs.Lease) (jobs.Job, error)
 	CompleteJob(context.Context, string, jobs.Complete) (jobs.CompletionReceipt, error)
 }
 
@@ -149,18 +152,67 @@ func sameWikiCompileLease(remote ridethewind.Compile, job jobs.Job) bool {
 func (w *WikiCompileWorker) currentJob(ctx context.Context, job jobs.Job) error {
 	current, err := w.jobs.GetJob(ctx, job.ID)
 	if err != nil {
-		return err
+		return ErrWikiCompileFence
 	}
-	if current.ID != job.ID || current.InputHash != job.InputHash ||
-		current.AttemptID != job.AttemptID || current.WorkerID != job.WorkerID ||
-		current.LeaseEpoch != job.LeaseEpoch || current.CancelVersion != job.CancelVersion ||
-		!reflect.DeepEqual(current.Request, job.Request) {
+	if !sameWikiCompileJobAttempt(current, job) {
+		return ErrWikiCompileFence
+	}
+	if current.State == "cancel_requested" && job.State == "running" &&
+		job.WorkerID == w.config.WorkerID &&
+		job.CancelVersion >= 0 && job.CancelVersion < int64(^uint64(0)>>1) &&
+		current.CancelVersion == job.CancelVersion+1 {
+		claimExpiry, claimErr := time.Parse(time.RFC3339Nano, job.LeaseExpiresAt)
+		currentExpiry, currentErr := time.Parse(time.RFC3339Nano, current.LeaseExpiresAt)
+		if claimErr != nil || currentErr != nil || !claimExpiry.After(time.Now()) ||
+			!currentExpiry.After(time.Now()) {
+			return ErrWikiCompileFence
+		}
+		return w.ackCancellation(ctx, job, current.CancelVersion)
+	}
+	if current.CancelVersion != job.CancelVersion {
 		return ErrWikiCompileFence
 	}
 	if _, err := DecodeWikiCompileClaim(current, w.config.WorkerID, time.Now()); err != nil {
 		return ErrWikiCompileFence
 	}
 	return nil
+}
+
+func sameWikiCompileJobAttempt(current, claimed jobs.Job) bool {
+	return current.ID == claimed.ID && current.InputHash == claimed.InputHash &&
+		current.AttemptID == claimed.AttemptID && current.WorkerID == claimed.WorkerID &&
+		current.Attempt == claimed.Attempt && current.LeaseEpoch == claimed.LeaseEpoch &&
+		reflect.DeepEqual(current.Request, claimed.Request)
+}
+
+// DC's Cancel changes the running attempt to cancel_requested/CV+1. Only
+// that same claimant may acknowledge it. A lost ACK reply is recovered by a
+// fresh GetJob proving this exact attempt reached cancelled, never Complete.
+func (w *WikiCompileWorker) ackCancellation(ctx context.Context, claimed jobs.Job, cancelVersion int64) error {
+	lease := jobs.Lease{WorkerID: claimed.WorkerID, AttemptID: claimed.AttemptID,
+		LeaseEpoch: claimed.LeaseEpoch, CancelVersion: cancelVersion}
+	ack, err := w.jobs.AcknowledgeCancellation(ctx, claimed.ID, lease)
+	if err == nil {
+		if sameWikiCompileJobAttempt(ack, claimed) && ack.CancelVersion == cancelVersion &&
+			ack.State == "cancelled" && ack.Result == nil {
+			return ErrWikiCompileCancellationAcknowledged
+		}
+		return ErrWikiCompileFence
+	}
+	current, readErr := w.jobs.GetJob(ctx, claimed.ID)
+	if readErr != nil {
+		return ErrWikiCompileCancelAckPending
+	}
+	if !sameWikiCompileJobAttempt(current, claimed) || current.CancelVersion != cancelVersion {
+		return ErrWikiCompileFence
+	}
+	if current.State == "cancelled" && current.Result == nil {
+		return ErrWikiCompileCancellationAcknowledged
+	}
+	if current.State == "cancel_requested" {
+		return ErrWikiCompileCancelAckPending
+	}
+	return ErrWikiCompileFence
 }
 
 func (w *WikiCompileWorker) currentCompile(ctx context.Context, job jobs.Job,
@@ -251,7 +303,7 @@ func (w *WikiCompileWorker) completeTechnical(ctx context.Context, job jobs.Job,
 		return jobs.CompletionReceipt{}, ErrWikiCompileTechnicalPending
 	}
 	if err := w.currentJob(ctx, job); err != nil {
-		return jobs.CompletionReceipt{}, ErrWikiCompileFence
+		return jobs.CompletionReceipt{}, err
 	}
 	ref, err := w.config.CompletionRef(ctx, accepted, candidate)
 	if err != nil || ref.URI == "" || !artifacts.ValidHash(ref.Hash) || ref.MediaType == "" {
@@ -296,6 +348,10 @@ func wikiCompileObservation(err error) (string, string, error) {
 		return "partial", "DC_COMPLETION_CONTRACT_PENDING", ErrWikiCompileTechnicalPending
 	case errors.Is(err, ErrWikiCompileAcceptPending):
 		return "partial", "RTW_ACCEPT_OUTCOME_UNKNOWN", ErrWikiCompileAcceptPending
+	case errors.Is(err, ErrWikiCompileCancellationAcknowledged):
+		return "cancelled", "DC_CANCEL_ACK", ErrWikiCompileCancellationAcknowledged
+	case errors.Is(err, ErrWikiCompileCancelAckPending):
+		return "partial", "DC_CANCEL_ACK_PENDING", ErrWikiCompileCancelAckPending
 	case errors.Is(err, ErrWikiCompileModelIdentity):
 		return "rejected", "MODEL_SESSION_MISMATCH", ErrWikiCompileModelIdentity
 	case errors.Is(err, ErrWikiCompileJobContract), errors.Is(err, ErrWikiCompileSource),
@@ -327,7 +383,8 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 		outcome, code, cause := wikiCompileObservation(resultErr)
 		stage.End(ctx, outcome, code, cause,
 			slog.Bool("rtw_accepted", result.Accepted.State == "ACCEPTED"),
-			slog.Bool("dc_completed", result.TechnicalComplete))
+			slog.Bool("dc_completed", result.TechnicalComplete),
+			slog.Bool("dc_cancel_ack", errors.Is(resultErr, ErrWikiCompileCancellationAcknowledged)))
 	}()
 	claim, err := DecodeWikiCompileClaim(job, w.config.WorkerID, time.Now())
 	if err != nil {
@@ -336,7 +393,7 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 	stage.SetAttributes(slog.String("operation_id", job.Request.OperationID),
 		slog.String("attempt_id", job.AttemptID), slog.Int64("lease_epoch", job.LeaseEpoch))
 	if err := w.currentJob(ctx, job); err != nil {
-		return result, ErrWikiCompileFence
+		return result, err
 	}
 	remote, err := w.owner.GetCompile(ctx, claim.Ticket.CompileID)
 	if err != nil {
@@ -358,7 +415,7 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 		return result, fmt.Errorf("read fixed RTW source revisions: %w", err)
 	}
 	if err := w.currentJob(ctx, job); err != nil {
-		return result, ErrWikiCompileFence
+		return result, err
 	}
 	claimed, err := w.owner.ClaimCompile(ctx, ridethewind.ClaimCompileReq{
 		CompileId: remote.CompileId, Generation: remote.Generation, InputHash: remote.InputHash,
@@ -418,7 +475,7 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 		return result, err
 	}
 	if err := w.currentJob(ctx, job); err != nil {
-		return result, ErrWikiCompileFence
+		return result, err
 	}
 	if _, err := w.currentCompile(ctx, job, claim); err != nil {
 		return result, ErrWikiCompileFence
@@ -438,7 +495,7 @@ func (w *WikiCompileWorker) ProcessClaim(parent context.Context, job jobs.Job) (
 		return result, err
 	}
 	if err := w.currentJob(ctx, job); err != nil {
-		return result, ErrWikiCompileFence
+		return result, err
 	}
 	if _, err := w.currentCompile(ctx, job, claim); err != nil {
 		return result, ErrWikiCompileFence

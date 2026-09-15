@@ -38,6 +38,9 @@ func (f *wikiGateJobs) ClaimJob(context.Context, jobs.Claim) (jobs.Job, error) {
 	return jobs.Job{}, errors.New("fixture must never claim before startup gate")
 }
 func (*wikiGateJobs) GetJob(context.Context, string) (jobs.Job, error) { return jobs.Job{}, nil }
+func (*wikiGateJobs) AcknowledgeCancellation(context.Context, string, jobs.Lease) (jobs.Job, error) {
+	return jobs.Job{}, errors.New("fixture must never acknowledge before startup gate")
+}
 func (*wikiGateJobs) CompleteJob(context.Context, string, jobs.Complete) (jobs.CompletionReceipt, error) {
 	return jobs.CompletionReceipt{}, nil
 }
