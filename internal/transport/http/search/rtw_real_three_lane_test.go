@@ -247,6 +247,10 @@ func buildRTWRealThreeLane(ctx context.Context, fixture realIndexFixture) (realI
 		ChunkCount: len(chunks.Chunks), APIIndexSettings: apiIndexSettings}
 	if native != nil {
 		result.NativeProjection = native.Receipt()
+		if result.NativeProjection == nil ||
+			!artifacts.ValidHash(result.NativeProjection.SettingsJCSSHA256) {
+			return realIndexLanes{}, errors.New("native physical settings JCS receipt unavailable")
+		}
 	}
 	raw, err = json.Marshal(result)
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/sparse"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/runtime/httpclient"
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
+	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
 
 const nativeUniqueQuery = "apple pie recipe"
@@ -49,26 +50,29 @@ type nativeUniqueFixture struct {
 }
 
 type nativeUniqueResult struct {
-	SchemaVersion         string   `json:"schema_version"`
-	ModuleID              string   `json:"module_id"`
-	ReleaseID             string   `json:"release_id"`
-	Generation            int64    `json:"generation"`
-	PublicationRevision   string   `json:"publication_revision"`
-	Query                 string   `json:"query"`
-	NativeRuntimeSHA256   string   `json:"native_runtime_sha256"`
-	EnginePackageSHA256   string   `json:"engine_package_sha256"`
-	DenseChunkIDs         []string `json:"dense_chunk_ids"`
-	SparseChunkIDs        []string `json:"sparse_chunk_ids"`
-	MultiVectorChunkIDs   []string `json:"multivector_chunk_ids"`
-	UniqueMultiChunkID    string   `json:"unique_multi_chunk_id"`
-	UniqueRevisionID      string   `json:"unique_revision_id"`
-	UniqueQuoteSHA256     string   `json:"unique_quote_sha256"`
-	UniqueOriginalSHA256  string   `json:"unique_original_sha256"`
-	UniqueLocator         string   `json:"unique_locator"`
-	RTWCurrentAndReadable bool     `json:"rtw_current_and_readable"`
-	PhysicalQualified     bool     `json:"physical_qualified"`
-	QrelEvaluable         bool     `json:"qrel_evaluable"`
-	ProductionVerified    bool     `json:"production_verified"`
+	SchemaVersion          string   `json:"schema_version"`
+	ModuleID               string   `json:"module_id"`
+	ReleaseID              string   `json:"release_id"`
+	Generation             int64    `json:"generation"`
+	PublicationRevision    string   `json:"publication_revision"`
+	Query                  string   `json:"query"`
+	NativeRuntimeSHA256    string   `json:"native_runtime_sha256"`
+	EnginePackageSHA256    string   `json:"engine_package_sha256"`
+	SettingsJCSSHA256      string   `json:"settings_jcs_sha256"`
+	SparseBackend          string   `json:"sparse_backend"`
+	SparseExaminedPostings int      `json:"sparse_examined_postings"`
+	DenseChunkIDs          []string `json:"dense_chunk_ids"`
+	SparseChunkIDs         []string `json:"sparse_chunk_ids"`
+	MultiVectorChunkIDs    []string `json:"multivector_chunk_ids"`
+	UniqueMultiChunkID     string   `json:"unique_multi_chunk_id"`
+	UniqueRevisionID       string   `json:"unique_revision_id"`
+	UniqueQuoteSHA256      string   `json:"unique_quote_sha256"`
+	UniqueOriginalSHA256   string   `json:"unique_original_sha256"`
+	UniqueLocator          string   `json:"unique_locator"`
+	RTWCurrentAndReadable  bool     `json:"rtw_current_and_readable"`
+	PhysicalQualified      bool     `json:"physical_qualified"`
+	QrelEvaluable          bool     `json:"qrel_evaluable"`
+	ProductionVerified     bool     `json:"production_verified"`
 }
 
 func readNativeUniqueFixture(path string) (nativeUniqueFixture, error) {
@@ -224,11 +228,17 @@ func TestRTWNativePublishedIndependentMultiDiscovery(t *testing.T) {
 		}
 	}()
 	receipt := projector.Receipt()
-	if receipt.Endpoint != built.NativeProjection.Endpoint ||
+	if receipt == nil || receipt.Endpoint != built.NativeProjection.Endpoint ||
 		receipt.RuntimeSHA256 != built.NativeProjection.RuntimeSHA256 ||
 		receipt.EnginePackageSHA256 != built.NativeProjection.EnginePackageSHA256 ||
+		receipt.SettingsJCSSHA256 != built.NativeProjection.SettingsJCSSHA256 ||
 		!reflect.DeepEqual(receipt.Settings, built.NativeProjection.Settings) {
 		t.Fatal("native physical settings drifted between Build and published Search")
+	}
+	settingsJCS, err := jsoncanonicalizer.Transform(receipt.Settings)
+	if err != nil || artifacts.Hash(settingsJCS) != receipt.SettingsJCSSHA256 ||
+		projector.setting.SparseBackend != "frozen_ip_postings" {
+		t.Fatal("published Hybrid settings did not pin the actual frozen learned-IP posting backend")
 	}
 	denseSnap, err := projector.dense.Load(ctx, snapshot.Indexes[searchdomain.Dense])
 	if err != nil {
@@ -255,6 +265,9 @@ func TestRTWNativePublishedIndependentMultiDiscovery(t *testing.T) {
 		Text: fixture.Query, TopK: 2})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if sparseResult.ExaminedPostings == nil || *sparseResult.ExaminedPostings < 1 {
+		t.Fatal("learned Sparse search did not examine any actual frozen query postings")
 	}
 	multiResult, err := multiSnap.Search(ctx, multivector.Query{
 		IndexRef: snapshot.Indexes[searchdomain.MultiVector], ModuleID: snapshot.ModuleID,
@@ -314,8 +327,11 @@ func TestRTWNativePublishedIndependentMultiDiscovery(t *testing.T) {
 		ModuleID: snapshot.ModuleID, ReleaseID: snapshot.ReleaseID,
 		Generation: snapshot.Generation, PublicationRevision: snapshot.PublicationRevision,
 		Query: fixture.Query, NativeRuntimeSHA256: receipt.RuntimeSHA256,
-		EnginePackageSHA256: receipt.EnginePackageSHA256,
-		DenseChunkIDs:       getDense, SparseChunkIDs: getSparse,
+		EnginePackageSHA256:    receipt.EnginePackageSHA256,
+		SettingsJCSSHA256:      receipt.SettingsJCSSHA256,
+		SparseBackend:          projector.setting.SparseBackend,
+		SparseExaminedPostings: *sparseResult.ExaminedPostings,
+		DenseChunkIDs:          getDense, SparseChunkIDs: getSparse,
 		MultiVectorChunkIDs: getMulti, UniqueMultiChunkID: unique.Chunk.ID,
 		UniqueRevisionID:      unique.Chunk.RevisionID,
 		UniqueQuoteSHA256:     original.TextHash,

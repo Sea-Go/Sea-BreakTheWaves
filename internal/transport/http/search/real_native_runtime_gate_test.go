@@ -68,6 +68,9 @@ func TestNativeProjectionReceiptUsesFormalAPIPhysicalConfigKeys(t *testing.T) {
 			Dense:       realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64},
 			MultiVector: realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64}}}
 	receipt := p.Receipt()
+	if receipt == nil || !artifacts.ValidHash(receipt.SettingsJCSSHA256) {
+		t.Fatal("native physical settings JCS hash is absent")
+	}
 	var root map[string]json.RawMessage
 	if json.Unmarshal(receipt.Settings, &root) != nil || len(root) != 6 {
 		t.Fatal("native projection produced a different formal API physical config root")

@@ -17,6 +17,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/dense"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/multivector"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/retrieval/sparse"
+	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
 )
 
@@ -58,6 +59,7 @@ type realNativeProjection struct {
 	RuntimeSHA256       string          `json:"runtime_sha256"`
 	EnginePackageSHA256 string          `json:"engine_package_sha256"`
 	Settings            json.RawMessage `json:"settings"`
+	SettingsJCSSHA256   string          `json:"settings_jcs_sha256"`
 	PhysicalQualified   bool            `json:"physical_qualified"`
 }
 
@@ -165,9 +167,14 @@ func (p *realNativeProjector) Receipt() *realNativeProjection {
 		return nil
 	}
 	raw, _ := json.Marshal(p.setting)
+	canon, err := jsoncanonicalizer.Transform(raw)
+	if err != nil {
+		return nil
+	}
 	return &realNativeProjection{Status: "test_projection_before_RTW_READY",
 		Endpoint: p.runtime.Endpoint, RuntimeSHA256: p.rawSHA,
 		EnginePackageSHA256: p.runtime.EnginePackageSHA256, Settings: raw,
+		SettingsJCSSHA256: artifacts.Hash(canon),
 		PhysicalQualified: false}
 }
 
