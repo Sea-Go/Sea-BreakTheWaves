@@ -28,6 +28,15 @@ func NewS3(client *minio.Client, bucket string) (*S3, error) {
 	return &S3{client: client, bucket: bucket}, nil
 }
 
+// Bucket exposes only the configured object namespace for the Wiki worker's
+// startup gate. Credentials and endpoint remain owned by the injected client.
+func (s *S3) Bucket() string {
+	if s == nil {
+		return ""
+	}
+	return s.bucket
+}
+
 func (s *S3) Put(ctx context.Context, data []byte) (corpus.Ref, error) {
 	if s == nil || s.client == nil || ctx == nil || ctx.Err() != nil ||
 		len(data) > MaxBytes {
