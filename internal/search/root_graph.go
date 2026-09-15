@@ -316,6 +316,12 @@ func (s *RootSummarizer) Summarize(ctx context.Context, q SummaryRequest) (Summa
 	if err != nil {
 		return out, err
 	}
+	// The public Summary response has no effective-level/change-reason fields.
+	// Even an RTW-signed AllowLower flag cannot make a downgraded execution look
+	// like the requested medium or high product until that response is versioned.
+	if checked && profile.EffectiveIntelligence != q.Search.Intelligence {
+		return out, ErrUnavailable
+	}
 	if checked && s.fastMedium != nil && profile.EffectiveIntelligence == Medium &&
 		(q.Search.Depth != Fast || q.Search.Intelligence != Medium) {
 		return out, ErrUnavailable
@@ -361,6 +367,12 @@ func (s *RootSummarizer) Summarize(ctx context.Context, q SummaryRequest) (Summa
 	}
 	if completed != 1 || !validRootSummaryResult(candidate, fixed) {
 		return out, ErrRootSummaryOutput
+	}
+	// A non-Service SearchExecutor may not offer the early profile check. Keep
+	// the public Summary boundary exact even then; old accepted turns remain
+	// readable through History's separate validation contract.
+	if candidate.Search.Retrieval.Profile.EffectiveIntelligence != fixed.Search.Intelligence {
+		return out, ErrUnavailable
 	}
 	return candidate, nil
 }
