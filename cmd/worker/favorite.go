@@ -147,6 +147,8 @@ func factBindings(cfg config, rtwClient *http.Client) ([]app.FactEventBinding, e
 		return []app.FactEventBinding{
 			{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: authority},
 			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: authority},
+			{EventType: "rtw.favorite.assert", SchemaVersion: 2, Action: usermodel.Assert, EvidenceBinder: authority},
+			{EventType: "rtw.favorite.retract", SchemaVersion: 2, Action: usermodel.Retract, EvidenceBinder: authority},
 		}, nil
 	case commentFactJobType:
 		authority, err := app.NewCommunityAuthorityBinder(app.CommunityAuthorityBinderConfig{

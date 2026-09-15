@@ -63,26 +63,26 @@ func NewFavoriteAuthorityBinder(cfg FavoriteAuthorityBinderConfig) (*FavoriteAut
 }
 
 type favoriteAuthorityResponse struct {
-	Event              json.RawMessage      `json:"event"`
-	SubjectRef         usermodel.SubjectRef `json:"subject_ref"`
-	PredecessorEventID string               `json:"predecessor_event_id,omitempty"`
-	TechnicalReceipt   eventing.Receipt     `json:"technical_receipt"`
-	SourceEventHash    string               `json:"source_event_hash"`
+	Event              json.RawMessage  `json:"event"`
+	SubjectRef         json.RawMessage  `json:"subject_ref"`
+	PredecessorEventID string           `json:"predecessor_event_id,omitempty"`
+	TechnicalReceipt   eventing.Receipt `json:"technical_receipt"`
+	SourceEventHash    string           `json:"source_event_hash"`
 }
 
 type favoriteAuthorityPayload struct {
-	SchemaVersion  int                  `json:"schema_version"`
-	EventID        string               `json:"event_id"`
-	SubjectRef     usermodel.SubjectRef `json:"subject_ref"`
-	TargetType     string               `json:"target_type"`
-	TargetID       string               `json:"target_id"`
-	TargetRevision *string              `json:"target_revision"`
-	Operation      string               `json:"operation"`
-	SourceRef      string               `json:"source_ref"`
-	EventTime      string               `json:"event_time"`
-	AvailableAt    string               `json:"available_at"`
-	FavoriteID     json.RawMessage      `json:"favorite_id"`
-	FolderID       json.RawMessage      `json:"folder_id"`
+	SchemaVersion  int             `json:"schema_version"`
+	EventID        string          `json:"event_id"`
+	SubjectRef     json.RawMessage `json:"subject_ref"`
+	TargetType     string          `json:"target_type"`
+	TargetID       string          `json:"target_id"`
+	TargetRevision *string         `json:"target_revision"`
+	Operation      string          `json:"operation"`
+	SourceRef      string          `json:"source_ref"`
+	EventTime      string          `json:"event_time"`
+	AvailableAt    string          `json:"available_at"`
+	FavoriteID     json.RawMessage `json:"favorite_id"`
+	FolderID       json.RawMessage `json:"folder_id"`
 }
 
 func (b *FavoriteAuthorityBinder) BindFactWithEvidence(ctx context.Context, source FactSourceEvidence) (usermodel.Event, error) {
@@ -97,7 +97,11 @@ func (b *FavoriteAuthorityBinder) BindFactWithEvidence(ctx context.Context, sour
 		(source.Event.EventType != "rtw.favorite.assert" && source.Event.EventType != "rtw.favorite.retract") {
 		return usermodel.Event{}, fmt.Errorf("favorite event key and type: %w", ErrFactDeliveryContract)
 	}
-	endpoint := b.baseURL + "/internal/v1/favorite/facts/" + url.PathEscape(source.Event.Producer) + "/" + url.PathEscape(source.Event.EventID)
+	if source.Event.SchemaVersion != 1 && source.Event.SchemaVersion != 2 {
+		return usermodel.Event{}, fmt.Errorf("favorite schema version: %w", ErrFactDeliveryContract)
+	}
+	endpoint := b.baseURL + fmt.Sprintf("/internal/v%d/favorite/facts/", source.Event.SchemaVersion) +
+		url.PathEscape(source.Event.Producer) + "/" + url.PathEscape(source.Event.EventID)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return usermodel.Event{}, err
@@ -156,7 +160,8 @@ func bindFavoriteAuthority(source FactSourceEvidence, authority favoriteAuthorit
 		return usermodel.Event{}, fmt.Errorf("RTW/DC receipt time differs: %w", ErrFactDeliveryContract)
 	}
 	var frozen eventing.Event
-	if err := decodeFavoriteAuthorityJSON(bytes.NewReader(authority.Event), &frozen); err != nil || frozen.EventID != source.Event.EventID {
+	if err := decodeFavoriteAuthorityJSON(bytes.NewReader(authority.Event), &frozen); err != nil ||
+		frozen.EventID != source.Event.EventID || frozen.SchemaVersion != source.Event.SchemaVersion {
 		return usermodel.Event{}, fmt.Errorf("RTW frozen event shape: %w", ErrFactDeliveryContract)
 	}
 	var payload favoriteAuthorityPayload
@@ -167,17 +172,29 @@ func bindFavoriteAuthority(source FactSourceEvidence, authority favoriteAuthorit
 	if !ok || favoriteID != source.Event.AggregateID {
 		return usermodel.Event{}, fmt.Errorf("RTW favorite identifier: %w", ErrFactDeliveryContract)
 	}
-	if _, ok := favoritePositiveID(payload.FolderID); !ok || payload.SubjectRef != authority.SubjectRef ||
-		authority.SubjectRef.AuthorityID != "rtw.identity" || authority.SubjectRef.TenantID != "platform" ||
-		!factDeliveryToken.MatchString(authority.SubjectRef.SubjectID) || payload.SchemaVersion != 1 ||
+	subject, err := parseFavoriteAuthoritySubject(source.Event.SchemaVersion, authority.SubjectRef)
+	if err != nil {
+		return usermodel.Event{}, err
+	}
+	fromPayload, err := parseFavoriteAuthoritySubject(source.Event.SchemaVersion, payload.SubjectRef)
+	if err != nil {
+		return usermodel.Event{}, err
+	}
+	authoritySubjectCanonical, err := jsoncanonicalizer.Transform(authority.SubjectRef)
+	if err != nil {
+		return usermodel.Event{}, fmt.Errorf("RTW favorite subject JCS: %w", ErrFactDeliveryContract)
+	}
+	payloadSubjectCanonical, err := jsoncanonicalizer.Transform(payload.SubjectRef)
+	if err != nil {
+		return usermodel.Event{}, fmt.Errorf("RTW favorite payload subject JCS: %w", ErrFactDeliveryContract)
+	}
+	if _, ok := favoritePositiveID(payload.FolderID); !ok || subject != fromPayload ||
+		!bytes.Equal(authoritySubjectCanonical, payloadSubjectCanonical) ||
+		payload.SchemaVersion != source.Event.SchemaVersion ||
 		payload.EventID != source.Event.EventID || payload.EventTime != source.Event.OccurredAt ||
 		payload.AvailableAt != source.Event.OccurredAt || payload.TargetType == "" || payload.TargetID == "" ||
 		payload.SourceRef != "rtw.favorite/"+favoriteID {
 		return usermodel.Event{}, fmt.Errorf("RTW favorite source fields: %w", ErrFactDeliveryContract)
-	}
-	uid, err := strconv.ParseInt(authority.SubjectRef.SubjectID, 10, 64)
-	if err != nil || uid <= 0 || strconv.FormatInt(uid, 10) != authority.SubjectRef.SubjectID {
-		return usermodel.Event{}, fmt.Errorf("RTW issued subject: %w", ErrFactDeliveryContract)
 	}
 	version := "1"
 	action := usermodel.Assert
@@ -188,7 +205,7 @@ func bindFavoriteAuthority(source FactSourceEvidence, authority favoriteAuthorit
 		source.Event.AggregateVersion != int64(version[0]-'0') || payload.Operation != string(action) {
 		return usermodel.Event{}, fmt.Errorf("RTW favorite action and version: %w", ErrFactDeliveryContract)
 	}
-	fact := usermodel.Event{Subject: authority.SubjectRef, Action: action, Kind: usermodel.ProductAction,
+	fact := usermodel.Event{Subject: subject, Action: action, Kind: usermodel.ProductAction,
 		Predicate: "favorite", ValueRef: payload.TargetType + "/" + payload.TargetID, ItemID: payload.TargetID}
 	if payload.TargetRevision != nil {
 		fact.ValueRef += "/revision/" + *payload.TargetRevision
@@ -203,6 +220,35 @@ func bindFavoriteAuthority(source FactSourceEvidence, authority favoriteAuthorit
 		return usermodel.Event{}, fmt.Errorf("RTW assert has predecessor: %w", ErrFactDeliveryContract)
 	}
 	return fact, nil
+}
+
+type favoriteSubjectV2 struct {
+	Issuer    string `json:"issuer"`
+	SubjectID string `json:"subject_id"`
+}
+
+func parseFavoriteAuthoritySubject(schema int, raw json.RawMessage) (usermodel.SubjectRef, error) {
+	var subject usermodel.SubjectRef
+	switch schema {
+	case 1:
+		if err := decodeFavoriteAuthorityJSON(bytes.NewReader(raw), &subject); err != nil ||
+			subject.AuthorityID != "rtw.identity" || subject.TenantID != "platform" {
+			return usermodel.SubjectRef{}, fmt.Errorf("RTW favorite v1 subject: %w", ErrFactDeliveryContract)
+		}
+	case 2:
+		var v2 favoriteSubjectV2
+		if err := decodeFavoriteAuthorityJSON(bytes.NewReader(raw), &v2); err != nil || v2.Issuer != "rtw.identity" {
+			return usermodel.SubjectRef{}, fmt.Errorf("RTW favorite v2 subject: %w", ErrFactDeliveryContract)
+		}
+		subject = usermodel.SubjectRef{AuthorityID: v2.Issuer, TenantID: "platform", SubjectID: v2.SubjectID}
+	default:
+		return usermodel.SubjectRef{}, fmt.Errorf("RTW favorite subject version: %w", ErrFactDeliveryContract)
+	}
+	uid, err := strconv.ParseInt(subject.SubjectID, 10, 64)
+	if err != nil || uid < 1 || strconv.FormatInt(uid, 10) != subject.SubjectID {
+		return usermodel.SubjectRef{}, fmt.Errorf("RTW favorite UID: %w", ErrFactDeliveryContract)
+	}
+	return subject, nil
 }
 
 func favoritePositiveID(raw json.RawMessage) (string, bool) {
