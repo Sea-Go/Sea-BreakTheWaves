@@ -65,3 +65,20 @@ CREATE TABLE IF NOT EXISTS warehouse_community.ods_event (
 
 CREATE INDEX IF NOT EXISTS ods_event_subject_slice
   ON warehouse_community.ods_event (producer, issuer, subject_id, source_offset);
+
+CREATE OR REPLACE FUNCTION warehouse_community.reject_immutable_source_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'community warehouse source evidence is immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS community_ods_immutable ON warehouse_community.ods_event;
+CREATE TRIGGER community_ods_immutable
+BEFORE UPDATE OR DELETE ON warehouse_community.ods_event
+FOR EACH ROW EXECUTE FUNCTION warehouse_community.reject_immutable_source_change();
+
+DROP TRIGGER IF EXISTS community_batch_evidence_immutable ON warehouse_community.read_batch_evidence;
+CREATE TRIGGER community_batch_evidence_immutable
+BEFORE UPDATE OR DELETE ON warehouse_community.read_batch_evidence
+FOR EACH ROW EXECUTE FUNCTION warehouse_community.reject_immutable_source_change();

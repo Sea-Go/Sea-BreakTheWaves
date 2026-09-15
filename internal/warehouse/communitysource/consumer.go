@@ -235,7 +235,9 @@ func validateBatch(batch eventing.Batch, stream Stream, limit int) error {
 	for index, item := range batch.Events {
 		if item.Offset != batch.FromOffset+int64(index) || item.Event.Producer != stream.Producer ||
 			item.Event.SchemaVersion != 1 || !digest.MatchString(item.InputHash) ||
-			!identifier.MatchString(item.Event.EventID) || !allowedEvent(stream.Producer, item.Event.EventType) {
+			!identifier.MatchString(item.Event.EventID) || !identifier.MatchString(item.Event.OperationID) ||
+			item.Event.AggregateID == "" || item.Event.AggregateVersion < 1 || item.Event.AggregateVersion > 9007199254740991 ||
+			!allowedEvent(stream.Producer, item.Event.EventType) {
 			return ErrContract
 		}
 	}

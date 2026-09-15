@@ -170,6 +170,10 @@ func TestRealCommunityWarehouseChain(t *testing.T) {
 		if err != nil || second.ReplayedRows != int(fixture.through) || second.NewRows != 0 || second.AcknowledgedOffset != fixture.through {
 			t.Fatalf("%s restart replay: %+v %v", fixture.stream.Producer, second, err)
 		}
+		drained, err := dc.ReadEvents(ctx, fixture.stream.Consumer, fixture.stream.Producer, 128)
+		if err != nil || len(drained.Events) != 0 || drained.FromOffset != fixture.through+1 || drained.ToOffset != fixture.through {
+			t.Fatalf("%s DC cursor did not drain at its own prefix: %+v %v", fixture.stream.Producer, drained, err)
+		}
 		negative[fixture.stream.Producer+"_lost_ack_replay"] = true
 	}
 	assertRealODS(t, ctx, db, commentIDs, likeIDs)

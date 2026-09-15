@@ -186,6 +186,13 @@ func TestConsumerCommitsBeforeACKAndReplaysWithoutDuplicates(t *testing.T) {
 	if _, err := db.Exec(context.Background(), `UPDATE warehouse_community.ods_event SET subject_id='01' WHERE producer=$1 AND source_offset=1`, CommentProducer); err == nil {
 		t.Fatal("noncanonical subject ID passed PG constraint")
 	}
+	if _, err := db.Exec(context.Background(), `DELETE FROM warehouse_community.ods_event WHERE producer=$1 AND source_offset=1`, CommentProducer); err == nil {
+		t.Fatal("immutable ODS row was deleted")
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE warehouse_community.read_batch_evidence SET batch_hash=$1 WHERE producer=$2`,
+		testContentHash([]byte("changed")), CommentProducer); err == nil {
+		t.Fatal("immutable batch evidence was changed")
+	}
 }
 
 func TestConsumersKeepProducerOffsetsSeparate(t *testing.T) {
