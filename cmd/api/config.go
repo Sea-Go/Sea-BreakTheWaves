@@ -52,6 +52,7 @@ type nativeSettings struct {
 	SchemaVersion string       `json:"schema_version"`
 	Engine        string       `json:"engine"`
 	Namespace     string       `json:"namespace"`
+	SparseBackend string       `json:"sparse_backend"`
 	Dense         hnswSettings `json:"dense"`
 	MultiVector   hnswSettings `json:"multivector"`
 }
@@ -97,8 +98,8 @@ type fastMediumConfig struct {
 func loadConfig(getenv func(string) string) (config, error) {
 	var c config
 	c.Mode = getenv("BTW_SEARCH_MODE")
-	if c.Mode != "local-exact" && c.Mode != "native-milvus" {
-		return c, errors.New("BTW_SEARCH_MODE must explicitly be local-exact or native-milvus")
+	if c.Mode != "local-exact" && c.Mode != "native-milvus" && c.Mode != "native-hybrid" {
+		return c, errors.New("BTW_SEARCH_MODE must explicitly be local-exact, native-milvus or native-hybrid")
 	}
 	required := []string{"BTW_SEARCH_API_ADDR", "BTW_SEARCH_METRICS_ADDR", "BTW_SEARCH_SCOPE_KEY", "BTW_SEARCH_TOOLS_SCOPE_KEY",
 		"BTW_RTW_URL", "BTW_RTW_TOKEN", "BTW_DC_URL", "BTW_DC_TOKEN", "BTW_SEARCH_MODEL_URL",
@@ -153,7 +154,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if err = readJSON(getenv("BTW_SEARCH_INDEX_FILE"), &c.Indexes); err != nil {
 		return c, fmt.Errorf("BTW_SEARCH_INDEX_FILE: %w", err)
 	}
-	if c.Mode == "native-milvus" {
+	if c.Mode == "native-milvus" || c.Mode == "native-hybrid" {
 		c.MilvusAddress, c.MilvusAPIKey = getenv("BTW_SEARCH_MILVUS_ADDRESS"), getenv("BTW_SEARCH_MILVUS_API_KEY")
 		if !milvusAddress(c.MilvusAddress) {
 			return c, errors.New("BTW_SEARCH_MILVUS_ADDRESS requires an explicit host:port")
@@ -164,6 +165,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		if err := native.validate(); err != nil {
 			return c, fmt.Errorf("BTW_SEARCH_NATIVE_FILE: %w", err)
+		}
+		if c.Mode == "native-milvus" && native.Engine != "milvus" ||
+			c.Mode == "native-hybrid" && native.Engine != "lite" {
+			return c, errors.New("native mode and physical engine must be the same explicit backend")
 		}
 		c.Native = &native
 	} else if getenv("BTW_SEARCH_MILVUS_ADDRESS") != "" ||

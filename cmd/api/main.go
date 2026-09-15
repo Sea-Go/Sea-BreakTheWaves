@@ -152,7 +152,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	var sparseReader searchdomain.SparseReader
 	var multiReader searchdomain.MultiVectorReader
 	var native *nativeBackend
-	if cfg.Mode == "native-milvus" {
+	if cfg.Mode == "native-milvus" || cfg.Mode == "native-hybrid" {
 		if cfg.Native == nil {
 			return errors.New("native Milvus mode has no fixed physical settings")
 		}
@@ -169,14 +169,21 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		if denseErr != nil {
 			return fmt.Errorf("construct native dense lane: %w", denseErr)
 		}
-		sparseEngine := physical.Engine
-		if sparseEngine == "lite" { // Sparse's locked SDK ABI names Lite native-lite.
-			sparseEngine = "native-lite"
+		var sparseLane *sparse.Service
+		var sparseErr error
+		if physical.SparseBackend == "frozen_ip_postings" {
+			// Lite 3.2.1's SPARSE_INVERTED_INDEX scores BM25 even when the
+			// caller requests IP. The immutable lane shard already contains a
+			// complete learned-weight posting index; use its actual dot-product
+			// candidate generation rather than pruning by BM25 first.
+			sparseLane, sparseErr = sparse.New(objects, representations, cfg.Indexes.Sparse)
+		} else {
+			sparseLane, sparseErr = sparse.NewMilvus(objects, representations,
+				cfg.Indexes.Sparse, nativeClient,
+				sparse.MilvusConfig{Namespace: physical.Namespace, Engine: "milvus"})
 		}
-		sparseLane, sparseErr := sparse.NewMilvus(objects, representations, cfg.Indexes.Sparse,
-			nativeClient, sparse.MilvusConfig{Namespace: physical.Namespace, Engine: sparseEngine})
 		if sparseErr != nil {
-			return fmt.Errorf("construct native learned sparse lane: %w", sparseErr)
+			return fmt.Errorf("construct physical learned sparse lane: %w", sparseErr)
 		}
 		multiLane, multiErr := multivector.NewMilvus(objects, representations,
 			cfg.Indexes.MultiVector, nativeClient, multivector.MilvusConfig{

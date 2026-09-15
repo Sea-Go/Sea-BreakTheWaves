@@ -25,11 +25,13 @@ func milvusAddress(address string) bool {
 }
 
 func (s nativeSettings) validate() error {
-	if s.SchemaVersion != "sea.search.native-milvus.v1" ||
+	if s.SchemaVersion != "sea.search.native-backends.v2" ||
 		(s.Engine != "milvus" && s.Engine != "lite") ||
+		(s.Engine == "lite" && s.SparseBackend != "frozen_ip_postings") ||
+		(s.Engine == "milvus" && s.SparseBackend != "milvus_ip") ||
 		!nativeNamespace.MatchString(s.Namespace) ||
 		!s.Dense.valid() || !s.MultiVector.valid() {
-		return errors.New("native backend requires a version, engine, namespace and two bounded HNSW configurations")
+		return errors.New("native backend requires versioned Dense/Multi HNSW and an explicit learned-IP Sparse backend")
 	}
 	return nil
 }
@@ -54,8 +56,9 @@ func readNativeSettings(path string, out *nativeSettings) error {
 	if err != nil || len(raw) > 32<<10 ||
 		!literalNativeObject(raw, map[string]byte{
 			"schema_version": '"', "engine": '"', "namespace": '"',
-			"dense": '{', "multivector": '{'}, true) {
-		return errors.New("native backend file requires five unique literal fields")
+			"sparse_backend": '"',
+			"dense":          '{', "multivector": '{'}, true) {
+		return errors.New("native backend file requires six unique literal fields")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
