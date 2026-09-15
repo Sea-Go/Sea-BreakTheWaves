@@ -144,28 +144,34 @@ const (
 	Undetermined Disposition = "undetermined"
 )
 
+type WikiSpanProvenance string
+
+const DerivedFirstMatch WikiSpanProvenance = "derived_first_match"
+
 // A grade from 0 to 3 and disposition are independently signed human labels;
 // there is no automatic grade mapping or LLM self-judgment. Non-missing labels
-// bind an exact UTF-8 byte span of the accepted RTW Wiki revision.
+// bind RTW's claim TEXT/SHA. The Wiki byte span is derived from the first
+// exact match in the target raw object; RTW v1 does not sign its position.
 type FactJudgment struct {
-	FactID              string      `json:"fact_id"`
-	Grade               string      `json:"grade,omitempty"` // RTW defines grade meaning; BTW only counts 0..3.
-	Disposition         Disposition `json:"disposition"`
-	WikiByteStart       int         `json:"wiki_byte_start"`
-	WikiByteEnd         int         `json:"wiki_byte_end"`
-	WikiText            string      `json:"wiki_text"`
-	Reason              string      `json:"reason"`
-	BaseJudgeRevisionID string      `json:"base_judge_revision_id,omitempty"`
+	FactID              string             `json:"fact_id"`
+	Grade               string             `json:"grade,omitempty"` // RTW defines grade meaning; BTW only counts 0..3.
+	Disposition         Disposition        `json:"disposition"`
+	WikiByteStart       int                `json:"wiki_byte_start"`
+	WikiByteEnd         int                `json:"wiki_byte_end"`
+	WikiClaimText       string             `json:"wiki_claim_text"`
+	WikiClaimSHA256     string             `json:"wiki_claim_sha256,omitempty"`
+	WikiSpanProvenance  WikiSpanProvenance `json:"wiki_span_provenance,omitempty"`
+	Reason              string             `json:"reason"`
+	BaseJudgeRevisionID string             `json:"base_judge_revision_id,omitempty"`
 }
 
-// Review is a BTW typed handoff, NOT the wire layout of the still-unfrozen
-// knowledge.wiki.quality.judged.v1 RTW EventSpec. The RTW read-only adapter
-// must independently verify its authority, full fact inventory and revision
-// qualification before returning AuthorityReceipt.
+// Review is a BTW typed handoff, NOT the RTW single-fact Event wire layout.
+// The RTW read-only adapter must independently verify the Event and a future
+// complete FactCatalog/SourceScope receipt before returning AuthorityReceipt.
 type Review struct {
 	ReviewID         string            `json:"review_id"`
 	ReviewVersion    string            `json:"review_version"`
-	ReviewerUID      string            `json:"reviewer_uid,omitempty"`
+	RTWActorID       string            `json:"rtw_actor_id,omitempty"`
 	RubricVersion    string            `json:"rubric_version"`
 	WikiRevisionID   string            `json:"wiki_revision_id"`
 	DataKind         DataKind          `json:"data_kind"`
@@ -186,7 +192,8 @@ type SourceProvenance struct {
 	DCOffset          string `json:"dc_offset"`
 }
 
-// AuthorityVerifier is implemented by the future RTW EventSpec/PG reader.
+// AuthorityVerifier is implemented by the RTW Event/PG reader only after its
+// independent complete FactCatalog/SourceScope receipt is frozen.
 // A mere caller-supplied human_admin string cannot make a case evaluable.
 type AuthorityVerifier interface {
 	Verify(context.Context, Scope, []Source, Review) (AuthorityReceipt, error)
@@ -206,6 +213,8 @@ type Verifiers struct {
 type AuthorityReceipt struct {
 	ReviewJCSSHA256         string
 	SourceScopeJCSSHA256    string
+	FactCatalogRevisionID   string
+	FactCatalogJCSSHA256    string // Separate future complete Catalog/Scope proof, never one judgment Event.
 	FactsComplete           bool
 	LabelsComplete          bool
 	RevisionsQualified      bool

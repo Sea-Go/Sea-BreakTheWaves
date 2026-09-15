@@ -1,6 +1,7 @@
 package wiki_quality
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"strings"
@@ -150,7 +151,7 @@ func validateInputShape(input Input) error {
 		(input.Review.DataKind != SyntheticFixture && input.Review.DataKind != HumanAdmin) {
 		return ErrScope
 	}
-	if input.Review.ReviewerUID != "" && !validText(input.Review.ReviewerUID, 128) {
+	if input.Review.RTWActorID != "" && !validRTWActorID(input.Review.RTWActorID) {
 		return ErrEvidence
 	}
 	if provenance := input.Review.SourceProvenance; provenance != nil {
@@ -206,9 +207,18 @@ func validateFacts(input Input) (map[string]Fact, map[string]FactJudgment, error
 			(judgment.BaseJudgeRevisionID != "" && !idPattern.MatchString(judgment.BaseJudgeRevisionID)) {
 			return nil, nil, ErrEvidence
 		}
+		if judgment.WikiClaimText == "" {
+			if judgment.WikiClaimSHA256 != "" || judgment.WikiSpanProvenance != "" {
+				return nil, nil, ErrEvidence
+			}
+		} else if !validHash(judgment.WikiClaimSHA256) ||
+			Digest([]byte(judgment.WikiClaimText)) != judgment.WikiClaimSHA256 ||
+			judgment.WikiSpanProvenance != DerivedFirstMatch {
+			return nil, nil, ErrEvidence
+		}
 		switch judgment.Disposition {
 		case Missing:
-			if judgment.Grade != "0" || judgment.WikiText != "" ||
+			if judgment.Grade != "0" || judgment.WikiClaimText != "" ||
 				judgment.WikiByteStart != 0 || judgment.WikiByteEnd != 0 {
 				return nil, nil, ErrEvidence
 			}
@@ -223,8 +233,8 @@ func validateFacts(input Input) (map[string]Fact, map[string]FactJudgment, error
 			}
 		case Undetermined:
 			if judgment.Grade != "" ||
-				(judgment.WikiText != "" && !wikiSpan(input.Target.Content, judgment)) ||
-				(judgment.WikiText == "" && (judgment.WikiByteStart != 0 || judgment.WikiByteEnd != 0)) {
+				(judgment.WikiClaimText != "" && !wikiSpan(input.Target.Content, judgment)) ||
+				(judgment.WikiClaimText == "" && (judgment.WikiByteStart != 0 || judgment.WikiByteEnd != 0)) {
 				return nil, nil, ErrEvidence
 			}
 		default:
@@ -237,11 +247,26 @@ func validateFacts(input Input) (map[string]Fact, map[string]FactJudgment, error
 
 func wikiSpan(content string, judgment FactJudgment) bool {
 	raw := []byte(content)
-	return judgment.WikiByteStart >= 0 && judgment.WikiByteEnd <= len(raw) &&
+	first := bytes.Index(raw, []byte(judgment.WikiClaimText))
+	return first >= 0 && judgment.WikiSpanProvenance == DerivedFirstMatch &&
+		judgment.WikiByteStart == first && judgment.WikiByteEnd == first+len([]byte(judgment.WikiClaimText)) &&
+		judgment.WikiByteStart >= 0 && judgment.WikiByteEnd <= len(raw) &&
 		judgment.WikiByteEnd > judgment.WikiByteStart &&
-		string(raw[judgment.WikiByteStart:judgment.WikiByteEnd]) == judgment.WikiText &&
+		string(raw[judgment.WikiByteStart:judgment.WikiByteEnd]) == judgment.WikiClaimText &&
 		utf8.Valid(raw[:judgment.WikiByteStart]) && utf8.Valid(raw[:judgment.WikiByteEnd]) &&
-		strings.TrimSpace(judgment.WikiText) != ""
+		strings.TrimSpace(judgment.WikiClaimText) != ""
+}
+
+func validRTWActorID(actor string) bool {
+	if strings.TrimSpace(actor) == "" || len(actor) > 200 || !utf8.ValidString(actor) {
+		return false
+	}
+	for _, ch := range actor {
+		if ch < 0x20 || ch == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func reviewDigest(input Input) (string, error) {
@@ -302,8 +327,8 @@ func qualify(ctx context.Context, input Input, verifier AuthorityVerifier,
 		q.State, q.Reason = NotEvaluable, "rtw_event_or_dc_offset_missing"
 		return q, nil
 	}
-	if input.Review.ReviewerUID == "" {
-		q.State, q.Reason = NotEvaluable, "rtw_reviewer_uid_missing"
+	if input.Review.RTWActorID == "" {
+		q.State, q.Reason = NotEvaluable, "rtw_actor_id_missing"
 		return q, nil
 	}
 	if verifier == nil {
@@ -321,6 +346,9 @@ func qualify(ctx context.Context, input Input, verifier AuthorityVerifier,
 	receipt, err := verifier.Verify(ctx, input.Scope, input.Sources, input.Review)
 	if err != nil || receipt.ReviewJCSSHA256 != reviewSHA ||
 		receipt.SourceScopeJCSSHA256 != scopeSHA ||
+		!idPattern.MatchString(receipt.FactCatalogRevisionID) ||
+		!validHash(receipt.FactCatalogJCSSHA256) ||
+		receipt.FactCatalogJCSSHA256 == receipt.RTWEventJCSSHA256 ||
 		receipt.RTWEventJCSSHA256 != input.Review.SourceProvenance.RTWEventJCSSHA256 ||
 		receipt.DCOffset != input.Review.SourceProvenance.DCOffset ||
 		!receipt.FactsComplete || !receipt.LabelsComplete ||
