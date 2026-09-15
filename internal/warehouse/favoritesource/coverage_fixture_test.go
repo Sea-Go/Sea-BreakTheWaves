@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,10 +130,40 @@ func (s *fixtureLostACK) AcknowledgeEvents(ctx context.Context, consumer string,
 }
 
 func TestCoveragePublisherTwoSubjects(t *testing.T) {
-	if os.Getenv("COVERAGE_TWO_DSN") == "" || os.Getenv("COVERAGE_S3_PREFIX") == "" {
-		t.Skip("requires isolated PG/S3 fixture")
+	if os.Getenv("COVERAGE_TWO_DSN") == "" {
+		t.Skip("requires isolated PG fixture")
 	}
 	ctx := context.Background()
+	s3Prefix := os.Getenv("COVERAGE_S3_PREFIX")
+	if s3Prefix == "" {
+		var objectMu sync.Mutex
+		objects := map[string][]byte{}
+		objectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			objectMu.Lock()
+			defer objectMu.Unlock()
+			switch r.Method {
+			case http.MethodGet:
+				body, ok := objects[r.URL.Path]
+				if !ok {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.Write(body)
+			case http.MethodPut:
+				body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20+1))
+				if err != nil || len(body) > 32<<20 {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				objects[r.URL.Path] = append([]byte(nil), body...)
+				w.WriteHeader(http.StatusOK)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		}))
+		defer objectServer.Close()
+		s3Prefix = objectServer.URL
+	}
 	pool, err := pgxpool.New(ctx, os.Getenv("COVERAGE_TWO_DSN"))
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +214,7 @@ func TestCoveragePublisherTwoSubjects(t *testing.T) {
 	}
 	lost := &fixtureLostACK{Source: f, fail: true}
 	consumer := CoverageConsumer{DB: pool, Source: lost, Binder: binder, Limit: 1}
-	publisher := CoveragePublisher{DB: pool, Source: f, Binder: binder, S3Prefix: os.Getenv("COVERAGE_S3_PREFIX")}
+	publisher := CoveragePublisher{DB: pool, Source: f, Binder: binder, S3Prefix: s3Prefix}
 	if got, err := consumer.RunOnce(ctx); err == nil || got.CommittedOffset != 1 {
 		t.Fatalf("first ACK loss: %+v %v", got, err)
 	}
@@ -251,6 +282,14 @@ func TestCoveragePublisherTwoSubjects(t *testing.T) {
 	if again, err := publisher.PublishSubject(ctx, g3.Ref, u1); err != nil || again.Ref != s1.Ref {
 		t.Fatalf("sparse replay changed receipt: %+v %v", again, err)
 	}
+	checker := &SubjectRefV2Preflight{DB: pool, Objects: LocalCoverageReader{}, S3Prefix: s3Prefix}
+	preflight, err := checker.Run(ctx)
+	if err != nil || !preflight.Clear() || len(preflight.VerifiedCoverageRoots) != 2 {
+		t.Fatalf("read-only v2 source/coverage preflight: roots=%d findings=%+v err=%v",
+			len(preflight.VerifiedCoverageRoots), preflight.Findings, err)
+	}
+	t.Logf("L2 isolated PG/read-only local coverage preflight snapshot_sha256=%s verified_roots=%d",
+		preflight.SnapshotSHA256, len(preflight.VerifiedCoverageRoots))
 	if path := os.Getenv("COVERAGE_TWO_ODS_OUTPUT"); path != "" {
 		body, err := ExportODS(ctx, pool)
 		if err != nil {
@@ -283,8 +322,14 @@ func TestCoveragePublisherTwoSubjects(t *testing.T) {
 			t.Fatal(resp.Status)
 		}
 	}
-	for _, target := range []string{g3.Ref.EventIndexURL, g3.Ref.BatchEvidenceURL,
-		publisher.objectURL(g3.Ref.WarehouseGeneration, "manifest", g3.Ref.ManifestSHA256, ".json"), s1.Ref.SparseIndexURL} {
+	for _, fixture := range []struct{ target, code string }{
+		{g3.Ref.EventIndexURL, "coverage_index_bytes_mismatch"},
+		{g3.Ref.BatchEvidenceURL, "coverage_batch_bytes_mismatch"},
+		{publisher.objectURL(g3.Ref.WarehouseGeneration, "manifest", g3.Ref.ManifestSHA256, ".json"), "coverage_manifest_bytes_mismatch"},
+		{s1.Ref.SparseIndexURL, "coverage_sparse_bytes_mismatch"},
+		{s1.ReceiptURL, "coverage_receipt_bytes_mismatch"},
+	} {
+		target := fixture.target
 		original, status, err := publisher.get(ctx, target)
 		if err != nil || status != http.StatusOK {
 			t.Fatalf("read fixture object: %v %d", err, status)
@@ -293,7 +338,28 @@ func TestCoveragePublisherTwoSubjects(t *testing.T) {
 		if _, err := publisher.PublishSubject(ctx, g3.Ref, u1); !errors.Is(err, ErrCoverageConflict) {
 			t.Fatalf("tampered S3 source was trusted: %s %v", target, err)
 		}
+		blocked, err := checker.Run(ctx)
+		if err != nil || findingCount(blocked, fixture.code) == 0 {
+			t.Fatalf("read-only preflight trusted tampered coverage object: code=%s err=%v", fixture.code, err)
+		}
 		putFixture(target, original)
+	}
+	var originalBatchHash string
+	if err := pool.QueryRow(ctx, `SELECT batch_hash FROM warehouse_favorite.coverage_batch_evidence
+		WHERE consumer=$1 AND producer=$2 AND from_offset=1`, DefaultConsumer, Producer).Scan(&originalBatchHash); err != nil {
+		t.Fatal("isolated batch fixture unavailable")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE warehouse_favorite.coverage_batch_evidence SET batch_hash=$1
+		WHERE consumer=$2 AND producer=$3 AND from_offset=1`, strings.Repeat("0", 64), DefaultConsumer, Producer); err != nil {
+		t.Fatal("isolated batch fixture mutation failed")
+	}
+	blockedBatch, err := checker.Run(ctx)
+	if err != nil || findingCount(blockedBatch, "coverage_batch_pg_reference_mismatch") == 0 {
+		t.Fatalf("read-only preflight trusted changed PG batch evidence: err=%v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE warehouse_favorite.coverage_batch_evidence SET batch_hash=$1
+		WHERE consumer=$2 AND producer=$3 AND from_offset=1`, originalBatchHash, DefaultConsumer, Producer); err != nil {
+		t.Fatal("restore isolated batch fixture failed")
 	}
 	wrongSubject.Store(true)
 	if _, err := publisher.PublishPrefix(ctx, 3, "coverage_wrong_subject"); !errors.Is(err, ErrCoverageConflict) {
