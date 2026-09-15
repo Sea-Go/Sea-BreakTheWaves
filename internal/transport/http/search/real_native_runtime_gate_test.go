@@ -57,3 +57,36 @@ func TestNativeProjectionRejectsUnownedOrWrongEngineRuntimeBeforeSDK(t *testing.
 		})
 	}
 }
+
+func TestNativeProjectionReceiptUsesFormalAPIPhysicalConfigKeys(t *testing.T) {
+	p := &realNativeProjector{runtime: realNativeRuntime{Endpoint: "127.0.0.1:19530",
+		BinarySHA256: strings.Repeat("a", 64)},
+		setting: realNativeSettings{SchemaVersion: "sea.search.native-milvus.v1",
+			Engine: "lite", Namespace: "native_fixed",
+			Dense:       realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64},
+			MultiVector: realNativeHNSW{M: 16, EFConstruction: 128, EFSearch: 64}}}
+	receipt := p.Receipt()
+	var root map[string]json.RawMessage
+	if json.Unmarshal(receipt.Settings, &root) != nil || len(root) != 5 {
+		t.Fatal("native projection produced a different formal API physical config root")
+	}
+	for _, key := range []string{"schema_version", "engine", "namespace", "dense", "multivector"} {
+		if len(root[key]) == 0 {
+			t.Fatalf("formal native config literal %s missing", key)
+		}
+	}
+	for _, lane := range []string{"dense", "multivector"} {
+		var hnsw map[string]json.RawMessage
+		if json.Unmarshal(root[lane], &hnsw) != nil || len(hnsw) != 3 {
+			t.Fatalf("%s physical HNSW settings differ from formal API", lane)
+		}
+		for _, key := range []string{"m", "ef_construction", "ef_search"} {
+			if len(hnsw[key]) == 0 {
+				t.Fatalf("%s missing fixed %s HNSW setting", lane, key)
+			}
+		}
+	}
+	if receipt.PhysicalQualified || receipt.Status != "test_projection_before_RTW_READY" {
+		t.Fatal("test-only projection receipt falsely certified final physical publication")
+	}
+}
