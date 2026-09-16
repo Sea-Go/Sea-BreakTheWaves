@@ -103,7 +103,7 @@ func newRootSummarizer(d *Delivery, m, plannerModel model.Model, sessions sessio
 	if d == nil || isNil(m) || isNil(sessions) || observed == nil || !observed.Installed() {
 		return nil, ErrInvalid
 	}
-	config := model.GenerationConfig{Stream: false}
+	config := model.GenerationConfig{Stream: false, Temperature: model.Float64Ptr(0)}
 	if len(limits) > 1 || len(limits) == 1 && (limits[0].MaxOutputTokens < 1 || limits[0].MaxOutputTokens > 8192) {
 		return nil, ErrInvalid
 	}
@@ -230,7 +230,10 @@ func newRootSummarizer(d *Delivery, m, plannerModel model.Model, sessions sessio
 		SetFinishPoint(rootFinishNode)
 	subAgents := []agent.Agent{summaryAgent}
 	if medium != nil {
-		plannerConfig := model.GenerationConfig{Stream: false, MaxTokens: model.IntPtr(medium.MaxOutputTokens)}
+		// Deterministic planning: the checked-queries contract must not vary
+		// between retries of the same signed search.
+		plannerConfig := model.GenerationConfig{Stream: false, MaxTokens: model.IntPtr(medium.MaxOutputTokens),
+			Temperature: model.Float64Ptr(0)}
 		plannerAgent := llmagent.New(rootFastMediumAgent, llmagent.WithModel(plannerModel),
 			llmagent.WithInstruction(fastMediumInstruction), llmagent.WithTools([]tool.Tool{}),
 			llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithGenerationConfig(plannerConfig),

@@ -57,7 +57,7 @@ func NewSummarizer(d *Delivery, m model.Model, sessions session.Service, observe
 	}
 	ag := llmagent.New("search_summary", llmagent.WithModel(m), llmagent.WithInstruction(summaryInstruction),
 		llmagent.WithTools([]tool.Tool{}), llmagent.WithEnableCodeExecutionResponseProcessor(false),
-		llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false}))
+		llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false, Temperature: model.Float64Ptr(0)}))
 	r, err := btwruntime.New("search_summary", ag, sessions, observed)
 	if err != nil {
 		return nil, err
