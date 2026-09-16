@@ -19,4 +19,8 @@ BTW 独立叶子 `feat/search-history-injection-20260916` 基搜索 Native 开�
 
 ## 边界
 
-这是受控本机合同与夹具层实现：模型夹具是确定性假模型，"保持一致"的行为质量未评（`qrel_evaluable=false`）；真实 RTW×BTW 同父轮（真 RTW UserCenter/PG/List 接口与本注入并跑）、Collector 下钻、十二格中高/详搜与生产部署另签。H02 整体仍 `PARTIAL`。
+这是受控本机合同与夹具层实现：模型夹具是确定性假模型，"保持一致"的行为质量未评（`qrel_evaluable=false`）；Collector 下钻、十二格中高/详搜与生产部署另签。H02 整体仍 `PARTIAL`。
+
+## 同父轮（2026-09-16 追加）
+
+RTW Holder `test/search-native-four-source-holder-20260916@8fd2718`×本树`5951f31`真 RTW HTTP/PG16 同父轮 PASS（`TestRealHTTPKnowledgeWorkflow` 21.28s，脚本含 knowledge/user race、vet、diff check 顶层 0；test.log SHA=`ad82a55d29adfe0234dbfc3c8ed767f3a609b21dceec8005e1ddfbf0d6932f70`）。`SEA_BTW_SEARCH_HISTORY_ROUND=1` 下 cited 子进程以 `WithHistorySeed{4,8192}` 服务同会话两次真实搜索：第一次模型提示无历史块（此前会话仅余合同完整 insufficient 轮，合法跳过）；第二次经真 RTW `List` 携带首个已接纳轮（question/answer/verified_citations 真实 Quote），子进程在第二次响应后即写 0600/O_EXCL 收据（块 SHA=`788e089b1bcb397eaa3d1ed44af183a6ccd808fa7c07db42110aa2925d2497e9`），RTW 父级以自己 PG 的首答/首问/引用/EvidenceID/Quote 逐字段对账并断言第二答案落库、durable 引用计数+1。为此 RTW relay 夹具改为提交**合同完整**的 insufficient turn——旧手工最小 turn 缺 retrieval，此前无人重读，BTW 整轮重校验按损坏失败关闭属正确行为。
