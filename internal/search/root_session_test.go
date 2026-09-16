@@ -363,9 +363,10 @@ type acceptedHistoryKey struct {
 }
 
 type acceptedHistoryFixture struct {
-	mu     sync.Mutex
-	turns  map[acceptedHistoryKey][]AcceptedRootTurn
-	reject bool
+	mu       sync.Mutex
+	turns    map[acceptedHistoryKey][]AcceptedRootTurn
+	reject   bool
+	failList bool
 }
 
 func (s *acceptedHistoryFixture) Commit(_ context.Context, turn AcceptedRootTurn) error {
@@ -392,6 +393,9 @@ func (s *acceptedHistoryFixture) Commit(_ context.Context, turn AcceptedRootTurn
 func (s *acceptedHistoryFixture) List(_ context.Context, subject btwruntime.SubjectRef, sessionID string) ([]AcceptedRootTurn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failList {
+		return nil, errors.New("accepted history owner unavailable")
+	}
 	return append([]AcceptedRootTurn(nil), s.turns[acceptedHistoryKey{subject, sessionID}]...), nil
 }
 

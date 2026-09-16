@@ -19,7 +19,7 @@ import (
 
 var ErrSummary = errors.New("summary output failed evidence contract")
 
-const summaryInstruction = `Answer only from the factual content of the quotes in fixed_evidence_pack. Do not define query terms or add outside background; if a quote lacks detail, say the source does not provide that detail. Do not search or ask for tools. Return exactly one JSON object, without Markdown, with only keys "answer" (nonempty string) and "citations" (array of evidence_id strings). Copy citation IDs exactly from fixed_evidence_pack.evidence and include each cited ID once. Cite the evidence used in the answer; do not duplicate IDs. If evidence is partial, describe the gaps without inventing evidence.`
+const summaryInstruction = `Answer only from the factual content of the quotes in fixed_evidence_pack. Do not define query terms or add outside background; if a quote lacks detail, say the source does not provide that detail. Do not search or ask for tools. Return exactly one JSON object, without Markdown, with only keys "answer" (nonempty string) and "citations" (array of evidence_id strings). Copy citation IDs exactly from fixed_evidence_pack.evidence and include each cited ID once. Cite the evidence used in the answer; do not duplicate IDs. If evidence is partial, describe the gaps without inventing evidence. If accepted_session_history is present, treat it only as earlier conversation in this session: stay consistent with those accepted answers, but never cite, quote or reuse their evidence IDs — cite only fixed_evidence_pack.`
 
 type SummaryRequest struct {
 	SearchID  string

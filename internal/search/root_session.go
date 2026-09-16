@@ -53,6 +53,7 @@ type RootSessionBoundary struct {
 	root      *RootSummarizer
 	attempts  *inmemory.SessionService
 	history   AcceptedRootHistory
+	budget    RootHistoryBudget
 	mu        sync.Mutex
 	closed    bool
 	next      uint64
@@ -64,7 +65,7 @@ type RootSessionBoundary struct {
 
 func NewRootSessionBoundary(d *Delivery, m model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
 	limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
-	return newRootSessionBoundary(d, m, nil, history, observed, nil, limits...)
+	return newRootSessionBoundary(d, m, nil, history, observed, nil, nil, limits...)
 }
 
 // NewRootSessionBoundaryWithFastMedium keeps the v1 accepted-history boundary
@@ -74,13 +75,39 @@ func NewRootSessionBoundaryWithFastMedium(d *Delivery, m, plannerModel model.Mod
 	if isNil(plannerModel) || medium.MaxOutputTokens < 64 || medium.MaxOutputTokens > 512 || medium.WallTime < time.Second || medium.WallTime > 30*time.Second {
 		return nil, ErrInvalid
 	}
-	return newRootSessionBoundary(d, m, plannerModel, history, observed, &medium, limits...)
+	return newRootSessionBoundary(d, m, plannerModel, history, observed, &medium, nil, limits...)
+}
+
+// NewRootSessionBoundaryWithHistorySeed adds explicit accepted-history
+// injection: each new product attempt sees up to budget.MaxTurns prior
+// accepted turns within budget.MaxBytes. Without this constructor the
+// boundary keeps its original no-injection behavior.
+func NewRootSessionBoundaryWithHistorySeed(d *Delivery, m model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
+	budget RootHistoryBudget, limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
+	return newRootSessionBoundary(d, m, nil, history, observed, nil, &budget, limits...)
+}
+
+// NewRootSessionBoundaryWithFastMediumAndHistorySeed combines the fast/medium
+// planning stage with explicit accepted-history injection.
+func NewRootSessionBoundaryWithFastMediumAndHistorySeed(d *Delivery, m, plannerModel model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
+	medium FastMediumModelLimits, budget RootHistoryBudget, limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
+	if isNil(plannerModel) || medium.MaxOutputTokens < 64 || medium.MaxOutputTokens > 512 || medium.WallTime < time.Second || medium.WallTime > 30*time.Second {
+		return nil, ErrInvalid
+	}
+	return newRootSessionBoundary(d, m, plannerModel, history, observed, &medium, &budget, limits...)
 }
 
 func newRootSessionBoundary(d *Delivery, m, plannerModel model.Model, history AcceptedRootHistory, observed *telemetry.Bundle,
-	medium *FastMediumModelLimits, limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
+	medium *FastMediumModelLimits, budget *RootHistoryBudget, limits ...SummaryModelLimits) (*RootSessionBoundary, error) {
 	if isNil(history) {
 		return nil, ErrInvalid
+	}
+	bounded := RootHistoryBudget{}
+	if budget != nil {
+		if !budget.valid() {
+			return nil, ErrHistoryBudget
+		}
+		bounded = *budget
 	}
 	attempts := inmemory.NewSessionService()
 	var root *RootSummarizer
@@ -94,7 +121,7 @@ func newRootSessionBoundary(d *Delivery, m, plannerModel model.Model, history Ac
 		_ = attempts.Close()
 		return nil, err
 	}
-	return &RootSessionBoundary{root: root, attempts: attempts, history: history,
+	return &RootSessionBoundary{root: root, attempts: attempts, history: history, budget: bounded,
 		active: make(map[uint64]context.CancelFunc)}, nil
 }
 
@@ -174,6 +201,18 @@ func (b *RootSessionBoundary) Summarize(ctx context.Context, q SummaryRequest) (
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return failed, fmt.Errorf("create private search session: %w", err)
 	}
+	if b.budget.valid() {
+		// Accepted history reaches the model only through this explicit budget.
+		// A history owner that is unavailable or returns a corrupted turn fails
+		// the request closed; the model never runs against a partial session.
+		seed, err := b.historySeed(ctx, q.Subject, q.SessionID)
+		if err != nil {
+			return failed, err
+		}
+		if seed.Block != "" {
+			ctx = WithAcceptedHistorySeed(ctx, seed)
+		}
+	}
 	private := q
 	private.SessionID = "search-attempt-" + hex.EncodeToString(nonce[:])
 	result, runErr := b.root.Summarize(ctx, private)
@@ -209,7 +248,7 @@ func (b *RootSessionBoundary) Summarize(ctx context.Context, q SummaryRequest) (
 }
 
 // History reads only accepted product turns. It is not a framework Session
-// history and does not currently seed the isolated LLMAgent's messages.
+// history; a new attempt consumes it only through the explicit history seed.
 func (b *RootSessionBoundary) History(ctx context.Context, subject btwruntime.SubjectRef, sessionID string) ([]AcceptedRootTurn, error) {
 	if b == nil || b.history == nil || ctx == nil || sessionID == "" {
 		return nil, ErrInvalid
@@ -217,6 +256,39 @@ func (b *RootSessionBoundary) History(ctx context.Context, subject btwruntime.Su
 	if _, err := subject.UserKey(); err != nil {
 		return nil, err
 	}
+	return b.validatedHistory(ctx, subject, sessionID)
+}
+
+// historySeed bounds the session's accepted turns into one prompt block. It
+// shares History's whole-turn validation: a corrupted or foreign stored turn
+// fails closed instead of reaching the model.
+func (b *RootSessionBoundary) historySeed(ctx context.Context, subject btwruntime.SubjectRef, sessionID string) (acceptedHistorySeed, error) {
+	turns, err := b.validatedHistory(ctx, subject, sessionID)
+	if err != nil {
+		return acceptedHistorySeed{}, err
+	}
+	facts := make([]acceptedHistoryTurn, 0, len(turns))
+	for _, turn := range turns {
+		fact, injectable, err := acceptedHistoryTurnOf(turn)
+		if err != nil {
+			return acceptedHistorySeed{}, err
+		}
+		if injectable {
+			facts = append(facts, fact)
+		}
+	}
+	block, err := renderAcceptedHistoryBlock(facts, b.budget)
+	if err != nil {
+		return acceptedHistorySeed{}, err
+	}
+	seed := acceptedHistorySeed{Budget: b.budget, Turns: facts, Block: block}
+	if err := historySeedIntegrity(seed); err != nil {
+		return acceptedHistorySeed{}, err
+	}
+	return seed, nil
+}
+
+func (b *RootSessionBoundary) validatedHistory(ctx context.Context, subject btwruntime.SubjectRef, sessionID string) ([]AcceptedRootTurn, error) {
 	turns, err := b.history.List(ctx, subject, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list accepted search turns: %w", err)

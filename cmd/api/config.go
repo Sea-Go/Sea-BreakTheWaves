@@ -43,6 +43,7 @@ type config struct {
 	RepresentationMaxInFlight        int
 	MilvusAddress, MilvusAPIKey      string
 	Native                           *nativeSettings
+	History                          searchdomain.RootHistoryBudget
 }
 
 // nativeSettings must be the exact backend projection settings used by the
@@ -150,6 +151,25 @@ func loadConfig(getenv func(string) string) (config, error) {
 	c.RepresentationMaxInFlight, err = strconv.Atoi(getenv("BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT"))
 	if err != nil || c.RepresentationMaxInFlight < 1 || c.RepresentationMaxInFlight > 32 {
 		return c, errors.New("BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT must be 1..32")
+	}
+	// Accepted-history injection stays off unless both bounds are explicitly
+	// given; a one-sided budget is a configuration error, never a default.
+	turnsRaw, bytesRaw := getenv("BTW_SEARCH_HISTORY_MAX_TURNS"), getenv("BTW_SEARCH_HISTORY_MAX_BYTES")
+	if (turnsRaw == "") != (bytesRaw == "") {
+		return c, errors.New("BTW_SEARCH_HISTORY_MAX_TURNS and BTW_SEARCH_HISTORY_MAX_BYTES must be set together")
+	}
+	if turnsRaw != "" {
+		c.History.MaxTurns, err = strconv.Atoi(turnsRaw)
+		if err != nil {
+			return c, errors.New("BTW_SEARCH_HISTORY_MAX_TURNS must be an integer")
+		}
+		c.History.MaxBytes, err = strconv.Atoi(bytesRaw)
+		if err != nil {
+			return c, errors.New("BTW_SEARCH_HISTORY_MAX_BYTES must be an integer")
+		}
+		if !c.History.Valid() {
+			return c, errors.New("BTW_SEARCH_HISTORY bounds must be turns 1..8 and bytes 256..32768")
+		}
 	}
 	if err = readJSON(getenv("BTW_SEARCH_INDEX_FILE"), &c.Indexes); err != nil {
 		return c, fmt.Errorf("BTW_SEARCH_INDEX_FILE: %w", err)

@@ -296,14 +296,28 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	model := gatewayModel{name: cfg.ModelName, url: cfg.ModelURL, key: cfg.ModelKey}
 	// The final no-tool summary remains capped at 512 output tokens. Medium
 	// additionally bounds its own one-call planning stage and total wall time.
+	// An explicit history budget opts every new attempt into accepted-turn
+	// injection; the zero budget keeps the original no-injection boundary.
 	if cfg.FastMedium == nil {
-		boundary, err = searchdomain.NewRootSessionBoundary(delivery, model, history, bundle,
-			searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+		if cfg.History.Valid() {
+			boundary, err = searchdomain.NewRootSessionBoundaryWithHistorySeed(delivery, model, history, bundle,
+				cfg.History, searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+		} else {
+			boundary, err = searchdomain.NewRootSessionBoundary(delivery, model, history, bundle,
+				searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+		}
 	} else {
 		plannerModel := gatewayModel{name: cfg.ModelName, url: cfg.ModelURL, key: cfg.ModelKey, stage: "plan"}
-		boundary, err = searchdomain.NewRootSessionBoundaryWithFastMedium(delivery, model, plannerModel, history, bundle,
-			searchdomain.FastMediumModelLimits{MaxOutputTokens: cfg.FastMedium.PlannerMaxOutputTokens,
-				WallTime: cfg.FastMedium.WallTime}, searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+		if cfg.History.Valid() {
+			boundary, err = searchdomain.NewRootSessionBoundaryWithFastMediumAndHistorySeed(delivery, model, plannerModel, history, bundle,
+				searchdomain.FastMediumModelLimits{MaxOutputTokens: cfg.FastMedium.PlannerMaxOutputTokens,
+					WallTime: cfg.FastMedium.WallTime}, cfg.History,
+				searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+		} else {
+			boundary, err = searchdomain.NewRootSessionBoundaryWithFastMedium(delivery, model, plannerModel, history, bundle,
+				searchdomain.FastMediumModelLimits{MaxOutputTokens: cfg.FastMedium.PlannerMaxOutputTokens,
+					WallTime: cfg.FastMedium.WallTime}, searchdomain.SummaryModelLimits{MaxOutputTokens: 512})
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("construct root search session: %w", err)
