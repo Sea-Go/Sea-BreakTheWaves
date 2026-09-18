@@ -246,11 +246,16 @@ func (d *Delivery) SearchWithin(ctx context.Context, searchID string, request Re
 }
 
 func validateRetrieval(expected Snapshot, request Request, result Result) error {
-	if !reflect.DeepEqual(expected, result.Snapshot) || !validGraphResult(result, request) {
-		return ErrRetrievalContract
+	if !reflect.DeepEqual(expected, result.Snapshot) {
+		return fmt.Errorf("%w: executor snapshot differs from the signed snapshot", ErrRetrievalContract)
+	}
+	if !validGraphResult(result, request) {
+		return fmt.Errorf("%w: graph result violates the request contract (status=%s verified=%d subqueries=%d)",
+			ErrRetrievalContract, result.Status, len(result.Verified), result.UsedSubqueries)
 	}
 	if !allowedEffectiveIntelligence(request.Intelligence, result.Profile.EffectiveIntelligence) {
-		return ErrRetrievalContract
+		return fmt.Errorf("%w: effective intelligence %q not allowed for %q",
+			ErrRetrievalContract, result.Profile.EffectiveIntelligence, request.Intelligence)
 	}
 	allowed := make(map[string]bool, len(expected.ValidRevisionIDs))
 	for _, id := range expected.ValidRevisionIDs {
@@ -262,7 +267,7 @@ func validateRetrieval(expected Snapshot, request Request, result Result) error 
 		if c.Chunk.Text != "" || c.Key != key(c.Chunk) ||
 			math.IsNaN(c.RRFScore) || math.IsInf(c.RRFScore, 0) ||
 			!validCandidateSources(c.Sources, expected) || duplicate {
-			return ErrRetrievalContract
+			return fmt.Errorf("%w: candidate %s violates the provenance contract", ErrRetrievalContract, c.Key.ChunkID)
 		}
 		byKey[c.Key] = c
 	}
@@ -273,7 +278,7 @@ func validateRetrieval(expected Snapshot, request Request, result Result) error 
 			math.IsNaN(v.RRFScore) || math.IsInf(v.RRFScore, 0) ||
 			!validCandidateSources(v.Sources, expected) || !present || seen[v.Key] ||
 			c.RRFScore != v.RRFScore || !reflect.DeepEqual(c.Chunk, v.Chunk) || !reflect.DeepEqual(c.Sources, v.Sources) {
-			return ErrRetrievalContract
+			return fmt.Errorf("%w: verified %s violates the candidate contract", ErrRetrievalContract, v.Key.ChunkID)
 		}
 		seen[v.Key] = true
 	}

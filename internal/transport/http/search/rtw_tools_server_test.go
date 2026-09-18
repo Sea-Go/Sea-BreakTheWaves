@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -22,6 +23,10 @@ import (
 	searchdomain "github.com/Sea-Go/Sea-BreakTheWaves/internal/search"
 	"github.com/Sea-Go/Sea-BreakTheWaves/internal/telemetry"
 )
+
+// lostReplyAfterCommit simulates a transport reply lost AFTER RTW durably
+// committed the citation; the acceptor call itself succeeded.
+var lostReplyAfterCommit = errors.New("simulated lost reply after durable RTW citation commit")
 
 // TestRTWRealToolsSearchServer is a process-isolated BTW consumer for RTW's
 // real User Center/PG Tool child test. An optional candidate names a genuinely
@@ -47,11 +52,19 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 			ChunkID    string `json:"chunk_id"`
 			QuoteHash  string `json:"quote_hash"`
 		} `json:"candidate"`
+		LostReply bool `json:"lost_reply"`
 	}
 	raw, err := os.ReadFile(fixturePath)
 	if err != nil || json.Unmarshal(raw, &fixture) != nil || fixture.RTWBase == "" ||
 		fixture.WorkerToken == "" || len(fixture.ScopeKey) < 32 || fixture.ReadyPath == "" || fixture.ModuleID == "" {
 		t.Fatal("incomplete RTW Tools server fixture")
+	}
+	// The lost-reply round is the cited durable-commit recovery gate: the
+	// first accept commits in RTW but its reply is dropped; the parent must
+	// retry the same search ID and RTW's idempotent acceptor must return the
+	// identical receipt exactly once.
+	if fixture.LostReply && fixture.Candidate.ChunkID == "" {
+		t.Fatal("lost-reply round requires the cited path")
 	}
 	client, err := ridethewind.New(httpclient.Config{BaseURL: fixture.RTWBase, Token: fixture.WorkerToken})
 	if err != nil {
@@ -140,6 +153,9 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		}
 		return citationAdapter.Read(ctx, fixed, candidate)
 	})
+	var lostAccepts atomic.Int32
+	var lostMu sync.Mutex
+	var lostFirst, lostSecond searchdomain.CitationReceipt
 	accept := searchdomain.AcceptFunc(func(ctx context.Context, pack searchdomain.EvidencePack) (searchdomain.CitationReceipt, error) {
 		citationWrites.Add(1)
 		if !cited {
@@ -148,6 +164,29 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		receipt, err := citationAdapter.Accept(ctx, pack)
 		if err != nil {
 			return receipt, err
+		}
+		if fixture.LostReply {
+			// The durable commit has happened inside RTW; the transport reply
+			// to this child is what gets lost. The retry must land on RTW's
+			// idempotent acceptor and receive the identical receipt.
+			if lostAccepts.Add(1) == 1 {
+				lostMu.Lock()
+				lostFirst = receipt
+				lostMu.Unlock()
+				return searchdomain.CitationReceipt{}, lostReplyAfterCommit
+			}
+			lostMu.Lock()
+			lostSecond = receipt
+			lostMu.Unlock()
+			if lostSecond != lostFirst {
+				t.Errorf("idempotent acceptor returned a different receipt: first=%+v second=%+v", lostFirst, lostSecond)
+			}
+			durable, getErr := client.GetSearchCitations(ctx, pack.SearchID)
+			if getErr != nil || durable.PackHash != receipt.PackHash || durable.DurableRef != receipt.DurableRef ||
+				len(durable.Evidence) != 1 {
+				t.Errorf("durable RTW citation differs after retry: %+v err=%v", durable, getErr)
+			}
+			return receipt, nil
 		}
 		if os.Getenv("SEA_BTW_TOOLS_MATRIX_WITNESS_DIR") != "" {
 			durable, err := client.GetSearchCitations(ctx, pack.SearchID)
@@ -194,10 +233,17 @@ func TestRTWRealToolsSearchServer(t *testing.T) {
 		if err := bundle.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
-		if searches.Load() != 1 || (!cited && (sourceReads.Load() != 0 || citationWrites.Load() != 0)) ||
-			(cited && (sourceReads.Load() != 1 || citationWrites.Load() != 1)) {
-			t.Errorf("real Tools run crossed dependency contract: cited=%t searches=%d source=%d citations=%d",
-				cited, searches.Load(), sourceReads.Load(), citationWrites.Load())
+		wantEach := int32(1)
+		if fixture.LostReply {
+			wantEach = 2
+		}
+		if searches.Load() != wantEach || (!cited && (sourceReads.Load() != 0 || citationWrites.Load() != 0)) ||
+			(cited && (sourceReads.Load() != wantEach || citationWrites.Load() != wantEach)) {
+			t.Errorf("real Tools run crossed dependency contract: cited=%t lost=%t searches=%d source=%d citations=%d",
+				cited, fixture.LostReply, searches.Load(), sourceReads.Load(), citationWrites.Load())
+		}
+		if fixture.LostReply && lostAccepts.Load() != 2 {
+			t.Errorf("lost-reply round did not retry the acceptor: accepts=%d", lostAccepts.Load())
 		}
 		var nativeRoot bool
 		for _, span := range exporter.snapshot() {

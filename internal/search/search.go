@@ -708,7 +708,10 @@ func mergeCandidate(dst *[]Candidate, c Candidate) error {
 			if (*dst)[i].Chunk != c.Chunk {
 				return ErrLane
 			}
-			(*dst)[i].Sources = append((*dst)[i].Sources, c.Sources...)
+			// Distinct subqueries can hit the same chunk in the same lane.
+			// The provenance contract allows one hit per lane; keep the best
+			// rank, which is also what RRF already aggregates on.
+			(*dst)[i].Sources = mergeLaneHits((*dst)[i].Sources, c.Sources)
 			(*dst)[i].Subqueries = append((*dst)[i].Subqueries, c.Subqueries...)
 			(*dst)[i].RRFScore = rrf((*dst)[i].Sources)
 			return nil
@@ -716,6 +719,26 @@ func mergeCandidate(dst *[]Candidate, c Candidate) error {
 	}
 	*dst = append(*dst, c)
 	return nil
+}
+
+func mergeLaneHits(owned, incoming []LaneHit) []LaneHit {
+	merged := append([]LaneHit(nil), owned...)
+	for _, hit := range incoming {
+		replaced := false
+		for i := range merged {
+			if merged[i].Lane == hit.Lane {
+				if hit.Rank < merged[i].Rank {
+					merged[i] = hit
+				}
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			merged = append(merged, hit)
+		}
+	}
+	return merged
 }
 func rrf(sources []LaneHit) float64 {
 	best := map[Lane]int{}

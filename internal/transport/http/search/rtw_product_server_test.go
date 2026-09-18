@@ -2,14 +2,19 @@ package search
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/signal"
 	"reflect"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -50,6 +55,10 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 			ChunkID    string `json:"chunk_id"`
 			QuoteHash  string `json:"quote_hash"`
 		} `json:"candidate"`
+		History struct {
+			Budget     searchdomain.RootHistoryBudget `json:"budget"`
+			ResultPath string                         `json:"result_path"`
+		} `json:"history"`
 	}
 	raw, err := os.ReadFile(fixturePath)
 	if err != nil {
@@ -58,6 +67,12 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixture); err != nil || fixture.RTWBase == "" ||
 		fixture.WorkerToken == "" || len(fixture.ScopeKey) < 32 || fixture.ReadyPath == "" {
 		t.Fatal("incomplete RTW product server fixture")
+	}
+	// The history round is a cited two-search same-session mode: the second
+	// model prompt must carry RTW's first accepted turn under this budget.
+	historyRound := fixture.History.ResultPath != ""
+	if historyRound && (fixture.Candidate.ChunkID == "" || !fixture.History.Budget.Valid()) {
+		t.Fatal("history round requires the cited path and one explicit budget pair")
 	}
 	if fixture.BuildOnly {
 		if fixture.RealIndex.DCRuntime == "" || fixture.RealIndex.ResultPath == "" {
@@ -255,7 +270,13 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary, err := searchdomain.NewRootSessionBoundary(delivery, productModel, history, bundle)
+	var boundary *searchdomain.RootSessionBoundary
+	if historyRound {
+		boundary, err = searchdomain.NewRootSessionBoundaryWithHistorySeed(delivery, productModel, history, bundle,
+			fixture.History.Budget)
+	} else {
+		boundary, err = searchdomain.NewRootSessionBoundary(delivery, productModel, history, bundle)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +284,30 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(handler)
+	var historyModel *citedProductModel
+	if historyRound {
+		citedModel, ok := productModel.(*citedProductModel)
+		if !ok {
+			t.Fatal("history round requires the cited fixed model")
+		}
+		historyModel = citedModel
+	}
+	var summarized atomic.Int32
+	counting := http.Handler(handler)
+	if historyRound {
+		counting = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+			if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/v1/search/summary") {
+				return
+			}
+			// Write the receipt as soon as the second same-session search has
+			// finished, so the RTW parent can reconcile it mid-test.
+			if summarized.Add(1) == 2 {
+				writeHistoryRoundReceipt(t, fixture.History.ResultPath, historyModel, fixture.History.Budget)
+			}
+		})
+	}
+	server := httptest.NewServer(counting)
 	if err := os.WriteFile(fixture.ReadyPath, []byte(server.URL), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -275,11 +319,14 @@ func TestRTWRealProductSearchServer(t *testing.T) {
 		if err := bundle.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
-		if searches.Load() != 1 || (cited && (sourceReads.Load() != 1 || citationWrites.Load() != 1 || modelCalls.Load() != 1)) ||
+		want := int32(1)
+		if historyRound {
+			want = 2
+		}
+		if searches.Load() != want || (cited && (sourceReads.Load() != want || citationWrites.Load() != want || modelCalls.Load() != want)) ||
 			(!cited && (sourceReads.Load() != 0 || citationWrites.Load() != 0 || modelCalls.Load() != 0)) {
-			t.Errorf("real signed product run crossed dependency contract: cited=%v searches=%d source=%d citation=%d model=%d",
-				cited,
-				searches.Load(), sourceReads.Load(), citationWrites.Load(), modelCalls.Load())
+			t.Errorf("real signed product run crossed dependency contract: cited=%v history=%v searches=%d source=%d citation=%d model=%d",
+				cited, historyRound, searches.Load(), sourceReads.Load(), citationWrites.Load(), modelCalls.Load())
 		}
 		var nativeRoot bool
 		for _, span := range exporter.snapshot() {
@@ -340,14 +387,84 @@ type citedProductModel struct {
 	calls         *atomic.Int32
 	expectedQuote string
 	expectedHash  string
+	historyMu     sync.Mutex
+	historyBlocks []string
 }
 
 func (*citedProductModel) Info() model.Info { return model.Info{Name: "fixed-cited-product-model"} }
+
+// writeHistoryRoundReceipt is the child half of the same-father injection
+// gate: after two cited same-session searches it pins exactly what the second
+// model prompt carried from RTW's accepted history. One private O_EXCL file;
+// the RTW parent reconciles it against its own committed rows.
+func writeHistoryRoundReceipt(t *testing.T, path string, m *citedProductModel, budget searchdomain.RootHistoryBudget) {
+	t.Helper()
+	m.historyMu.Lock()
+	blocks := append([]string(nil), m.historyBlocks...)
+	m.historyMu.Unlock()
+	if len(blocks) != 2 {
+		t.Fatalf("history round expected two model calls, saw %d", len(blocks))
+	}
+	if blocks[0] != "" {
+		t.Fatalf("first same-session model call already carried history: %s", blocks[0])
+	}
+	var injected struct {
+		Turns []struct {
+			SearchID  string `json:"search_id"`
+			AnswerID  string `json:"answer_id"`
+			Question  string `json:"question"`
+			Answer    string `json:"answer"`
+			Citations []struct {
+				EvidenceID string `json:"evidence_id"`
+				Quote      string `json:"quote"`
+			} `json:"verified_citations"`
+		} `json:"accepted_session_history"`
+		Budget searchdomain.RootHistoryBudget `json:"accepted_history_budget"`
+	}
+	if err := json.Unmarshal([]byte(blocks[1]), &injected); err != nil || len(injected.Turns) != 1 ||
+		injected.Budget != budget || injected.Turns[0].Answer == "" ||
+		len(injected.Turns[0].Citations) != 1 || injected.Turns[0].Citations[0].Quote == "" {
+		t.Fatalf("second model call did not carry exactly the first accepted turn: %s", blocks[1])
+	}
+	receipt := struct {
+		SchemaVersion string                         `json:"schema_version"`
+		Budget        searchdomain.RootHistoryBudget `json:"budget"`
+		BlockSHA256   string                         `json:"block_sha256"`
+		SearchID      string                         `json:"first_search_id"`
+		AnswerID      string                         `json:"first_answer_id"`
+		Question      string                         `json:"first_question"`
+		Answer        string                         `json:"first_answer"`
+		EvidenceID    string                         `json:"first_evidence_id"`
+		Quote         string                         `json:"first_quote"`
+	}{"sea.btw.search.history-injection-real.v1", budget, "",
+		injected.Turns[0].SearchID, injected.Turns[0].AnswerID,
+		injected.Turns[0].Question, injected.Turns[0].Answer,
+		injected.Turns[0].Citations[0].EvidenceID, injected.Turns[0].Citations[0].Quote}
+	// Hash the raw block bytes, not a re-encoding.
+	digest := sha256.Sum256([]byte(blocks[1]))
+	receipt.BlockSHA256 = hex.EncodeToString(digest[:])
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(append(raw, '\n')); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func (m *citedProductModel) GenerateContent(ctx context.Context, request *model.Request) (<-chan *model.Response, error) {
 	m.calls.Add(1)
 	var prompt struct {
 		Pack searchdomain.EvidencePack `json:"fixed_evidence_pack"`
+		Hist json.RawMessage           `json:"accepted_session_history"`
 	}
 	for i := len(request.Messages) - 1; i >= 0; i-- {
 		if request.Messages[i].Role == model.RoleUser {
@@ -357,6 +474,9 @@ func (m *citedProductModel) GenerateContent(ctx context.Context, request *model.
 			break
 		}
 	}
+	m.historyMu.Lock()
+	m.historyBlocks = append(m.historyBlocks, string(prompt.Hist))
+	m.historyMu.Unlock()
 	if len(prompt.Pack.Evidence) != 1 || prompt.Pack.Evidence[0].Quote != m.expectedQuote ||
 		prompt.Pack.Evidence[0].QuoteHash != m.expectedHash || len(request.Tools) != 0 {
 		return nil, errors.New("model received unverified or unfixed evidence")

@@ -187,7 +187,10 @@ func newToolRunBoundary(delivery *Delivery, plannerModel model.Model, observed *
 		}).SetFinishPoint(toolRunNode)
 	var subAgents []agent.Agent
 	if medium != nil {
-		plannerConfig := model.GenerationConfig{Stream: false, MaxTokens: model.IntPtr(medium.MaxOutputTokens)}
+		// Deterministic planning: the checked-queries contract must not vary
+		// between retries of the same signed search.
+		plannerConfig := model.GenerationConfig{Stream: false, MaxTokens: model.IntPtr(medium.MaxOutputTokens),
+			Temperature: model.Float64Ptr(0)}
 		planner := llmagent.New(toolFastMediumAgent, llmagent.WithModel(plannerModel),
 			llmagent.WithInstruction(fastMediumInstruction), llmagent.WithTools([]tool.Tool{}),
 			llmagent.WithEnableCodeExecutionResponseProcessor(false), llmagent.WithGenerationConfig(plannerConfig),

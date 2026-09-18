@@ -421,3 +421,50 @@ func TestCandidateTextClearedOnErrorReturn(t *testing.T) {
 		}
 	}
 }
+
+// Distinct medium subqueries hit the same chunk in the same lane. The merged
+// candidate must keep one hit per lane (best rank), or the delivery-level
+// provenance contract rejects the whole search.
+func TestMediumSubqueriesMergeSameLaneHitsOnce(t *testing.T) {
+	c := new(calls)
+	twoQueries := PlanFunc(func(_ context.Context, in PlanInput) ([]string, error) {
+		if in.Round != 1 {
+			return nil, nil
+		}
+		return []string{"first focus", "second focus"}, nil
+	})
+	s := service(c, twoQueries, CheckFunc(allow), policy())
+	request := Request{Query: "focus", Depth: Fast, Intelligence: Medium, Snapshot: snapshot()}
+	r, err := s.Execute(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.UsedSubqueries != 2 || len(r.Batches) != 1 || len(r.Batches[0].Queries) != 2 {
+		t.Fatalf("medium batch did not run both planned subqueries: %+v", r.Batches)
+	}
+	if len(c.dense) != 2 || len(c.sparse) != 2 || len(c.multi) != 2 {
+		t.Fatalf("subqueries did not reach every lane: %+v", c)
+	}
+	for _, candidate := range r.Candidates {
+		seen := map[Lane]bool{}
+		for _, hit := range candidate.Sources {
+			if seen[hit.Lane] {
+				t.Fatalf("candidate %s kept duplicate %s lane hits: %+v", candidate.Key.ChunkID, hit.Lane, candidate.Sources)
+			}
+			seen[hit.Lane] = true
+		}
+		if len(candidate.Subqueries) < 1 {
+			t.Fatalf("candidate %s lost its subquery provenance", candidate.Key.ChunkID)
+		}
+	}
+	if err := validateRetrieval(snapshot(), request, r); err != nil {
+		t.Fatalf("merged candidates violated the delivery provenance contract: %v", err)
+	}
+	// chunk a is dense-rank1 in both subqueries and multi-rank1: best-rank RRF
+	// must equal the single-subquery score 1/61 + 1/61, not a doubled lane sum.
+	wantA := 2.0 / 61.0
+	if math.Abs(r.Candidates[0].RRFScore-wantA) > 1e-12 || r.Candidates[0].Key.ChunkID != "a" {
+		t.Fatalf("same-lane merge changed RRF: got=%v want=%v candidate=%+v",
+			r.Candidates[0].RRFScore, wantA, r.Candidates[0])
+	}
+}

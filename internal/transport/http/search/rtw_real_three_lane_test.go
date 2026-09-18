@@ -23,6 +23,7 @@ import (
 // contains only disposable local credentials. It must remain outside Git.
 type realIndexFixture struct {
 	DCRuntime       string     `json:"dc_runtime"`
+	NativeRuntime   string     `json:"native_runtime,omitempty"`
 	ArtifactDir     string     `json:"artifact_dir"`
 	ChunkManifest   corpus.Ref `json:"chunk_manifest"`
 	BuildID         string     `json:"build_id"`
@@ -38,6 +39,7 @@ type realIndexResult struct {
 	Indexes          map[string]corpus.Ref `json:"indexes"`
 	ChunkCount       int                   `json:"chunk_count"`
 	APIIndexSettings json.RawMessage       `json:"api_index_settings"`
+	NativeProjection *realNativeProjection `json:"native_projection,omitempty"`
 }
 
 type realIndexLanes struct {
@@ -132,6 +134,11 @@ func buildRTWRealThreeLane(ctx context.Context, fixture realIndexFixture) (realI
 	mConfig := multivector.Config{Document: multivector.Encoding{Callpoint: mCall, ConfigurationID: mID, PhysicalModel: mModel},
 		Query:    multivector.Encoding{Callpoint: mCall, ConfigurationID: mID, PhysicalModel: mModel},
 		Contract: mContract, Space: mSpace, BatchSize: 2, TokenTopK: 8, ProbeTopK: 2}
+	if fixture.NativeRuntime != "" {
+		// Four-source physical acceptance must first prove independent token-row
+		// discovery; a tiny per-token ANN budget can introduce an unrelated miss.
+		mConfig.TokenTopK = 256
+	}
 	dLane, err := dense.New(objects, representations, dConfig)
 	if err != nil {
 		return realIndexLanes{}, err
@@ -143,6 +150,15 @@ func buildRTWRealThreeLane(ctx context.Context, fixture realIndexFixture) (realI
 	mLane, err := multivector.New(objects, representations, mConfig)
 	if err != nil {
 		return realIndexLanes{}, err
+	}
+	var native *realNativeProjector
+	if fixture.NativeRuntime != "" {
+		native, err = newRealNativeProjector(ctx, fixture.NativeRuntime, fixture.BuildID,
+			objects, representations, dConfig, sConfig, mConfig)
+		if err != nil {
+			return realIndexLanes{}, err
+		}
+		defer native.Close()
 	}
 	profiles := map[string]corpus.Profile{
 		"dense":  {Lane: "dense", Encoder: dModel, Tokenizer: dContract.TokenizerID, Space: dSpace, Dimensions: dContract.Dimensions},
@@ -189,6 +205,15 @@ func buildRTWRealThreeLane(ctx context.Context, fixture realIndexFixture) (realI
 		if err != nil {
 			return realIndexLanes{}, fmt.Errorf("%s probe: %w", lane, err)
 		}
+		if native != nil {
+			physical, physicalRef, physicalProbes, projectErr := native.Project(deadline,
+				lane, ref, fixture.BuildID, fixture.Generation, fixture.ChunkManifest,
+				profiles[lane], chunks)
+			if projectErr != nil {
+				return realIndexLanes{}, fmt.Errorf("%s native physical projection: %w", lane, projectErr)
+			}
+			built, ref, probes = physical, physicalRef, physicalProbes
+		}
 		if len(probes) != len(chunks.Chunks) || len(built.Shards) == 0 {
 			return realIndexLanes{}, fmt.Errorf("%s incomplete probe or shards", lane)
 		}
@@ -220,12 +245,24 @@ func buildRTWRealThreeLane(ctx context.Context, fixture realIndexFixture) (realI
 	}
 	result := realIndexResult{IndexManifest: indexRef, Indexes: refs,
 		ChunkCount: len(chunks.Chunks), APIIndexSettings: apiIndexSettings}
+	if native != nil {
+		result.NativeProjection = native.Receipt()
+		if result.NativeProjection == nil ||
+			!artifacts.ValidHash(result.NativeProjection.SettingsJCSSHA256) {
+			return realIndexLanes{}, errors.New("native physical settings JCS receipt unavailable")
+		}
+	}
 	raw, err = json.Marshal(result)
 	if err != nil {
 		return realIndexLanes{}, err
 	}
 	if err = os.WriteFile(fixture.ResultPath, raw, 0600); err != nil {
 		return realIndexLanes{}, err
+	}
+	if native != nil {
+		if err := native.Close(); err != nil {
+			return realIndexLanes{}, fmt.Errorf("close isolated native projection SDK: %w", err)
+		}
 	}
 	return realIndexLanes{dense: dLane, sparse: sLane, multi: mLane, result: result}, nil
 }

@@ -19,7 +19,7 @@ import (
 
 var ErrSummary = errors.New("summary output failed evidence contract")
 
-const summaryInstruction = `Answer only from the factual content of the quotes in fixed_evidence_pack. Do not define query terms or add outside background; if a quote lacks detail, say the source does not provide that detail. Do not search or ask for tools. Return exactly one JSON object, without Markdown, with only keys "answer" (nonempty string) and "citations" (array of evidence_id strings). Copy citation IDs exactly from fixed_evidence_pack.evidence and include each cited ID once. Cite the evidence used in the answer; do not duplicate IDs. If evidence is partial, describe the gaps without inventing evidence.`
+const summaryInstruction = `Answer only from the factual content of the quotes in fixed_evidence_pack. Do not define query terms or add outside background; if a quote lacks detail, say the source does not provide that detail. Do not search or ask for tools. Return exactly one JSON object, without Markdown, with only keys "answer" (nonempty string) and "citations" (array of evidence_id strings). Copy citation IDs exactly from fixed_evidence_pack.evidence and include each cited ID once. Cite the evidence used in the answer; do not duplicate IDs. If evidence is partial, describe the gaps without inventing evidence. If accepted_session_history is present, treat it only as earlier conversation in this session: stay consistent with those accepted answers, but never cite, quote or reuse their evidence IDs — cite only fixed_evidence_pack.`
 
 type SummaryRequest struct {
 	SearchID  string
@@ -57,7 +57,7 @@ func NewSummarizer(d *Delivery, m model.Model, sessions session.Service, observe
 	}
 	ag := llmagent.New("search_summary", llmagent.WithModel(m), llmagent.WithInstruction(summaryInstruction),
 		llmagent.WithTools([]tool.Tool{}), llmagent.WithEnableCodeExecutionResponseProcessor(false),
-		llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false}))
+		llmagent.WithGenerationConfig(model.GenerationConfig{Stream: false, Temperature: model.Float64Ptr(0)}))
 	r, err := btwruntime.New("search_summary", ag, sessions, observed)
 	if err != nil {
 		return nil, err

@@ -24,6 +24,7 @@ var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var mediumPolicyVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 type config struct {
+	Mode                             string
 	APIAddr, MetricsAddr             string
 	ScopeKey, ToolsScopeKey          string
 	RTWURL, RTWToken                 string
@@ -40,6 +41,27 @@ type config struct {
 	FastMediumTools                  bool
 	MaxQuoteRunes                    int
 	RepresentationMaxInFlight        int
+	MilvusAddress, MilvusAPIKey      string
+	Native                           *nativeSettings
+	History                          searchdomain.RootHistoryBudget
+}
+
+// nativeSettings must be the exact backend projection settings used by the
+// content build. The published LaneIndex ref alone cannot identify a Milvus
+// collection: each lane's collection digest also includes these parameters.
+type nativeSettings struct {
+	SchemaVersion string       `json:"schema_version"`
+	Engine        string       `json:"engine"`
+	Namespace     string       `json:"namespace"`
+	SparseBackend string       `json:"sparse_backend"`
+	Dense         hnswSettings `json:"dense"`
+	MultiVector   hnswSettings `json:"multivector"`
+}
+
+type hnswSettings struct {
+	M              int `json:"m"`
+	EFConstruction int `json:"ef_construction"`
+	EFSearch       int `json:"ef_search"`
 }
 
 type indexSettings struct {
@@ -76,8 +98,9 @@ type fastMediumConfig struct {
 
 func loadConfig(getenv func(string) string) (config, error) {
 	var c config
-	if getenv("BTW_SEARCH_MODE") != "local-exact" {
-		return c, errors.New("BTW_SEARCH_MODE must explicitly be local-exact")
+	c.Mode = getenv("BTW_SEARCH_MODE")
+	if c.Mode != "local-exact" && c.Mode != "native-milvus" && c.Mode != "native-hybrid" {
+		return c, errors.New("BTW_SEARCH_MODE must explicitly be local-exact, native-milvus or native-hybrid")
 	}
 	required := []string{"BTW_SEARCH_API_ADDR", "BTW_SEARCH_METRICS_ADDR", "BTW_SEARCH_SCOPE_KEY", "BTW_SEARCH_TOOLS_SCOPE_KEY",
 		"BTW_RTW_URL", "BTW_RTW_TOKEN", "BTW_DC_URL", "BTW_DC_TOKEN", "BTW_SEARCH_MODEL_URL",
@@ -129,8 +152,48 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if err != nil || c.RepresentationMaxInFlight < 1 || c.RepresentationMaxInFlight > 32 {
 		return c, errors.New("BTW_SEARCH_REPRESENTATION_MAX_IN_FLIGHT must be 1..32")
 	}
+	// Accepted-history injection stays off unless both bounds are explicitly
+	// given; a one-sided budget is a configuration error, never a default.
+	turnsRaw, bytesRaw := getenv("BTW_SEARCH_HISTORY_MAX_TURNS"), getenv("BTW_SEARCH_HISTORY_MAX_BYTES")
+	if (turnsRaw == "") != (bytesRaw == "") {
+		return c, errors.New("BTW_SEARCH_HISTORY_MAX_TURNS and BTW_SEARCH_HISTORY_MAX_BYTES must be set together")
+	}
+	if turnsRaw != "" {
+		c.History.MaxTurns, err = strconv.Atoi(turnsRaw)
+		if err != nil {
+			return c, errors.New("BTW_SEARCH_HISTORY_MAX_TURNS must be an integer")
+		}
+		c.History.MaxBytes, err = strconv.Atoi(bytesRaw)
+		if err != nil {
+			return c, errors.New("BTW_SEARCH_HISTORY_MAX_BYTES must be an integer")
+		}
+		if !c.History.Valid() {
+			return c, errors.New("BTW_SEARCH_HISTORY bounds must be turns 1..8 and bytes 256..32768")
+		}
+	}
 	if err = readJSON(getenv("BTW_SEARCH_INDEX_FILE"), &c.Indexes); err != nil {
 		return c, fmt.Errorf("BTW_SEARCH_INDEX_FILE: %w", err)
+	}
+	if c.Mode == "native-milvus" || c.Mode == "native-hybrid" {
+		c.MilvusAddress, c.MilvusAPIKey = getenv("BTW_SEARCH_MILVUS_ADDRESS"), getenv("BTW_SEARCH_MILVUS_API_KEY")
+		if !milvusAddress(c.MilvusAddress) {
+			return c, errors.New("BTW_SEARCH_MILVUS_ADDRESS requires an explicit host:port")
+		}
+		var native nativeSettings
+		if err := readNativeSettings(getenv("BTW_SEARCH_NATIVE_FILE"), &native); err != nil {
+			return c, fmt.Errorf("BTW_SEARCH_NATIVE_FILE: %w", err)
+		}
+		if err := native.validate(); err != nil {
+			return c, fmt.Errorf("BTW_SEARCH_NATIVE_FILE: %w", err)
+		}
+		if c.Mode == "native-milvus" && native.Engine != "milvus" ||
+			c.Mode == "native-hybrid" && native.Engine != "lite" {
+			return c, errors.New("native mode and physical engine must be the same explicit backend")
+		}
+		c.Native = &native
+	} else if getenv("BTW_SEARCH_MILVUS_ADDRESS") != "" ||
+		getenv("BTW_SEARCH_MILVUS_API_KEY") != "" || getenv("BTW_SEARCH_NATIVE_FILE") != "" {
+		return c, errors.New("native Milvus settings cannot be supplied to local-exact mode")
 	}
 	var p policySettings
 	if err = readPolicyJSON(getenv("BTW_SEARCH_POLICY_FILE"), &p); err != nil {
