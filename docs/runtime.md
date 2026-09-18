@@ -10,7 +10,7 @@
 - [D1:DEPENDENCY] 固定版本 tRPC-Agent-Go 核心与 PostgreSQL session 子模块源码。
 - [G1:GENERATED] SDK 类型快照由提供者固定提交生成；不手改。
 - [X1:EXTERNAL] 任务专用、回环地址隔离 PostgreSQL/HTTP 可写；验收后结束进程。生产不在范围。
-- [N1:OUT_OF_SCOPE] 存量 recommendation、agent_v2/v3 和其他原工作树。
+- [N1:OUT_OF_SCOPE] 存量 recommendation、agent_v3 和其他原工作树。
 - [T1:TEMP] 系统任务临时目录，存放验收服务、数据库与日志。
 
 主职责 [C6:INFRA]；跨区 [C5:AGENT_ADAPTER] tRPC Runner/Session/Model，[C7:CONTRACT] 提供者 HTTP 与固定生成类型，[C8:VERIFY] 运行、取消、恢复证据。客户端不维护第二套产品发布或领域接纳状态。
@@ -19,7 +19,7 @@
 
 根模块为 `github.com/Sea-Go/Sea-BreakTheWaves`，Go `1.25.5`；复用存量 tRPC-Agent-Go `v1.8.1`。PostgreSQL session 独立模块没有 `v1.8.1` 标签，锁定同系列 `v1.8.0`，实际依赖的 storage/postgres 为 `v0.8.0`。核心 `Runner`、`Event.Clone`、`Plugin.OnEvent`、`model.Model` 和 PostgreSQL `NewService`/Options 均按锁定源码与 `go doc` 核对；未升级 latest，未复制框架 internal。
 
-根模块是最终工程的装配入口；存量 recommendation、agent_v2/v3 子模块暂保留自身边界。普通领域包使用同一根模块，不额外创建子 module。
+根模块是最终工程的装配入口；存量 recommendation、agent_v3 子模块暂保留自身边界。普通领域包使用同一根模块，不额外创建子 module。
 
 `runtime.New(app, agent, sessions, observed)` 借用 session.Service，强制接收已安装的进程观测 Bundle；`OpenPostgres(app, agent, cfg, observed)` 创建并拥有框架 PostgreSQL 服务，明确 DSN/schema/table prefix，采用同步事件持久化。`Initialize` 仅显式初始化框架表，schema 须提前建立；正常启动使用已初始化的 schema。DDL 的权威来源是固定版本官方 session/postgres 模块，不在 BTW 再维护一份 session SQL。
 

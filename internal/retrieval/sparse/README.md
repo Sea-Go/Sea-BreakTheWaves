@@ -8,7 +8,7 @@
 
 tRPC v1.8.1 `VectorStore.SearchQuery` 只有 `Vector []float64`，无法表达独立 token ID/权重及词表。本域复用 DC typed `Encoder` 与官方 Milvus `SparseEmbedding` 公开接口，不把稀疏展开成 Dense，不调用 BM25，不复制框架内部源码。
 
-Milvus Go SDK 固定 `v2.6.2`，必要传递依赖经 Go MVS 提升；tRPC 核心仍为 `v1.8.1`、pgx `v5.8.0`、OpenAI Go `v1.12.0`。根模块全包 race/vet 已回归；旧 recommendation/agent_v2/v3 是独立模块，不由根 `go test ./...` 覆盖。
+Milvus Go SDK 固定 `v2.6.2`，必要传递依赖经 Go MVS 提升；tRPC 核心仍为 `v1.8.1`、pgx `v5.8.0`、OpenAI Go `v1.12.0`。根模块全包 race/vet 已回归；旧 recommendation/agent_v3 是独立模块，不由根 `go test ./...` 覆盖。
 
 ## 数据与数学
 

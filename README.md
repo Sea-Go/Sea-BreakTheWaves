@@ -21,7 +21,7 @@
 | `warehouse` | ClickHouse/dbt分层计算和不可变数据产物 | [数仓](warehouse/README.md) |
 | `training`、`contracts/jsonschema` | 冻结数据读取与数据集契约 | [训练数据消费](training/README.md) |
 
-这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；下面的RecoAgent/旧HTTP入口说明属于仍保留的 `recommendation` 实现。`recommendation`、`agent_v2`、`agent_v3` 各自拥有Go模块，根目录测试不会覆盖它们。
+这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；下面的RecoAgent/旧HTTP入口说明属于仍保留的 `recommendation` 实现。`recommendation`、`agent_v3` 各自拥有Go模块，根目录测试不会覆盖它们。
 
 ```sh
 bash scripts/test-go-modules.sh root
