@@ -1,0 +1,32 @@
+{
+  "name": "case_11_profile_history_w1_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000011",
+    "user_id": "user_test_011",
+    "session_id": "sess_regr_011",
+    "surface": "profile",
+    "query": "历史人文 明朝那些事儿读书笔记",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000011",
+      "rec_request_id": "rec_0000000000000011",
+      "status": "ok",
+      "ids": [
+        "art_11001", "art_11002", "art_11003", "art_11004", "art_11005",
+        "art_11006", "art_11007", "art_11008", "art_11009", "art_11010",
+        "art_11011", "art_11012", "art_11013", "art_11014"
+      ],
+      "article_ids": [
+        "art_11001", "art_11002", "art_11003", "art_11004", "art_11005",
+        "art_11006", "art_11007", "art_11008", "art_11009", "art_11010",
+        "art_11011", "art_11012", "art_11013", "art_11014"
+      ],
+      "explanation": "周期桶 w1：召回 14 篇明朝历史与读书笔记类长文。"
+    }
+  }
+}

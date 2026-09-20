@@ -1,0 +1,34 @@
+{
+  "name": "case_17_dashboard_reading_w1_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000017",
+    "user_id": "user_test_017",
+    "session_id": "sess_regr_017",
+    "surface": "dashboard_recommend",
+    "query": "读书笔记 今年读过最好的五本书",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000017",
+      "rec_request_id": "rec_0000000000000017",
+      "status": "ok",
+      "ids": [
+        "art_17001", "art_17002", "art_17003", "art_17004", "art_17005",
+        "art_17006", "art_17007", "art_17008", "art_17009", "art_17010",
+        "art_17011", "art_17012", "art_17013", "art_17014", "art_17015",
+        "art_17016"
+      ],
+      "article_ids": [
+        "art_17001", "art_17002", "art_17003", "art_17004", "art_17005",
+        "art_17006", "art_17007", "art_17008", "art_17009", "art_17010",
+        "art_17011", "art_17012", "art_17013", "art_17014", "art_17015",
+        "art_17016"
+      ],
+      "explanation": "周期桶 w1：召回 16 篇读书笔记与长周期阅读推荐。"
+    }
+  }
+}

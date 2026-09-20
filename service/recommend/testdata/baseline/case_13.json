@@ -1,0 +1,46 @@
+{
+  "name": "case_13_dashboard_outdoor_weekend_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000013",
+    "user_id": "user_test_013",
+    "session_id": "sess_regr_013",
+    "surface": "dashboard_recommend",
+    "query": "户外运动 周末徒步登山路线",
+    "explain": true,
+    "period_bucket": "weekend"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000013",
+      "rec_request_id": "rec_0000000000000013",
+      "status": "ok",
+      "ids": [
+        "art_13001", "art_13002", "art_13003", "art_13004", "art_13005",
+        "art_13006", "art_13007", "art_13008", "art_13009", "art_13010",
+        "art_13011", "art_13012", "art_13013", "art_13014", "art_13015",
+        "art_13016", "art_13017", "art_13018"
+      ],
+      "article_ids": [
+        "art_13001", "art_13002", "art_13003", "art_13004", "art_13005",
+        "art_13006", "art_13007", "art_13008", "art_13009", "art_13010",
+        "art_13011", "art_13012", "art_13013", "art_13014", "art_13015",
+        "art_13016", "art_13017", "art_13018"
+      ],
+      "explanation": "周期桶 weekend：召回 18 篇周末徒步登山路线推荐。",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000013", "rec_request_id": "rec_0000000000000013", "surface": "dashboard_recommend", "period_bucket": "weekend"}},
+        {"name": "intent.parse", "data": {"label": "browse_category", "confidence": 0.81, "signals": ["category:outdoor", "scene:weekend", "activity:hiking"], "latency_ms": 115, "model": "gpt-4o-mini", "temperature": 0.0}},
+        {"name": "policy.route", "data": {"chosen": "RAG_ONLY", "reason_codes": ["DEFAULT"], "must_cite_sources": false, "max_tool_calls": 3}},
+        {"name": "retrieval.user_profile", "data": {"memory": {"long_mem": "<redacted:110 chars>", "short_mem": "<redacted:44 chars>", "periodic_mem": "<redacted:28 chars>"}, "milvus_memory_chunk_recall": {"returned_doc_count": 6, "embed_ms": 31, "chunk_search_ms": 36, "enabled": true}}},
+        {"name": "retrieval.intent_queries", "data": {"queries": ["周末徒步路线", "登山路线推荐", "户外运动攻略"], "query_count": 3}},
+        {"name": "pool_refill_async", "data": {"recall_queries": ["周末徒步路线", "登山路线推荐", "户外运动攻略"], "pools": [{"pool_type": "long_term", "period_bucket": "", "size_before": 58, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "short_term", "period_bucket": "", "size_before": 26, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "periodic", "period_bucket": "weekend", "size_before": 12, "enqueued": 8, "deduped": 2, "queue_result": "enqueued"}]}},
+        {"name": "candidates.collect", "data": {"count": 30}},
+        {"name": "rank.rerank", "data": {"candidate_in": 30, "candidate_out": 18, "top_reason": "周末徒步登山路线且难度适中"}},
+        {"name": "validate.output", "data": {"quality": {"schema_valid": true, "citation_valid": true, "claim_grounding_check": "PASS", "violations": []}, "degraded": false}},
+        {"name": "side_effect.pool_remove", "data": {"type": "pool_remove", "outcome": "OK", "article_ids": ["art_13001", "art_13002", "art_13003", "art_13004", "art_13005", "art_13006", "art_13007", "art_13008", "art_13009", "art_13010", "art_13011", "art_13012", "art_13013", "art_13014", "art_13015", "art_13016", "art_13017", "art_13018"]}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "case_06_profile_movie_w1_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000006",
+    "user_id": "user_test_006",
+    "session_id": "sess_regr_006",
+    "surface": "profile",
+    "query": "电影影评 诺兰最新电影解读",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000006",
+      "rec_request_id": "rec_0000000000000006",
+      "status": "ok",
+      "ids": [
+        "art_6001", "art_6002", "art_6003", "art_6004", "art_6005",
+        "art_6006", "art_6007", "art_6008", "art_6009", "art_6010",
+        "art_6011", "art_6012"
+      ],
+      "article_ids": [
+        "art_6001", "art_6002", "art_6003", "art_6004", "art_6005",
+        "art_6006", "art_6007", "art_6008", "art_6009", "art_6010",
+        "art_6011", "art_6012"
+      ],
+      "explanation": "周期桶 w1：召回 12 篇诺兰电影影评与解读。"
+    }
+  }
+}

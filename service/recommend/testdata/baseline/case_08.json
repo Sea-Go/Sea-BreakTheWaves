@@ -1,0 +1,34 @@
+{
+  "name": "case_08_channel_travel_weekend_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000008",
+    "user_id": "user_test_008",
+    "session_id": "sess_regr_008",
+    "surface": "channel",
+    "query": "旅行 江南水乡古镇三日游",
+    "explain": false,
+    "period_bucket": "weekend"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000008",
+      "rec_request_id": "rec_0000000000000008",
+      "status": "ok",
+      "ids": [
+        "art_8001", "art_8002", "art_8003", "art_8004", "art_8005",
+        "art_8006", "art_8007", "art_8008", "art_8009", "art_8010",
+        "art_8011", "art_8012", "art_8013", "art_8014", "art_8015",
+        "art_8016"
+      ],
+      "article_ids": [
+        "art_8001", "art_8002", "art_8003", "art_8004", "art_8005",
+        "art_8006", "art_8007", "art_8008", "art_8009", "art_8010",
+        "art_8011", "art_8012", "art_8013", "art_8014", "art_8015",
+        "art_8016"
+      ],
+      "explanation": "周期桶 weekend：召回 16 篇江南水乡古镇三日游攻略。"
+    }
+  }
+}

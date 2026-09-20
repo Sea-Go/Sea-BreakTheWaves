@@ -1,0 +1,29 @@
+syntax = "v1"
+
+type EventBatchReq {
+	Events []map[string]any `json:"events"`
+}
+
+type EventBatchResp {
+	Accepted int32  `json:"accepted"`
+	ErrMsg   string `json:"err_msg,optional"`
+}
+
+type ProcessingStateResp {
+	State string `json:"state"`
+}
+
+@server (
+	prefix: /api/v1/async
+	group:  async
+)
+service async-api {
+	@handler Events
+	post /events (EventBatchReq) returns (EventBatchResp)
+
+	@handler ProcessingState
+	get /processing/state returns (ProcessingStateResp)
+
+	@handler ProjectionState
+	get /projections/state returns (ProcessingStateResp)
+}

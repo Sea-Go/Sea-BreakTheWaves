@@ -1,0 +1,46 @@
+{
+  "name": "case_01_dashboard_game_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000001",
+    "user_id": "user_test_001",
+    "session_id": "sess_regr_001",
+    "surface": "dashboard_recommend",
+    "query": "游戏推荐 最近好玩的单机游戏",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000001",
+      "rec_request_id": "rec_0000000000000001",
+      "status": "ok",
+      "ids": [
+        "art_1001", "art_1002", "art_1003", "art_1004", "art_1005",
+        "art_1006", "art_1007", "art_1008", "art_1009", "art_1010",
+        "art_1011", "art_1012", "art_1013", "art_1014", "art_1015",
+        "art_1016", "art_1017", "art_1018", "art_1019", "art_1020"
+      ],
+      "article_ids": [
+        "art_1001", "art_1002", "art_1003", "art_1004", "art_1005",
+        "art_1006", "art_1007", "art_1008", "art_1009", "art_1010",
+        "art_1011", "art_1012", "art_1013", "art_1014", "art_1015",
+        "art_1016", "art_1017", "art_1018", "art_1019", "art_1020"
+      ],
+      "explanation": "基于「单机游戏」兴趣与近期游玩偏好，从长期池与周期池中召回候选并经 AI 精排序得到 20 篇文章。",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000001", "rec_request_id": "rec_0000000000000001", "surface": "dashboard_recommend", "period_bucket": "d1"}},
+        {"name": "intent.parse", "data": {"label": "browse_category", "confidence": 0.86, "signals": ["genre:game", "freshness:recent"], "latency_ms": 120, "model": "gpt-4o-mini", "temperature": 0.0}},
+        {"name": "policy.route", "data": {"chosen": "RAG_ONLY", "reason_codes": ["DEFAULT"], "must_cite_sources": false, "max_tool_calls": 3}},
+        {"name": "retrieval.user_profile", "data": {"memory": {"long_mem": "<redacted:128 chars>", "short_mem": "<redacted:64 chars>", "periodic_mem": "<redacted:32 chars>"}, "milvus_memory_chunk_recall": {"returned_doc_count": 8, "embed_ms": 35, "chunk_search_ms": 42, "enabled": true}}},
+        {"name": "retrieval.intent_queries", "data": {"queries": ["单机游戏推荐", "近期好玩单机游戏", "游戏类型与平台"], "query_count": 3}},
+        {"name": "pool_refill_async", "data": {"recall_queries": ["单机游戏推荐", "近期好玩单机游戏", "游戏类型与平台"], "pools": [{"pool_type": "long_term", "period_bucket": "", "size_before": 50, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "short_term", "period_bucket": "", "size_before": 30, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "periodic", "period_bucket": "d1", "size_before": 25, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}]}},
+        {"name": "candidates.collect", "data": {"count": 45}},
+        {"name": "rank.rerank", "data": {"candidate_in": 45, "candidate_out": 20, "top_reason": "匹配单机游戏兴趣且为近期发布"}},
+        {"name": "validate.output", "data": {"quality": {"schema_valid": true, "citation_valid": true, "claim_grounding_check": "PASS", "violations": []}, "degraded": false}},
+        {"name": "side_effect.pool_remove", "data": {"type": "pool_remove", "outcome": "OK", "article_ids": ["art_1001", "art_1002", "art_1003", "art_1004", "art_1005", "art_1006", "art_1007", "art_1008", "art_1009", "art_1010", "art_1011", "art_1012", "art_1013", "art_1014", "art_1015", "art_1016", "art_1017", "art_1018", "art_1019", "art_1020"]}}
+      ]
+    }
+  }
+}

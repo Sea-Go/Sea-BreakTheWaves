@@ -1,0 +1,32 @@
+{
+  "name": "case_04_search_tech_weekend_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000004",
+    "user_id": "user_test_004",
+    "session_id": "sess_regr_004",
+    "surface": "search",
+    "query": "数码科技 2025年旗舰手机对比",
+    "explain": false,
+    "period_bucket": "weekend"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000004",
+      "rec_request_id": "rec_0000000000000004",
+      "status": "ok",
+      "ids": [
+        "art_4001", "art_4002", "art_4003", "art_4004", "art_4005",
+        "art_4006", "art_4007", "art_4008", "art_4009", "art_4010",
+        "art_4011", "art_4012", "art_4013", "art_4014", "art_4015"
+      ],
+      "article_ids": [
+        "art_4001", "art_4002", "art_4003", "art_4004", "art_4005",
+        "art_4006", "art_4007", "art_4008", "art_4009", "art_4010",
+        "art_4011", "art_4012", "art_4013", "art_4014", "art_4015"
+      ],
+      "explanation": "周期桶 weekend：召回 15 篇 2025 旗舰手机对比评测。"
+    }
+  }
+}

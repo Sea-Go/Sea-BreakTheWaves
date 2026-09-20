@@ -1,0 +1,28 @@
+syntax = "proto3";
+package sea.async.v1;
+option go_package = "github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/pb;asyncpb";
+
+message EventEnvelope {
+  string event_id = 1;
+  string event_type = 2;
+  string aggregate_id = 3;
+  int64 occurred_at_ms = 4;
+  int64 version_ms = 5;
+  bytes payload = 6;
+}
+
+message SubmitEventsRequest { repeated EventEnvelope events = 1; }
+message SubmitEventsResponse { int32 accepted = 1; repeated string rejected = 2; }
+
+message ProjectionQuery { string subject_id = 1; string projection = 2; }
+message ProjectionSnapshot {
+  string subject_id = 1;
+  string projection = 2;
+  int64 version_ms = 3;
+  bytes payload = 4;
+}
+
+service AsyncService {
+  rpc SubmitEvents(SubmitEventsRequest) returns (SubmitEventsResponse);
+  rpc GetProjection(ProjectionQuery) returns (ProjectionSnapshot);
+}

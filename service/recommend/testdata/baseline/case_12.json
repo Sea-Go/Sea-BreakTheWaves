@@ -1,0 +1,43 @@
+{
+  "name": "case_12_channel_food_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000012",
+    "user_id": "user_test_012",
+    "session_id": "sess_regr_012",
+    "surface": "channel",
+    "query": "美食 家常菜快手做法",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000012",
+      "rec_request_id": "rec_0000000000000012",
+      "status": "ok",
+      "ids": [
+        "art_12001", "art_12002", "art_12003", "art_12004", "art_12005",
+        "art_12006", "art_12007", "art_12008", "art_12009", "art_12010",
+        "art_12011", "art_12012"
+      ],
+      "article_ids": [
+        "art_12001", "art_12002", "art_12003", "art_12004", "art_12005",
+        "art_12006", "art_12007", "art_12008", "art_12009", "art_12010",
+        "art_12011", "art_12012"
+      ],
+      "explanation": "频道页 surface（美食）：召回 12 篇家常菜快手做法菜谱。",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000012", "rec_request_id": "rec_0000000000000012", "surface": "channel", "period_bucket": "d1"}},
+        {"name": "intent.parse", "data": {"label": "browse_category", "confidence": 0.9, "signals": ["category:food", "scene:home_cooking"], "latency_ms": 88, "model": "gpt-4o-mini", "temperature": 0.0}},
+        {"name": "policy.route", "data": {"chosen": "RAG_ONLY", "reason_codes": ["DEFAULT"], "must_cite_sources": false, "max_tool_calls": 3}},
+        {"name": "retrieval.user_profile", "data": {"memory": {"long_mem": "<redacted:70 chars>", "short_mem": "<redacted:36 chars>", "periodic_mem": "<redacted:22 chars>"}, "milvus_memory_chunk_recall": {"returned_doc_count": 5, "embed_ms": 26, "chunk_search_ms": 31, "enabled": true}}},
+        {"name": "retrieval.intent_queries", "data": {"queries": ["家常菜快手做法", "简单家常菜谱", "快手菜教程"], "query_count": 3}},
+        {"name": "pool_refill_async", "data": {"recall_queries": ["家常菜快手做法", "简单家常菜谱", "快手菜教程"], "pools": [{"pool_type": "long_term", "period_bucket": "", "size_before": 52, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "short_term", "period_bucket": "", "size_before": 18, "enqueued": 6, "deduped": 1, "queue_result": "enqueued"}, {"pool_type": "periodic", "period_bucket": "d1", "size_before": 20, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}]}},
+        {"name": "candidates.collect", "data": {"count": 24}},
+        {"name": "rank.rerank", "data": {"candidate_in": 24, "candidate_out": 12, "top_reason": "家常菜快手做法且步骤清晰"}},
+        {"name": "validate.output", "data": {"quality": {"schema_valid": true, "citation_valid": true, "claim_grounding_check": "PASS", "violations": []}, "degraded": false}}
+      ]
+    }
+  }
+}

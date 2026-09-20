@@ -1,0 +1,38 @@
+{
+  "name": "case_09_dashboard_empty_query_fallback",
+  "request": {
+    "rec_request_id": "rec_0000000000000009",
+    "user_id": "user_test_009",
+    "session_id": "sess_regr_009",
+    "surface": "dashboard_recommend",
+    "query": "",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000009",
+      "rec_request_id": "rec_0000000000000009",
+      "status": "fallback",
+      "ids": [
+        "art_9001", "art_9002", "art_9003", "art_9004", "art_9005",
+        "art_9006", "art_9007", "art_9008", "art_9009", "art_9010",
+        "art_9011", "art_9012", "art_9013", "art_9014", "art_9015",
+        "art_9016", "art_9017", "art_9018", "art_9019", "art_9020"
+      ],
+      "article_ids": [
+        "art_9001", "art_9002", "art_9003", "art_9004", "art_9005",
+        "art_9006", "art_9007", "art_9008", "art_9009", "art_9010",
+        "art_9011", "art_9012", "art_9013", "art_9014", "art_9015",
+        "art_9016", "art_9017", "art_9018", "art_9019", "art_9020"
+      ],
+      "explanation": "",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000009", "rec_request_id": "rec_0000000000000009", "surface": "dashboard_recommend", "period_bucket": "d1"}},
+        {"name": "recommend.fast_fallback", "data": {"candidate_out": 20, "reason": "dashboard_empty_query", "fallback": "article_repo"}}
+      ]
+    }
+  }
+}

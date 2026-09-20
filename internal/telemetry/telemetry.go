@@ -143,6 +143,8 @@ func frameworkMetricView(instrument sdkmetric.Instrument) (sdkmetric.Stream, boo
 		scope = "tool"
 	case framemetrics.MeterNameInvokeAgent:
 		scope = "agent"
+	case framemetrics.MeterNameWorkflow:
+		scope = "workflow"
 	default:
 		return sdkmetric.Stream{}, false
 	}

@@ -1,0 +1,30 @@
+{
+  "name": "case_15_profile_photography_w1_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000015",
+    "user_id": "user_test_015",
+    "session_id": "sess_regr_015",
+    "surface": "profile",
+    "query": "摄影技巧 新手入门微单推荐",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000015",
+      "rec_request_id": "rec_0000000000000015",
+      "status": "ok",
+      "ids": [
+        "art_15001", "art_15002", "art_15003", "art_15004", "art_15005",
+        "art_15006", "art_15007", "art_15008", "art_15009", "art_15010"
+      ],
+      "article_ids": [
+        "art_15001", "art_15002", "art_15003", "art_15004", "art_15005",
+        "art_15006", "art_15007", "art_15008", "art_15009", "art_15010"
+      ],
+      "explanation": "周期桶 w1：召回 10 篇摄影入门技巧与微单推荐文章。"
+    }
+  }
+}

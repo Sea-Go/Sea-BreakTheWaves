@@ -1,0 +1,41 @@
+{
+  "name": "case_10_search_freshness_rag_tool",
+  "request": {
+    "rec_request_id": "rec_0000000000000010",
+    "user_id": "user_test_010",
+    "session_id": "sess_regr_010",
+    "surface": "search",
+    "query": "最新今日新闻 价格库存查询 科技圈动态",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000010",
+      "rec_request_id": "rec_0000000000000010",
+      "status": "ok",
+      "ids": [
+        "art_10001", "art_10002", "art_10003", "art_10004", "art_10005",
+        "art_10006", "art_10007", "art_10008", "art_10009", "art_10010"
+      ],
+      "article_ids": [
+        "art_10001", "art_10002", "art_10003", "art_10004", "art_10005",
+        "art_10006", "art_10007", "art_10008", "art_10009", "art_10010"
+      ],
+      "explanation": "命中时效性关键词（最新/今日/价格/库存），策略路由至 RAG+TOOL 并要求引用来源，召回 10 篇科技圈动态文章。",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000010", "rec_request_id": "rec_0000000000000010", "surface": "search", "period_bucket": "d1"}},
+        {"name": "intent.parse", "data": {"label": "explore_new_items", "confidence": 0.88, "signals": ["freshness:today", "topic:tech", "need:price_stock"], "latency_ms": 130, "model": "gpt-4o-mini", "temperature": 0.0}},
+        {"name": "policy.route", "data": {"chosen": "RAG+TOOL", "reason_codes": ["NEED_FRESHNESS"], "must_cite_sources": true, "max_tool_calls": 3}},
+        {"name": "retrieval.user_profile", "data": {"memory": {"long_mem": "<redacted:90 chars>", "short_mem": "<redacted:50 chars>", "periodic_mem": "<redacted:26 chars>"}, "milvus_memory_chunk_recall": {"returned_doc_count": 7, "embed_ms": 32, "chunk_search_ms": 40, "enabled": true}}},
+        {"name": "retrieval.intent_queries", "data": {"queries": ["今日科技新闻", "数码产品价格库存", "科技圈最新动态"], "query_count": 3}},
+        {"name": "pool_refill_async", "data": {"recall_queries": ["今日科技新闻", "数码产品价格库存", "科技圈最新动态"], "pools": [{"pool_type": "long_term", "period_bucket": "", "size_before": 48, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "short_term", "period_bucket": "", "size_before": 20, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "periodic", "period_bucket": "d1", "size_before": 16, "enqueued": 4, "deduped": 1, "queue_result": "enqueued"}]}},
+        {"name": "candidates.collect", "data": {"count": 25}},
+        {"name": "rank.rerank", "data": {"candidate_in": 25, "candidate_out": 10, "top_reason": "时效性强且覆盖价格库存信息"}},
+        {"name": "validate.output", "data": {"quality": {"schema_valid": true, "citation_valid": true, "claim_grounding_check": "PASS", "violations": []}, "degraded": false}}
+      ]
+    }
+  }
+}

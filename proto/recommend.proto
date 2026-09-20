@@ -1,0 +1,54 @@
+syntax = "proto3";
+package sea.recommend.v1;
+option go_package = "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/pb;recommendpb";
+
+message RecommendRequest {
+  string tenant_id = 1;
+  string request_id = 2;
+  string scenario = 3;
+  string channel = 4;
+  string user_id = 5;
+  string query = 6;
+  int32 top_k = 7;
+  string path_mode = 8;
+  bool debug = 9;
+}
+
+message RecommendItem {
+  string id = 1;
+  string article_id = 2;
+  double score = 3;
+  string source = 4;
+  int32 rank = 5;
+  string reason = 6;
+}
+
+message RecommendResponse {
+  string request_id = 1;
+  string trace_id = 2;
+  string path_taken = 3;
+  repeated RecommendItem items = 4;
+  string error_message = 5;
+}
+
+message BehaviorEvent {
+  string event_id = 1;
+  string event_type = 2;
+  string request_id = 3;
+  string trace_id = 4;
+  string tenant_id = 5;
+  string user_id = 6;
+  string article_id = 7;
+  int32 rank = 8;
+  string channel = 9;
+  string path_taken = 10;
+  int64 timestamp_ms = 11;
+}
+
+message SubmitEventsRequest { repeated BehaviorEvent events = 1; }
+message SubmitEventsResponse { int32 accepted = 1; repeated string rejected = 2; }
+
+service RecommendService {
+  rpc Recommend(RecommendRequest) returns (RecommendResponse);
+  rpc SubmitEvents(SubmitEventsRequest) returns (SubmitEventsResponse);
+}
