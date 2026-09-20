@@ -1,54 +1,68 @@
 # Search / Recommend / Async 工程结构
 
-本文记录 2026-09-20 的服务拆分。目录以 go-zero 工程结构为骨架，Agent 运行能力按
-`tRPC-Agent-Go v1.10.0` 公开能力落位。
+目标结构只有一套业务服务目录。根目录不再保留 BTW 的 `internal/` 或 `cmd/`。
+`agent_v3/internal` 是独立旅行 Agent 应用的内部包，不属于 BTW 搜广推服务结构。
 
-## 业务边界
-
-```text
-service/search         搜索查询、Knowledge/RAG、证据、总结、搜索 Tools
-service/recommend      推荐、召回、排序、重排、质量、解释、实验
-service/async          内容同步、事件账本、画像投影、反馈归因、重试、死信
-service/common         配置、连接、日志、指标、OTel、模型/Agent 技术适配
-```
-
-Search 和 Recommend 不互相引用内部包；Recommend 只能通过 `searchclient` 调用搜索候选。
-Async 不引用 Search/Recommend 内部包，只通过 Kafka 事件向两个消费域发布投影变更。
-
-## go-zero 调用链
+## 顶层
 
 ```text
-api/internal/handler
-  -> api/internal/logic
-  -> api/internal/svc
-  -> rpc/<domain>client
-  -> rpc/internal/logic
-  -> rpc/internal/trpcagent/runner
-  -> Agent / Graph / Tool
-  -> rpc/internal/model / asyncclient / searchclient
+service/
+  common/          跨服务技术设施、客户端、契约和共享检索算子
+  search/          搜索 API、核心 Search、评测、验收工具、searchclient
+  recommend/       推荐 API、核心 Recommend、推荐内部模型与客户端
+  async/           内容同步、Worker、用户模型、事件账本、投影与治理
+api/               对外 HTTP 契约源
+proto/             内部 RPC 契约源
+contracts/         JSON Schema 等非 Go 契约
 ```
 
-## tRPC-Agent-Go 能力归属
+## 服务内部
 
-| 能力 | 归属 |
-| --- | --- |
-| `model.Model` | `service/common/trpcagent/model`，适配 DataCenter 模型网关 |
-| `Runner` | Search/Recommend 的 `rpc/internal/trpcagent/runner` |
-| `Agent` / `Graph` | Search/Recommend 各自 `rpc/internal/trpcagent/{agent,graph}` |
-| `Tool` | Search/Recommend 各自 `rpc/internal/trpcagent/tool` |
-| `Knowledge/RAG` | Async 生产规范产物；Search 消费并组装检索链 |
-| `Session` | common 技术后端 + Search/Recommend 服务内装配 |
-| `Memory` | common 只读适配；写路径归 Async |
-| `Event` | common Event 桥接；Runner 事件映射为 SSE/trace/cost/steps |
-| `Planner` / `Prompt` / `Plugin` / `Skill` / `Telemetry` | Search/Recommend 域内目录 |
+```text
+service/search/
+  api/                  Search API 进程
+  internal/app/         RTW 搜索适配
+  internal/search/      Search 核心与 tRPC Graph
+  internal/transport/   HTTP transport
+  internal/evaluation/  搜索评测
+  internal/warehouse/   Search source 投影
+  rpc/                  稳定 searchclient 与 tRPC 能力装配
 
-`rpc/internal/model` 是数据库模型；`service/common/trpcagent/model` 是框架 LLM
-`model.Model` 适配。两者不可混用。
+service/recommend/
+  api/                  Recommend API 进程
+  internal/app/         RTW 推荐适配
+  internal/recommend/   推荐核心
+  rpc/                  稳定 recommendclient 与推荐运行时
 
-## 兼容
+service/async/
+  api/                  Async 管理 API
+  worker/               Async Worker 进程
+  internal/app/         Worker 编排
+  internal/content/     内容编译与索引账本
+  internal/usermodel/   用户模型 owner
+  internal/warehouse/   社区、收藏、特征基线、Wiki 质量投影
+```
 
-- Search API 保持在 `/api/v1/search`。
-- Recommend API 保持在 `/api/v2/recommend`。
-- `/api/v2/events` 保留为兼容入口，内部转发 Async。
-- 原 `/api/v1/tools` 废弃，搜索工具在 `/api/v1/search/tools`。
-- Article sync、重试和回执 topic 不变。
+## 共享设施
+
+```text
+service/common/artifacts
+service/common/clients
+service/common/corpus
+service/common/retrieval
+service/common/runtime
+service/common/telemetry
+service/common/sourcecoverage
+service/common/trpcagent
+service/common/usermodelcontract
+```
+
+`service/common` 不依赖 Search、Recommend、Async 内部包。
+`service/async` 不依赖 Search/Recommend 内部包。
+Search 和 Recommend 不互相依赖内部包。
+Recommend 通过 `service/common/usermodelcontract` 消费 Async 拥有的用户模型契约。
+
+## tRPC-Agent-Go
+
+`service/common/trpcagent` 提供框架 `model.Model`、Session、Memory、Telemetry 和 Event 适配。
+Search/Recommend 的 `rpc/internal/trpcagent` 装配各自 Runner、Graph、Tool、Prompt、Plugin、Skill。

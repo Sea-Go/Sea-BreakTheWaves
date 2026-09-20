@@ -17,7 +17,9 @@ type rule struct {
 }
 
 func TestServiceImportBoundaries(t *testing.T) {
+	legacyInternal := regexp.MustCompile(`^github\.com/Sea-Go/Sea-BreakTheWaves/internal/`)
 	rules := []rule{
+		{prefix: "", forbidden: []*regexp.Regexp{legacyInternal}},
 		{prefix: "service/common/", forbidden: []*regexp.Regexp{
 			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/(search|recommend|async)/`),
 		}},
