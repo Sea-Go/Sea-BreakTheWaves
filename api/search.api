@@ -1,0 +1,84 @@
+syntax = "v1"
+
+type (
+	SearchFilter {
+		Tags            []string `json:"tags,optional"`
+		ManualTypeTag   string   `json:"manual_type_tag,optional"`
+		Channel         string   `json:"channel,optional"`
+		AuthorId        string   `json:"author_id,optional"`
+		TimeFrom        int64    `json:"time_from,optional"`
+		TimeTo          int64    `json:"time_to,optional"`
+		QualityThreshold float64 `json:"quality_threshold,optional"`
+		ExtInfo         map[string]string `json:"ext_info,optional"`
+	}
+
+	SearchHit {
+		ArticleId       string   `json:"article_id,optional"`
+		Title           string   `json:"title,optional"`
+		Brief           string   `json:"brief,optional"`
+		CoverImageUrl   string   `json:"cover_image_url,optional"`
+		ManualTypeTag   string   `json:"manual_type_tag,optional"`
+		SecondaryTags   []string `json:"secondary_tags,optional"`
+		AuthorId        string   `json:"author_id,optional"`
+		AuthorName      string   `json:"author_name,optional"`
+		Snippet         string   `json:"snippet,optional"`
+		ChunkId         string   `json:"chunk_id,optional"`
+		ArticleScore    float64  `json:"article_score,optional"`
+		VectorScore     float64  `json:"vector_score,optional"`
+		RerankScore     float64  `json:"rerank_score,optional"`
+		MatchScore      float64  `json:"match_score,optional"`
+		ExtInfo         map[string]string `json:"ext_info,optional"`
+	}
+
+	SearchReq {
+		SearchRequestId string        `json:"search_request_id"`
+		UserId          string        `json:"user_id,optional"`
+		SessionId       string        `json:"session_id,optional"`
+		TraceId         string        `json:"trace_id,optional"`
+		Query           string        `json:"query"`
+		Topk            int32         `json:"topk,optional"`
+		NeedAnswer      bool          `json:"need_answer,optional"`
+		Explain         bool          `json:"explain,optional"`
+		Filter          *SearchFilter `json:"filter,optional"`
+		Personalize     bool          `json:"personalize,optional"`
+		UseGraph        bool          `json:"use_graph,optional"`
+		ImageUrl        string        `json:"image_url,optional"`
+		ExtInfo         map[string]string `json:"ext_info,optional"`
+	}
+
+	SearchResp {
+		TraceId         string      `json:"trace_id,optional"`
+		SearchRequestId string      `json:"search_request_id,optional"`
+		Status          string      `json:"status,optional"`
+		Answer          string      `json:"answer,optional"`
+		Hits            []SearchHit `json:"hits,optional"`
+		Explanation     string      `json:"explanation,optional"`
+		ErrMsg          string      `json:"err_msg,optional"`
+		ExtInfo         map[string]string `json:"ext_info,optional"`
+	}
+
+	StructuredSearchReq {
+		RequestId string `json:"request_id,optional"`
+		Query     string `json:"query"`
+		Limit     int32  `json:"limit,optional"`
+		ExtInfo   map[string]string `json:"ext_info,optional"`
+	}
+)
+
+@server (
+	prefix: /api/v1
+	group:  search
+)
+service search-api {
+	@handler Search
+	post /search (SearchReq) returns (SearchResp)
+
+	@handler SearchTitle
+	post /search/title (StructuredSearchReq) returns (SearchResp)
+
+	@handler SearchAuthors
+	post /search/authors (StructuredSearchReq) returns (SearchResp)
+
+	@handler Tools
+	get /search/tools
+}

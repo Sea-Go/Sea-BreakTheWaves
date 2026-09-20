@@ -1,0 +1,33 @@
+syntax = "proto3";
+package sea.search.v1;
+option go_package = "sea/service/search/rpc/pb;searchpb";
+
+message SearchRequest {
+  string search_request_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+  string query = 4;
+  int32 top_k = 5;
+  bool need_answer = 6;
+  bool explain = 7;
+}
+
+message SearchHit {
+  string article_id = 1;
+  string title = 2;
+  string snippet = 3;
+  double score = 4;
+}
+
+message SearchResponse {
+  string trace_id = 1;
+  string search_request_id = 2;
+  string status = 3;
+  string answer = 4;
+  repeated SearchHit hits = 5;
+  string error_message = 6;
+}
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+}
