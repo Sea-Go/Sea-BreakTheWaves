@@ -6,13 +6,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"sea/agent"
 	"sea/config"
 	"sea/infra"
+	recommendationv2 "sea/internal/recommendationv2"
 	"sea/kafka"
 	"sea/metrics"
-	"sea/poolrefill"
 	"sea/router"
 	searchsvc "sea/service"
 	"sea/skillsys"
@@ -65,7 +66,6 @@ func main() {
 	sourceDB := infra.SourcePostgres()
 	sourceArticleRepo := storage.NewSourceArticleRepo(sourceDB)
 	sourceUserRepo := storage.NewSourceUserRepo(sourceDB)
-	sourceLikeRepo := storage.NewSourceLikeRepo(sourceDB)
 
 	signChan := make(chan os.Signal, 1)
 	signal.Notify(signChan, syscall.SIGINT, syscall.SIGTERM)
@@ -77,9 +77,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	refillRunner := poolrefill.NewPoolRefillExecutionRunner(poolRepo, articleRepo, sourceLikeRepo, reg)
-	refillDispatcher := poolrefill.NewAsyncPoolRefillDispatcher(ctx, refillRunner, config.Cfg.Pools.Async)
-
 	if err := kafka.Start(ctx, createKafkaMessageHandler(reg, articleRepo)); err != nil {
 		zlog.L().Error("kafka consumer start failed", zap.Error(err))
 	}
@@ -88,7 +85,22 @@ func main() {
 	}
 
 	aiClient := infra.NewAIClient()
-	recoAgent := agent.NewRecoAgent(aiClient, reg, articleRepo, poolRepo, memoryRepo, memoryChunkRepo, sourceLikeRepo, refillDispatcher)
+	activityWorker, err := recommendationv2.NewActivityWorkerClient(recommendationv2.ActivityAnalysisConfig{
+		Enabled:           config.Cfg.ActivityWorker.Enabled,
+		Endpoint:          config.Cfg.ActivityWorker.Endpoint,
+		BearerToken:       config.Cfg.ActivityWorker.BearerToken,
+		Timeout:           time.Duration(config.Cfg.ActivityWorker.TimeoutSeconds) * time.Second,
+		ScoreThreshold:    config.Cfg.ActivityWorker.ScoreThreshold,
+		DecisionCacheSize: config.Cfg.ActivityWorker.DecisionCacheSize,
+	})
+	if err != nil {
+		zlog.L().Fatal("activity worker init failed", zap.Error(err))
+	}
+	recoV2 := recommendationv2.NewRecommendationService(recommendationv2.NewRecommendationRuntime(
+		recommendationv2.WithSkillDirectory("skills"),
+		recommendationv2.WithProductionProviders(articleRepo, poolRepo),
+		recommendationv2.WithActivityAnalyzer(activityWorker),
+	))
 	contentSearchAgent := agent.NewContentSearchAgent(aiClient, reg, articleRepo)
 	titleSearchService := searchsvc.NewArticleTitleSearchService(sourceArticleRepo)
 	authorSearchService := searchsvc.NewAuthorNameSearchService(sourceUserRepo)
@@ -98,7 +110,7 @@ func main() {
 
 	r := router.NewRouter(
 		reg,
-		recoAgent,
+		recoV2,
 		contentSearchAgent,
 		titleSearchService,
 		authorSearchService,

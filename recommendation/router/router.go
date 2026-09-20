@@ -5,10 +5,10 @@ import (
 	"net/http"
 
 	"sea/agent"
+	recommendationv2 "sea/internal/recommendationv2"
 	"sea/middleware"
 	searchsvc "sea/service"
 	"sea/skillsys"
-	rectypes "sea/type"
 	"sea/zlog"
 
 	"github.com/gin-gonic/gin"
@@ -18,7 +18,7 @@ import (
 
 func NewRouter(
 	reg *skillsys.Registry,
-	reco *agent.RecoAgent,
+	recoV2 *recommendationv2.RecommendationService,
 	contentSearch *agent.ContentSearchAgent,
 	titleSearch *searchsvc.ArticleTitleSearchService,
 	authorSearch *searchsvc.AuthorNameSearchService,
@@ -54,46 +54,72 @@ func NewRouter(
 	})
 
 	r.POST("/api/v1/reco/recommend", func(c *gin.Context) {
-		var req agent.RecommendRequest
+		Fail(c, http.StatusGone, middleware.StatusError, "legacy /api/v1/reco/recommend is deprecated; use /api/v2/recommend", "")
+	})
+
+	r.POST("/api/v2/recommend", func(c *gin.Context) {
+		var req recommendationv2.RecommendRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
 			return
 		}
 
-		resp, err := reco.Recommend(c.Request.Context(), req)
+		resp, err := recoV2.Recommend(c.Request.Context(), req)
 		if err != nil {
 			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), resp.TraceID)
 			return
 		}
-		if recoEvaluation != nil {
-			if err := recoEvaluation.RecordRecommendation(c.Request.Context(), req, resp); err != nil {
-				zlog.L().Warn("record recommendation evaluation failed", zap.Error(err))
-			}
-		}
 		OK(c, resp)
 	})
 
-	r.POST("/api/v1/reco/events", func(c *gin.Context) {
-		var req struct {
-			Events []rectypes.RecoEventLog `json:"events"`
-		}
+	r.POST("/api/v2/events", func(c *gin.Context) {
+		var req recommendationv2.EventBatchRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
 			return
 		}
-		if recoEvaluation == nil {
-			OK(c, gin.H{"accepted": 0})
+		OK(c, recoV2.RecordEvents(c.Request.Context(), req))
+	})
+
+	r.GET("/api/v2/admin/obs/summary", func(c *gin.Context) {
+		OK(c, recoV2.Summary())
+	})
+
+	r.GET("/api/v2/admin/obs/traces", func(c *gin.Context) {
+		var req recommendationv2.TraceQueryRequest
+		if err := c.ShouldBindQuery(&req); err != nil {
+			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
 			return
 		}
+		OK(c, recoV2.Trace(req))
+	})
 
-		events := make([]rectypes.RecoEventLog, 0, len(req.Events))
-		events = append(events, req.Events...)
-		resp, err := recoEvaluation.RecordEvents(c.Request.Context(), rectypes.RecoEventRequest{Events: events})
+	r.GET("/api/v2/admin/skills", func(c *gin.Context) {
+		OK(c, gin.H{"skills": recoV2.ListSkills()})
+	})
+
+	r.POST("/api/v2/recommend/stream", func(c *gin.Context) {
+		var req recommendationv2.RecommendRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			Fail(c, http.StatusBadRequest, middleware.ErrInvalidArgs, err.Error(), "")
+			return
+		}
+		events, err := recoV2.StreamRecommend(c.Request.Context(), req)
 		if err != nil {
 			Fail(c, http.StatusInternalServerError, middleware.StatusError, err.Error(), "")
 			return
 		}
-		OK(c, resp)
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		for event := range events {
+			c.SSEvent(event.Type, event)
+			c.Writer.Flush()
+		}
+	})
+
+	r.POST("/api/v1/reco/events", func(c *gin.Context) {
+		Fail(c, http.StatusGone, middleware.StatusError, "legacy /api/v1/reco/events is deprecated; use /api/v2/events", "")
 	})
 
 	r.GET("/api/v1/admin/reco/evaluation/summary", func(c *gin.Context) {

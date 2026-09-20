@@ -64,6 +64,9 @@ Kafka:
   retry_topic: "article-ingest-retry"
   retry_group: "sea-breakthewaves-retry"
 
+recommendation_event_kafka:
+  topic: "recommendation-v2-events"
+
 neo4j:
   address: "neo4j://localhost:37687"
   username: "neo4j"
@@ -72,6 +75,16 @@ neo4j:
 services:
   httpAddr: "0.0.0.0"
   httpPort: "20721"
+
+# 原始活动数据会在 POST /api/v2/events 中携带 raw_event 时自动发往 Qwen。
+# bearer_token 只写入被 .gitignore 忽略的本地 config.yaml 或部署密钥，不要提交。
+activity_worker:
+  enabled: false
+  endpoint: "https://model.sea-ridethewindbreakthewaves.xyz/v1/activity/analyze"
+  bearer_token: ""
+  timeout_seconds: 60
+  score_threshold: 1.0
+  decision_cache_size: 4096
 
 # =========================
 # 候选池子策略（长期/短期/周期）

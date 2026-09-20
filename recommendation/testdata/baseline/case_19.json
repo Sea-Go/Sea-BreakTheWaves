@@ -1,0 +1,41 @@
+{
+  "name": "case_19_profile_programming_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000019",
+    "user_id": "user_test_019",
+    "session_id": "sess_regr_019",
+    "surface": "profile",
+    "query": "编程开发 Go 语言并发模式实战",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000019",
+      "rec_request_id": "rec_0000000000000019",
+      "status": "ok",
+      "ids": [
+        "art_19001", "art_19002", "art_19003", "art_19004", "art_19005",
+        "art_19006", "art_19007", "art_19008", "art_19009"
+      ],
+      "article_ids": [
+        "art_19001", "art_19002", "art_19003", "art_19004", "art_19005",
+        "art_19006", "art_19007", "art_19008", "art_19009"
+      ],
+      "explanation": "个人页 surface：召回 9 篇 Go 语言并发模式实战技术文章。",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000019", "rec_request_id": "rec_0000000000000019", "surface": "profile", "period_bucket": "d1"}},
+        {"name": "intent.parse", "data": {"label": "browse_category", "confidence": 0.89, "signals": ["category:programming", "language:go", "topic:concurrency"], "latency_ms": 98, "model": "gpt-4o-mini", "temperature": 0.0}},
+        {"name": "policy.route", "data": {"chosen": "RAG_ONLY", "reason_codes": ["DEFAULT"], "must_cite_sources": false, "max_tool_calls": 3}},
+        {"name": "retrieval.user_profile", "data": {"memory": {"long_mem": "<redacted:140 chars>", "short_mem": "<redacted:52 chars>", "periodic_mem": "<redacted:26 chars>"}, "milvus_memory_chunk_recall": {"returned_doc_count": 7, "embed_ms": 33, "chunk_search_ms": 39, "enabled": true}}},
+        {"name": "retrieval.intent_queries", "data": {"queries": ["Go 并发模式", "Goroutine 实战", "Go 并发编程"], "query_count": 3}},
+        {"name": "pool_refill_async", "data": {"recall_queries": ["Go 并发模式", "Goroutine 实战", "Go 并发编程"], "pools": [{"pool_type": "long_term", "period_bucket": "", "size_before": 38, "enqueued": 12, "deduped": 2, "queue_result": "enqueued"}, {"pool_type": "short_term", "period_bucket": "", "size_before": 20, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "periodic", "period_bucket": "d1", "size_before": 16, "enqueued": 4, "deduped": 0, "queue_result": "enqueued"}]}},
+        {"name": "candidates.collect", "data": {"count": 21}},
+        {"name": "rank.rerank", "data": {"candidate_in": 21, "candidate_out": 9, "top_reason": "Go 并发模式实战且代码示例完整"}},
+        {"name": "validate.output", "data": {"quality": {"schema_valid": true, "citation_valid": true, "claim_grounding_check": "PASS", "violations": []}, "degraded": false}}
+      ]
+    }
+  }
+}

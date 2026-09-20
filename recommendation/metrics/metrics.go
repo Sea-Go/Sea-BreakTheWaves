@@ -151,6 +151,71 @@ var (
 		Help:      "Distribution of returned recommendation list sizes.",
 		Buckets:   []float64{0, 1, 3, 5, 10, 20, 30, 50},
 	}, []string{"surface", "status"})
+
+	RecoV2RequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "requests_total",
+		Help:      "Recommendation v2 requests grouped by tenant, channel, scenario, path and status.",
+	}, []string{"tenant_id", "channel", "scenario", "path", "status"})
+
+	RecoV2LatencySeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "latency_seconds",
+		Help:      "Recommendation v2 end-to-end latency grouped by tenant, channel, scenario, path and status.",
+		Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"tenant_id", "channel", "scenario", "path", "status"})
+
+	RecoV2ReturnedItems = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "returned_items",
+		Help:      "Recommendation v2 returned item count grouped by tenant, channel, scenario, path and status.",
+		Buckets:   []float64{0, 1, 3, 5, 10, 20, 30, 50, 100},
+	}, []string{"tenant_id", "channel", "scenario", "path", "status"})
+
+	RecoV2CostAmount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "cost_amount_total",
+		Help:      "Recommendation v2 estimated monetary cost grouped by tenant, channel, scenario, path and component.",
+	}, []string{"tenant_id", "channel", "scenario", "path", "component"})
+
+	RecoV2TokensTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "tokens_total",
+		Help:      "Recommendation v2 token usage grouped by tenant, channel, scenario, path and direction.",
+	}, []string{"tenant_id", "channel", "scenario", "path", "direction"})
+
+	RecoV2CallsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "calls_total",
+		Help:      "Recommendation v2 downstream call count grouped by tenant, channel, scenario, path and component.",
+	}, []string{"tenant_id", "channel", "scenario", "path", "component"})
+
+	RecoV2EventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "events_total",
+		Help:      "Recommendation v2 behavior and link events grouped by tenant, channel, event type and status.",
+	}, []string{"tenant_id", "channel", "event_type", "status"})
+
+	RecoV2HookFailuresTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "hook_failures_total",
+		Help:      "Recommendation v2 hook failures grouped by event type, hook and mode.",
+	}, []string{"event_type", "hook", "mode"})
+
+	RecoV2TraceStepsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "genrec",
+		Subsystem: "reco_v2",
+		Name:      "trace_steps_total",
+		Help:      "Recommendation v2 graph step outcomes grouped by path, node, node type and status.",
+	}, []string{"path", "node", "type", "status"})
 )
 
 func InitMetrics(_ chan os.Signal, _ *config.Config) {
@@ -175,5 +240,14 @@ func InitMetrics(_ chan os.Signal, _ *config.Config) {
 		RecoRequestsTotal,
 		RecoEventsTotal,
 		RecoReturnedItems,
+		RecoV2RequestsTotal,
+		RecoV2LatencySeconds,
+		RecoV2ReturnedItems,
+		RecoV2CostAmount,
+		RecoV2TokensTotal,
+		RecoV2CallsTotal,
+		RecoV2EventsTotal,
+		RecoV2HookFailuresTotal,
+		RecoV2TraceStepsTotal,
 	)
 }

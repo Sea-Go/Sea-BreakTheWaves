@@ -1,0 +1,32 @@
+{
+  "name": "case_20_channel_movie_w1_no_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000020",
+    "user_id": "user_test_020",
+    "session_id": "sess_regr_020",
+    "surface": "channel",
+    "query": "电影 经典科幻片片单推荐",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000020",
+      "rec_request_id": "rec_0000000000000020",
+      "status": "ok",
+      "ids": [
+        "art_20001", "art_20002", "art_20003", "art_20004", "art_20005",
+        "art_20006", "art_20007", "art_20008", "art_20009", "art_20010",
+        "art_20011", "art_20012", "art_20013"
+      ],
+      "article_ids": [
+        "art_20001", "art_20002", "art_20003", "art_20004", "art_20005",
+        "art_20006", "art_20007", "art_20008", "art_20009", "art_20010",
+        "art_20011", "art_20012", "art_20013"
+      ],
+      "explanation": "频道页 surface（电影）：周期桶 w1，召回 13 篇经典科幻片片单推荐。"
+    }
+  }
+}

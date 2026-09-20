@@ -24,12 +24,14 @@ type Config struct {
 	Ali    AliConfig    `mapstructure:"ali" yaml:"ali"`
 	Kafka  KafkaConfig  `mapstructure:"Kafka" yaml:"Kafka"`
 
-	ArticleSyncKafka       KafkaEndpointConfig `mapstructure:"article_sync_kafka" yaml:"article_sync_kafka"`
-	ArticleSyncResultKafka KafkaEndpointConfig `mapstructure:"article_sync_result_kafka" yaml:"article_sync_result_kafka"`
-	ArticleSyncRetryKafka  KafkaEndpointConfig `mapstructure:"article_sync_retry_kafka" yaml:"article_sync_retry_kafka"`
+	ArticleSyncKafka         KafkaEndpointConfig `mapstructure:"article_sync_kafka" yaml:"article_sync_kafka"`
+	ArticleSyncResultKafka   KafkaEndpointConfig `mapstructure:"article_sync_result_kafka" yaml:"article_sync_result_kafka"`
+	ArticleSyncRetryKafka    KafkaEndpointConfig `mapstructure:"article_sync_retry_kafka" yaml:"article_sync_retry_kafka"`
+	RecommendationEventKafka KafkaEndpointConfig `mapstructure:"recommendation_event_kafka" yaml:"recommendation_event_kafka"`
 
-	Neo4j    Neo4jConfig    `mapstructure:"neo4j" yaml:"neo4j"`
-	Services ServicesConfig `mapstructure:"services" yaml:"services"`
+	Neo4j          Neo4jConfig          `mapstructure:"neo4j" yaml:"neo4j"`
+	Services       ServicesConfig       `mapstructure:"services" yaml:"services"`
+	ActivityWorker ActivityWorkerConfig `mapstructure:"activity_worker" yaml:"activity_worker"`
 
 	Pools   PoolsConfig   `mapstructure:"pools" yaml:"pools"`
 	Agent   AgentConfig   `mapstructure:"agent" yaml:"agent"`
@@ -127,6 +129,18 @@ func (c SourcePostgresConfig) DSN() string {
 type ServicesConfig struct {
 	HTTPAddr string `mapstructure:"httpAddr" yaml:"httpAddr"`
 	HTTPPort string `mapstructure:"httpPort" yaml:"httpPort"`
+}
+
+// ActivityWorkerConfig controls forwarding of complete raw activity payloads
+// to the dedicated Qwen worker. The bearer token belongs only in ignored local
+// configuration or deployment secret storage.
+type ActivityWorkerConfig struct {
+	Enabled           bool    `mapstructure:"enabled" yaml:"enabled"`
+	Endpoint          string  `mapstructure:"endpoint" yaml:"endpoint"`
+	BearerToken       string  `mapstructure:"bearer_token" yaml:"bearer_token"`
+	TimeoutSeconds    int     `mapstructure:"timeout_seconds" yaml:"timeout_seconds"`
+	ScoreThreshold    float64 `mapstructure:"score_threshold" yaml:"score_threshold"`
+	DecisionCacheSize int     `mapstructure:"decision_cache_size" yaml:"decision_cache_size"`
 }
 
 type MilvusConfig struct {

@@ -24,7 +24,8 @@ var (
 )
 
 const (
-	ArticleSyncScope = "article_sync"
+	ArticleSyncScope         = "article_sync"
+	RecommendationEventScope = "recommendation_v2"
 
 	ArticleSyncOpUpsert = "upsert"
 	ArticleSyncOpDelete = "delete"
@@ -55,6 +56,22 @@ type ArticleSyncResult struct {
 	VersionMs    int64  `json:"version_ms"`
 	Success      bool   `json:"success"`
 	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+type RecommendationEventMessage struct {
+	EventScope string         `json:"event_scope"`
+	EventID    string         `json:"event_id"`
+	EventType  string         `json:"event_type"`
+	RequestID  string         `json:"request_id,omitempty"`
+	TraceID    string         `json:"trace_id,omitempty"`
+	TenantID   string         `json:"tenant_id,omitempty"`
+	UserID     string         `json:"user_id,omitempty"`
+	ArticleID  string         `json:"article_id,omitempty"`
+	Rank       int            `json:"rank,omitempty"`
+	Channel    string         `json:"channel,omitempty"`
+	PathTaken  string         `json:"path_taken,omitempty"`
+	Timestamp  time.Time      `json:"timestamp"`
+	Payload    map[string]any `json:"payload,omitempty"`
 }
 
 type MessageHandler func(ctx context.Context, event ArticleSyncEvent) error
@@ -229,6 +246,18 @@ func PublishSyncResult(ctx context.Context, result ArticleSyncResult) error {
 	return sendMessage(resultEndpoint().Topic, result.ArticleID, data)
 }
 
+func PublishRecommendationEvent(ctx context.Context, event RecommendationEventMessage) error {
+	_ = ctx
+	if strings.TrimSpace(event.EventScope) == "" {
+		event.EventScope = RecommendationEventScope
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return sendMessage(recommendationEventEndpoint().Topic, recommendationEventKey(event), data)
+}
+
 func sendMessage(topic, key string, payload []byte) error {
 	if producer == nil {
 		return fmt.Errorf("kafka producer not initialized")
@@ -303,4 +332,29 @@ func retryEndpoint() kafkaEndpoint {
 		}
 	}
 	return kafkaEndpoint{Address: address, Topic: topic, Group: group}
+}
+
+func recommendationEventEndpoint() kafkaEndpoint {
+	address := strings.TrimSpace(config.Cfg.RecommendationEventKafka.Address)
+	topic := strings.TrimSpace(config.Cfg.RecommendationEventKafka.Topic)
+	if address == "" {
+		address = primaryEndpoint().Address
+	}
+	if topic == "" {
+		topic = "recommendation-v2-events"
+	}
+	return kafkaEndpoint{Address: address, Topic: topic}
+}
+
+func recommendationEventKey(event RecommendationEventMessage) string {
+	if strings.TrimSpace(event.UserID) != "" {
+		return event.UserID
+	}
+	if strings.TrimSpace(event.RequestID) != "" {
+		return event.RequestID
+	}
+	if strings.TrimSpace(event.TraceID) != "" {
+		return event.TraceID
+	}
+	return event.EventID
 }

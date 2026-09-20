@@ -1,0 +1,43 @@
+{
+  "name": "case_18_search_fitness_weekend_explain",
+  "request": {
+    "rec_request_id": "rec_0000000000000018",
+    "user_id": "user_test_018",
+    "session_id": "sess_regr_018",
+    "surface": "search",
+    "query": "健身减脂 居家无器械训练计划",
+    "explain": true,
+    "period_bucket": "weekend"
+  },
+  "response": {
+    "code": 200,
+    "msg": "success",
+    "data": {
+      "trace_id": "trace_0000000000000018",
+      "rec_request_id": "rec_0000000000000018",
+      "status": "ok",
+      "ids": [
+        "art_18001", "art_18002", "art_18003", "art_18004", "art_18005",
+        "art_18006", "art_18007", "art_18008", "art_18009", "art_18010",
+        "art_18011"
+      ],
+      "article_ids": [
+        "art_18001", "art_18002", "art_18003", "art_18004", "art_18005",
+        "art_18006", "art_18007", "art_18008", "art_18009", "art_18010",
+        "art_18011"
+      ],
+      "explanation": "周期桶 weekend：召回 11 篇居家无器械减脂训练计划。",
+      "explain_trace": [
+        {"name": "invoke", "data": {"trace_id": "trace_0000000000000018", "rec_request_id": "rec_0000000000000018", "surface": "search", "period_bucket": "weekend"}},
+        {"name": "intent.parse", "data": {"label": "browse_category", "confidence": 0.83, "signals": ["category:fitness", "scene:home", "goal:fat_loss"], "latency_ms": 108, "model": "gpt-4o-mini", "temperature": 0.0}},
+        {"name": "policy.route", "data": {"chosen": "RAG_ONLY", "reason_codes": ["DEFAULT"], "must_cite_sources": false, "max_tool_calls": 3}},
+        {"name": "retrieval.user_profile", "data": {"memory": {"long_mem": "<redacted:95 chars>", "short_mem": "<redacted:46 chars>", "periodic_mem": "<redacted:30 chars>"}, "milvus_memory_chunk_recall": {"returned_doc_count": 5, "embed_ms": 28, "chunk_search_ms": 32, "enabled": true}}},
+        {"name": "retrieval.intent_queries", "data": {"queries": ["居家无器械训练", "减脂训练计划", "居家健身攻略"], "query_count": 3}},
+        {"name": "pool_refill_async", "data": {"recall_queries": ["居家无器械训练", "减脂训练计划", "居家健身攻略"], "pools": [{"pool_type": "long_term", "period_bucket": "", "size_before": 46, "enqueued": 0, "deduped": 0, "queue_result": "skipped_sufficient"}, {"pool_type": "short_term", "period_bucket": "", "size_before": 14, "enqueued": 6, "deduped": 1, "queue_result": "enqueued"}, {"pool_type": "periodic", "period_bucket": "weekend", "size_before": 10, "enqueued": 10, "deduped": 0, "queue_result": "enqueued"}]}},
+        {"name": "candidates.collect", "data": {"count": 19}},
+        {"name": "rank.rerank", "data": {"candidate_in": 19, "candidate_out": 11, "top_reason": "居家无器械减脂训练且计划完整"}},
+        {"name": "validate.output", "data": {"quality": {"schema_valid": true, "citation_valid": true, "claim_grounding_check": "PASS", "violations": []}, "degraded": false}}
+      ]
+    }
+  }
+}

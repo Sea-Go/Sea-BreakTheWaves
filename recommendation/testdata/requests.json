@@ -1,0 +1,162 @@
+[
+  {
+    "user_id": "user_test_001",
+    "session_id": "sess_regr_001",
+    "surface": "dashboard_recommend",
+    "query": "游戏推荐 最近好玩的单机游戏",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_002",
+    "session_id": "sess_regr_002",
+    "surface": "dashboard_recommend",
+    "query": "旅行攻略 国庆七天自驾游路线",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  {
+    "user_id": "user_test_003",
+    "session_id": "sess_regr_003",
+    "surface": "search",
+    "query": "美食探店 上海本帮菜小馆子",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_004",
+    "session_id": "sess_regr_004",
+    "surface": "search",
+    "query": "数码科技 2025年旗舰手机对比",
+    "explain": false,
+    "period_bucket": "weekend"
+  },
+  {
+    "user_id": "user_test_005",
+    "session_id": "sess_regr_005",
+    "surface": "profile",
+    "query": "音乐推荐 适合专注工作的纯音乐",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_006",
+    "session_id": "sess_regr_006",
+    "surface": "profile",
+    "query": "电影影评 诺兰最新电影解读",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  {
+    "user_id": "user_test_007",
+    "session_id": "sess_regr_007",
+    "surface": "channel",
+    "query": "游戏 主机游戏选购指南",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_008",
+    "session_id": "sess_regr_008",
+    "surface": "channel",
+    "query": "旅行 江南水乡古镇三日游",
+    "explain": false,
+    "period_bucket": "weekend"
+  },
+  {
+    "user_id": "user_test_009",
+    "session_id": "sess_regr_009",
+    "surface": "dashboard_recommend",
+    "query": "",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_010",
+    "session_id": "sess_regr_010",
+    "surface": "search",
+    "query": "最新今日新闻 价格库存查询 科技圈动态",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_011",
+    "session_id": "sess_regr_011",
+    "surface": "profile",
+    "query": "历史人文 明朝那些事儿读书笔记",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  {
+    "user_id": "user_test_012",
+    "session_id": "sess_regr_012",
+    "surface": "channel",
+    "query": "美食 家常菜快手做法",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_013",
+    "session_id": "sess_regr_013",
+    "surface": "dashboard_recommend",
+    "query": "户外运动 周末徒步登山路线",
+    "explain": true,
+    "period_bucket": "weekend"
+  },
+  {
+    "user_id": "user_test_014",
+    "session_id": "sess_regr_014",
+    "surface": "search",
+    "query": "价格库存 数码产品今日最新报价",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_015",
+    "session_id": "sess_regr_015",
+    "surface": "profile",
+    "query": "摄影技巧 新手入门微单推荐",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  {
+    "user_id": "user_test_016",
+    "session_id": "sess_regr_016",
+    "surface": "channel",
+    "query": "科技数码 机械键盘选购与轴体对比",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_017",
+    "session_id": "sess_regr_017",
+    "surface": "dashboard_recommend",
+    "query": "读书笔记 今年读过最好的五本书",
+    "explain": false,
+    "period_bucket": "w1"
+  },
+  {
+    "user_id": "user_test_018",
+    "session_id": "sess_regr_018",
+    "surface": "search",
+    "query": "健身减脂 居家无器械训练计划",
+    "explain": true,
+    "period_bucket": "weekend"
+  },
+  {
+    "user_id": "user_test_019",
+    "session_id": "sess_regr_019",
+    "surface": "profile",
+    "query": "编程开发 Go 语言并发模式实战",
+    "explain": true,
+    "period_bucket": "d1"
+  },
+  {
+    "user_id": "user_test_020",
+    "session_id": "sess_regr_020",
+    "surface": "channel",
+    "query": "电影 经典科幻片片单推荐",
+    "explain": false,
+    "period_bucket": "w1"
+  }
+]

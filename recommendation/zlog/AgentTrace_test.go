@@ -12,10 +12,10 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// 运行：go ChatTest -run TestRecoAgent_GenRecE2ETrace -v
-// 目的：用“生成式推荐 agent”的业务方式，完整模拟一条链路：
+// 运行：go test ./zlog -run TestRecommendationTraceLogShape -v
+// 目的：用“生成式推荐”的业务方式，完整模拟一条链路：
 // invoke -> intent -> policy(route, why) -> retrieval(vector db) -> tool(call, result) -> rank -> chat(gen) -> validate -> side_effect
-func TestRecoAgent_GenRecE2ETrace(t *testing.T) {
+func TestRecommendationTraceLogShape(t *testing.T) {
 	// -------- 1) 用 buffer 接住 JSON 日志，最后 t.Log 打出来（方便你看）--------
 	var buf bytes.Buffer
 	encCfg := zapcore.EncoderConfig{
