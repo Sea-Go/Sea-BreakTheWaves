@@ -337,15 +337,15 @@ Sea-BreakTheWaves/
 Search / Recommend / Async 三个 API 已提供 go-zero 运行入口：
 
 ```sh
-go run ./service/search/gozero
-go run ./service/recommend/gozero
-go run ./service/async/gozero
+cd service/search/api && go run . && cd ../../..
+cd service/recommend/api && go run . && cd ../../..
+cd service/async/api && go run . && cd ../../..
 ```
 
 默认端口分别为 `20731`、`20721`、`20741`。如需指定配置：
 
 ```sh
-go run ./service/search/gozero -f service/search/gozero/etc/search-api.yaml
+cd service/search/api && go run . -f etc/search-api.yaml
 ```
 
 ## 快速开始

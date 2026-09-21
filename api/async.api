@@ -27,4 +27,3 @@ service async-api {
 	@handler ProjectionState
 	get /projections/state returns (ProcessingStateResp)
 }
-

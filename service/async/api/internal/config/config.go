@@ -1,8 +1,10 @@
+// Code scaffolded by goctl. Safe to edit.
+// goctl 1.10.2
+
 package config
 
-type Config struct {
-	HTTPAddr string
-	HTTPPort string
-}
+import "github.com/zeromicro/go-zero/rest"
 
-func Load() Config { return Config{HTTPAddr: "0.0.0.0", HTTPPort: "20741"} }
+type Config struct {
+	rest.RestConf
+}

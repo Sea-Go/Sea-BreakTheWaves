@@ -21,7 +21,7 @@ func Postgres() *sql.DB {
 	return pgDB
 }
 
-func PostgresORM() *gorm.DB {
+func PostgresGORM() *gorm.DB {
 	return pgORM
 }
 

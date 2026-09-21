@@ -57,13 +57,3 @@ service recommend-api {
 	@handler SkillList
 	get /admin/skills
 }
-
-@server (
-	prefix: /api/v1/admin
-	group:  recommend-admin
-)
-service recommend-api {
-	@handler EvaluationSummary
-	get /reco/evaluation/summary
-}
-

@@ -1,30 +1,34 @@
+// Code scaffolded by goctl. Safe to edit.
+// goctl 1.10.2
+
 package main
 
 import (
-	"context"
-	"net/http"
+	"flag"
+	"fmt"
 
-	asynchandler "github.com/Sea-Go/Sea-BreakTheWaves/service/async/api/internal/handler"
-	asynclogic "github.com/Sea-Go/Sea-BreakTheWaves/service/async/api/internal/logic"
-	asyncsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/async/api/internal/svc"
-	zlog "github.com/Sea-Go/Sea-BreakTheWaves/service/common/logx"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/api/internal/config"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/api/internal/handler"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/api/internal/svc"
 
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/rest"
 )
 
+var configFile = flag.String("f", "etc/async-api.yaml", "the config file")
+
 func main() {
-	svc := asyncsvc.New()
-	defer svc.Close()
-	r := asynchandler.NewRouter(asynclogic.NewEventLogic())
-	r.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	srv := &http.Server{Addr: ":20741", Handler: r}
-	go func() {
-		zlog.L().Info("async admin http started", zap.String("addr", srv.Addr))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			zlog.L().Fatal("async admin http failed", zap.Error(err))
-		}
-	}()
-	<-context.Background().Done()
-	_ = srv.Shutdown(context.Background())
+	flag.Parse()
+
+	var c config.Config
+	conf.MustLoad(*configFile, &c)
+
+	server := rest.MustNewServer(c.RestConf)
+	defer server.Stop()
+
+	ctx := svc.NewServiceContext(c)
+	handler.RegisterHandlers(server, ctx)
+
+	fmt.Printf("Starting server at %s:%d...\n", c.Host, c.Port)
+	server.Start()
 }

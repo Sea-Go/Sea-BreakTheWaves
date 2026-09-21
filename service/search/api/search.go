@@ -7,15 +7,15 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/config"
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/handler"
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/svc"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/config"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/handler"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/rest"
 )
 
-var configFile = flag.String("f", "etc/recommend-api.yaml", "the config file")
+var configFile = flag.String("f", "etc/search-api.yaml", "the config file")
 
 func main() {
 	flag.Parse()

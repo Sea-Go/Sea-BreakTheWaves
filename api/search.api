@@ -78,4 +78,3 @@ service search-api {
 	@handler Tools
 	get /search/tools
 }
-
