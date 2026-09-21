@@ -313,5 +313,12 @@ func Load(path string) error {
 }
 
 func Init() error {
-	return Load("config.yaml")
+	return InitPath("config.yaml")
+}
+
+// InitPath loads config from an explicit path. Services that are launched from
+// the repository root or from their own service directory can both resolve a
+// stable config location.
+func InitPath(path string) error {
+	return Load(path)
 }

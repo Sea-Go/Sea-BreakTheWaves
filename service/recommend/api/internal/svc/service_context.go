@@ -6,8 +6,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	recommendmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/recommend"
 	asynclient "github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/asyncclient"
 	commonconfig "github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
 	metrics "github.com/Sea-Go/Sea-BreakTheWaves/service/common/metricx"
 	recommendlogic "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/logic"
@@ -25,10 +27,16 @@ type ServiceContext struct {
 func New() *ServiceContext {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	if err := commonconfig.Init(); err != nil {
+	if err := initRecommendConfig(); err != nil {
 		panic(err)
 	}
 	if err := infra.PostgresInit(); err != nil {
+		panic(err)
+	}
+	if err := database.Exec(context.Background(), infra.PostgresORM(), recommendmigration.SQL); err != nil {
+		panic(err)
+	}
+	if err := database.Exec(context.Background(), infra.PostgresORM(), recommendmigration.PairSQL); err != nil {
 		panic(err)
 	}
 	metrics.InitMetrics(signals, &commonconfig.Cfg)
@@ -50,4 +58,22 @@ func (s *ServiceContext) Close() {
 	if s.ShutdownOTel != nil {
 		_ = s.ShutdownOTel(context.Background())
 	}
+}
+
+func initRecommendConfig() error {
+	if explicit := os.Getenv("RECOMMEND_CONFIG_PATH"); explicit != "" {
+		return commonconfig.InitPath(explicit)
+	}
+
+	candidates := []string{
+		"service/recommend/api/etc/config.yaml",
+		"etc/config.yaml",
+		"config.yaml",
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return commonconfig.InitPath(path)
+		}
+	}
+	return commonconfig.Init()
 }

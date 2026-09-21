@@ -15,9 +15,14 @@ import (
 )
 
 var pgDB *sql.DB
+var pgORM *gorm.DB
 
 func Postgres() *sql.DB {
 	return pgDB
+}
+
+func PostgresORM() *gorm.DB {
+	return pgORM
 }
 
 func PostgresInit() error {
@@ -38,6 +43,7 @@ func PostgresInit() error {
 	}
 	ctx := context.Background()
 	pgDB = sqlDB
+	pgORM = orm
 
 	if err := ensurePGSchema(ctx, orm); err != nil {
 		return err
