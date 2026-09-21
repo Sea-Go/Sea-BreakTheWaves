@@ -1,7 +1,6 @@
 # Search / Recommend / Async 工程结构
 
-目标结构只有一套业务服务目录。根目录不再保留 BTW 的 `internal/` 或 `cmd/`。
-`agent_v3/internal` 是独立旅行 Agent 应用的内部包，不属于 BTW 搜广推服务结构。
+目标结构只有一套业务服务目录。根目录不保留 BTW 的 `internal/`、`cmd/` 或数据生产工程；数据契约、数仓和训练工程由外部数据侧维护。
 
 ## 顶层
 
@@ -13,7 +12,7 @@ service/
   async/           内容同步、Worker、用户模型、事件账本、投影与治理
 api/               对外 HTTP 契约源
 proto/             内部 RPC 契约源
-contracts/         JSON Schema 等非 Go 契约
+deploy/            本地依赖编排与 Docker 配置
 ```
 
 ## 服务内部

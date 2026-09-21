@@ -8,7 +8,7 @@ import (
 )
 
 func pinnedBGEPaths() (string, string) {
-	root := filepath.Join("..", "..", "..", "training", "serving", "bge_m3")
+	root := filepath.Join("..", "..", "search", "internal", "modelcontract", "bge_m3")
 	return filepath.Join(root, "profiles.json"), filepath.Join(root, "model.lock.json")
 }
 

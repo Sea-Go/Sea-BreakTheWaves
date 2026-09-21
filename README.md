@@ -16,18 +16,17 @@
 
 | 目录 | 当前职责 | 说明 |
 | --- | --- | --- |
-| `internal/content`、`internal/corpus` | 固定修订、分块与来源映射、构建账本及三路就绪对账 | [内容构建](docs/content.md) |
-| `internal/runtime`、`internal/clients` | 框架Runner/PG Session、DC与RTW共享客户端 | [运行与客户端](docs/runtime.md) |
-| `warehouse` | ClickHouse/dbt分层计算和不可变数据产物 | [数仓](warehouse/README.md) |
-| `training`、`contracts/jsonschema` | 冻结数据读取与数据集契约 | [训练数据消费](training/README.md) |
+| `service/common` | 共享客户端、运行时、检索算子、遥测和 tRPC-Agent 适配 | 见各包文档 |
+| `service/search` | 搜索 API、核心检索/总结、评测与工具 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `service/recommend` | 推荐 API、候选/排序核心与推荐客户端 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `service/async` | 内容同步、Worker、用户模型与异步投影 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `deploy` | 本地依赖编排和 Docker 配置 | [部署](deploy/README.md) |
 
-这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；下面的RecoAgent/旧HTTP入口说明属于仍保留的 `recommendation` 实现。`recommendation`、`agent_v3` 各自拥有Go模块，根目录测试不会覆盖它们。
+这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；
 
 ```sh
-bash scripts/test-go-modules.sh root
+go test ./...
 bash scripts/test-content.sh
-# 需要检查存量模块时显式选择，或使用 all：
-bash scripts/test-go-modules.sh recommendation
 ```
 
 ## 前言

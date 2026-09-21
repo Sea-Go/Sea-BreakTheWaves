@@ -15,7 +15,7 @@ import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "warehouse" / "scripts"))
+sys.path.insert(0, str(REPO / "scripts"))
 from local_s3 import start as start_s3  # noqa: E402
 
 
@@ -51,8 +51,8 @@ def main() -> None:
         env.update(SEA_ARTIFACT_S3_HOST=host, SEA_ARTIFACT_S3_BUCKET=bucket,
                    GOMAXPROCS="2", GOFLAGS="-p=1")
         run(["go", "test", "-mod=readonly", "-race", "-count=1", "-v",
-             "./internal/artifacts"], evidence, "go-race.log", env)
-        run(["go", "vet", "-mod=readonly", "./internal/artifacts"],
+             "./service/common/artifacts"], evidence, "go-race.log", env)
+        run(["go", "vet", "-mod=readonly", "./service/common/artifacts"],
             evidence, "vet.log", env)
         run(["go", "mod", "verify"], evidence, "mod-verify.log", env)
         report = {

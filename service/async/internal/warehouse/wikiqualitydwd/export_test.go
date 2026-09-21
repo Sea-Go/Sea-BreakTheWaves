@@ -321,8 +321,7 @@ func TestSyntheticOfflineGoldenRebuildsExactSourcesAtBothCutoffs(t *testing.T) {
 			t.Fatalf("cutoff%d synthetic source Golden changed: %s %v",
 				item.cutoff, frozen.ManifestSHA, err)
 		}
-		dir := filepath.Join("..", "..", "..", "..", "..", "warehouse", "wiki_quality",
-			"fixtures", "cutoff-"+strconv.FormatInt(item.cutoff, 10))
+		dir := filepath.Join("testdata", "fixtures", "cutoff-"+strconv.FormatInt(item.cutoff, 10))
 		for _, artifact := range []struct {
 			name string
 			body []byte
