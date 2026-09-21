@@ -1,0 +1,4 @@
+Name: search-api
+Host: 0.0.0.0
+Port: 20731
+Timeout: 30000

@@ -332,6 +332,22 @@ Sea-BreakTheWaves/
 
 ---
 
+## Go-zero 服务入口
+
+Search / Recommend / Async 三个 API 已提供 go-zero 运行入口：
+
+```sh
+go run ./service/search/gozero
+go run ./service/recommend/gozero
+go run ./service/async/gozero
+```
+
+默认端口分别为 `20731`、`20721`、`20741`。如需指定配置：
+
+```sh
+go run ./service/search/gozero -f service/search/gozero/etc/search-api.yaml
+```
+
 ## 快速开始
 
 ### 1. 克隆项目

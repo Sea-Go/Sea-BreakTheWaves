@@ -13,7 +13,10 @@ service/
 api/               对外 HTTP 契约源
 proto/             内部 RPC 契约源
 deploy/            本地依赖编排与 Docker 配置
+go-zero/           Search / Recommend / Async 的 Go-zero API 入口
 ```
+
+Go-zero 采用 `rest` 服务、`handler → logic → svc` 分层；`.api` 文件是 HTTP 路由契约源。
 
 ## 服务内部
 

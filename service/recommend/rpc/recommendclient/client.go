@@ -25,6 +25,7 @@ type (
 	EventBatchResponse    = core.EventBatchResponse
 	TraceQueryRequest     = core.TraceQueryRequest
 	StreamEvent           = core.StreamEvent
+	UserIdentity          = core.UserIdentity
 	RecoEvaluationService = logic.RecoEvaluationService
 )
 

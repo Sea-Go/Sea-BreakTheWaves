@@ -8,10 +8,9 @@ type (
 		Source    string            `json:"source"`
 		Rank      int               `json:"rank"`
 		Reason    string            `json:"reason,optional"`
-		Features  map[string]any    `json:"features,optional"`
+		Features  map[string]string `json:"features,optional"`
 		ExtInfo   map[string]string `json:"ext_info,optional"`
 	}
-
 	RecommendReq {
 		TenantId  string            `json:"tenant_id"`
 		RequestId string            `json:"request_id"`
@@ -24,23 +23,20 @@ type (
 		Debug     bool              `json:"debug,optional"`
 		ExtInfo   map[string]string `json:"ext_info,optional"`
 	}
-
 	RecommendResp {
-	RequestId string          `json:"request_id"`
-	TraceId   string          `json:"trace_id"`
-	PathTaken string          `json:"path_taken"`
-	Items     []RecommendItem `json:"items"`
-	ErrMsg    string          `json:"err_msg,optional"`
-	ExtInfo   map[string]string `json:"ext_info,optional"`
+		RequestId string            `json:"request_id"`
+		TraceId   string            `json:"trace_id"`
+		PathTaken string            `json:"path_taken"`
+		Items     []RecommendItem   `json:"items"`
+		ErrMsg    string            `json:"err_msg,optional"`
+		ExtInfo   map[string]string `json:"ext_info,optional"`
 	}
-
 	EventBatchReq {
-		Events []map[string]any `json:"events"`
+		Events []map[string]string `json:"events"`
 	}
-
 	EventBatchResp {
-		Accepted int32   `json:"accepted"`
-		ErrMsg   string  `json:"err_msg,optional"`
+		Accepted int32  `json:"accepted"`
+		ErrMsg   string `json:"err_msg,optional"`
 	}
 )
 
@@ -66,7 +62,8 @@ service recommend-api {
 	prefix: /api/v1/admin
 	group:  recommend-admin
 )
-service recommend-admin-api {
+service recommend-api {
 	@handler EvaluationSummary
 	get /reco/evaluation/summary
 }
+

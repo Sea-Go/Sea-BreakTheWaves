@@ -1,0 +1,5 @@
+Name: recommend-api
+Host: 0.0.0.0
+Port: 20721
+Timeout: 30000
+AsyncURL: http://127.0.0.1:20741

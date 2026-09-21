@@ -1,7 +1,7 @@
 syntax = "v1"
 
 type EventBatchReq {
-	Events []map[string]any `json:"events"`
+	Events []map[string]string `json:"events"`
 }
 
 type EventBatchResp {
@@ -27,3 +27,4 @@ service async-api {
 	@handler ProjectionState
 	get /projections/state returns (ProcessingStateResp)
 }
+
