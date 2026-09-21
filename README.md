@@ -273,7 +273,7 @@ Sea-BreakTheWaves/
 ├── zlog/                # 业务自定义日志与 Agent Trace 封装
 ├── config.yaml          # 实际使用的配置文件
 ├── config.yaml.example  # 配置示例
-├── docker-compose.yaml  # 本地依赖环境编排
+├── deploy/              # Docker Compose、Prometheus、OTel Collector 配置
 ├── dockerfile           # 镜像构建
 ├── go.mod               # Go Modules 依赖管理
 ├── go.sum               # 依赖校验文件
@@ -364,10 +364,10 @@ cp config.yaml.example config.yaml
 ### 3. 启动基础依赖
 
 ```bash
-docker compose up -d
+docker compose -f deploy/docker-compose.yaml up -d
 ```
 
-项目中的 `docker-compose.yaml` 已包含以下组件：
+项目中的 `deploy/docker-compose.yaml` 已包含以下组件：
 
 - etcd
 - postgres (包含 exporter)
@@ -722,7 +722,7 @@ assets/logo.png
 ## 注意事项
 
 1. 当前压缩包中未发现现成的 logo 图片资源，因此 README 中使用了预留路径。
-2. `config.yaml.example` 中的部分默认配置与 `docker-compose.yaml` 中的默认账号/库名可能需要你按实际环境对齐后再运行。
+2. `service/recommend/api/etc/config.yaml.example` 中的部分默认配置与 `deploy/docker-compose.yaml` 中的默认账号/库名可能需要你按实际环境对齐后再运行。
 3. Neo4j 初始化失败时主链路会降级，不阻断基础推荐流程。
 4. 若模型服务不可用，推荐与检索中的语义能力将受影响。
 
