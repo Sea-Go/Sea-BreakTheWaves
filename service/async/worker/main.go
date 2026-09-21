@@ -23,11 +23,13 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/ridethewind"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 	btwRuntime "github.com/Sea-Go/Sea-BreakTheWaves/service/common/runtime"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/runtime/httpclient"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"gorm.io/gorm"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 )
 
@@ -122,6 +124,7 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	}
 	var runner *btwRuntime.Runtime
 	var pool *pgxpool.Pool
+	var db *gorm.DB
 	var metrics *http.Server
 	var dcTransport, rtwTransport *http.Transport
 	defer func() {
@@ -144,6 +147,11 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		}
 		if pool != nil {
 			pool.Close()
+		}
+		if db != nil {
+			if sqlDB, err := db.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
 		}
 		resultErr = errors.Join(resultErr, bundle.Close(shutdownCtx))
 		if resultErr != nil {
@@ -175,6 +183,16 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	if err != nil {
 		return fmt.Errorf("construct RideTheWind client: %w", err)
 	}
+	manager, err := database.Open(ctx, database.Config{DSN: cfg.ContentDSN, Schema: cfg.ContentSchema,
+		MaxOpenConns: 4, MaxIdleConns: 2})
+	if err != nil {
+		return fmt.Errorf("open content database manager: %w", err)
+	}
+	db = manager
+	if err := database.Exec(ctx, manager, contentmigration.SQL); err != nil {
+		return fmt.Errorf("apply content schema with GORM: %w", err)
+	}
+	logger.InfoContext(ctx, "content schema managed by GORM", "event", "content.worker.schema_ready", "outcome", "succeeded")
 	pgCfg, err := pgxpool.ParseConfig(cfg.ContentDSN)
 	if err != nil {
 		return errors.New("invalid content Postgres DSN") // never write credentials to logs
@@ -189,12 +207,6 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	}
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping content Postgres: %w", err)
-	}
-	if cfg.ContentMigrate {
-		if _, err := pool.Exec(ctx, contentmigration.SQL); err != nil {
-			return fmt.Errorf("apply content schema migration: %w", err)
-		}
-		logger.InfoContext(ctx, "content schema migration applied", "event", "content.worker.migration_applied", "outcome", "succeeded")
 	}
 	objects, err := artifacts.NewLocal(cfg.ArtifactDir)
 	if err != nil {

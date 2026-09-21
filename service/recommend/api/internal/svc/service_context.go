@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 	asynclient "github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/asyncclient"
-	cfg "github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
+	commonconfig "github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
 	metrics "github.com/Sea-Go/Sea-BreakTheWaves/service/common/metricx"
 	recommendlogic "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/logic"
@@ -25,7 +25,13 @@ type ServiceContext struct {
 func New() *ServiceContext {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	metrics.InitMetrics(signals, &cfg.Cfg)
+	if err := commonconfig.Init(); err != nil {
+		panic(err)
+	}
+	if err := infra.PostgresInit(); err != nil {
+		panic(err)
+	}
+	metrics.InitMetrics(signals, &commonconfig.Cfg)
 	shutdown, err := infra.OtelInit()
 	if err != nil {
 		panic(err)

@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/logx"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var pgDB *sql.DB
@@ -19,38 +21,31 @@ func Postgres() *sql.DB {
 }
 
 func PostgresInit() error {
-	db, err := sql.Open("pgx", config.Cfg.Postgres.DSN)
+	orm, err := database.Open(context.Background(), database.Config{
+		DSN:                    config.Cfg.Postgres.DSN,
+		MaxOpenConns:           config.Cfg.Postgres.MaxOpenConns,
+		MaxIdleConns:           config.Cfg.Postgres.MaxIdleConns,
+		ConnMaxLifetimeSeconds: config.Cfg.Postgres.ConnMaxLifetimeSeconds,
+	})
 	if err != nil {
 		zlog.L().Error("postgres connect failed", zap.Error(err))
 		return err
 	}
-
-	if config.Cfg.Postgres.MaxOpenConns > 0 {
-		db.SetMaxOpenConns(config.Cfg.Postgres.MaxOpenConns)
-	}
-	if config.Cfg.Postgres.MaxIdleConns > 0 {
-		db.SetMaxIdleConns(config.Cfg.Postgres.MaxIdleConns)
-	}
-	if config.Cfg.Postgres.ConnMaxLifetimeSeconds > 0 {
-		db.SetConnMaxLifetime(time.Duration(config.Cfg.Postgres.ConnMaxLifetimeSeconds) * time.Second)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		zlog.L().Error("postgres ping failed", zap.Error(err))
+	sqlDB, err := orm.DB()
+	if err != nil {
+		zlog.L().Error("postgres sql handle failed", zap.Error(err))
 		return err
 	}
+	ctx := context.Background()
+	pgDB = sqlDB
 
-	pgDB = db
-
-	if err := ensurePGSchema(ctx, db); err != nil {
+	if err := ensurePGSchema(ctx, orm); err != nil {
 		return err
 	}
 
 	indexCtx, indexCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer indexCancel()
-	if err := ensureKeywordSearchIndexes(indexCtx, db); err != nil {
+	if err := ensureKeywordSearchIndexes(indexCtx, orm); err != nil {
 		zlog.L().Warn("ensure local keyword search indexes failed", zap.Error(err))
 	}
 
@@ -58,7 +53,7 @@ func PostgresInit() error {
 	return nil
 }
 
-func ensurePGSchema(ctx context.Context, db *sql.DB) error {
+func ensurePGSchema(ctx context.Context, db *gorm.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS articles (
 			article_id TEXT PRIMARY KEY,
@@ -173,7 +168,7 @@ func ensurePGSchema(ctx context.Context, db *sql.DB) error {
 	}
 
 	for _, s := range stmts {
-		if _, err := db.ExecContext(ctx, s); err != nil {
+		if err := db.WithContext(ctx).Exec(s).Error; err != nil {
 			zlog.L().Error("ensure postgres schema failed", zap.Error(err), zap.String("sql", s))
 			return err
 		}

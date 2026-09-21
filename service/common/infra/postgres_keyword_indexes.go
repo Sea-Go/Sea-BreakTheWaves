@@ -2,14 +2,14 @@ package infra
 
 import (
 	"context"
-	"database/sql"
+	"gorm.io/gorm"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/logx"
 
 	"go.uber.org/zap"
 )
 
-func ensureKeywordSearchIndexes(ctx context.Context, db *sql.DB) error {
+func ensureKeywordSearchIndexes(ctx context.Context, db *gorm.DB) error {
 	stmts := []string{
 		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
 		`CREATE INDEX IF NOT EXISTS idx_articles_title_trgm
@@ -25,7 +25,7 @@ func ensureKeywordSearchIndexes(ctx context.Context, db *sql.DB) error {
 	return execIndexStatements(ctx, db, stmts)
 }
 
-func ensureSourceKeywordSearchIndexes(ctx context.Context, db *sql.DB) error {
+func ensureSourceKeywordSearchIndexes(ctx context.Context, db *gorm.DB) error {
 	stmts := []string{
 		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
 		`CREATE INDEX IF NOT EXISTS idx_source_article_title_trgm_published
@@ -42,9 +42,9 @@ func ensureSourceKeywordSearchIndexes(ctx context.Context, db *sql.DB) error {
 	return execIndexStatements(ctx, db, stmts)
 }
 
-func execIndexStatements(ctx context.Context, db *sql.DB, stmts []string) error {
+func execIndexStatements(ctx context.Context, db *gorm.DB, stmts []string) error {
 	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
+		if err := db.WithContext(ctx).Exec(stmt).Error; err != nil {
 			zlog.L().Warn("ensure postgres index failed", zap.Error(err), zap.String("sql", stmt))
 			return err
 		}

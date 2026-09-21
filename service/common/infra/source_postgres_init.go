@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/logx"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -19,35 +20,26 @@ func SourcePostgres() *sql.DB {
 }
 
 func SourcePostgresInit() error {
-	db, err := sql.Open("pgx", config.Cfg.SourcePostgres.DSN())
+	orm, err := database.Open(context.Background(), database.Config{
+		DSN:                    config.Cfg.SourcePostgres.DSN(),
+		MaxOpenConns:           config.Cfg.SourcePostgres.MaxOpenConns,
+		MaxIdleConns:           config.Cfg.SourcePostgres.MaxIdleConns,
+		ConnMaxLifetimeSeconds: config.Cfg.SourcePostgres.ConnMaxLifetimeSeconds,
+	})
 	if err != nil {
 		zlog.L().Error("source postgres connect failed", zap.Error(err))
 		return err
 	}
-
-	if config.Cfg.SourcePostgres.MaxOpenConns > 0 {
-		db.SetMaxOpenConns(config.Cfg.SourcePostgres.MaxOpenConns)
-	}
-	if config.Cfg.SourcePostgres.MaxIdleConns > 0 {
-		db.SetMaxIdleConns(config.Cfg.SourcePostgres.MaxIdleConns)
-	}
-	if config.Cfg.SourcePostgres.ConnMaxLifetimeSeconds > 0 {
-		db.SetConnMaxLifetime(time.Duration(config.Cfg.SourcePostgres.ConnMaxLifetimeSeconds) * time.Second)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		zlog.L().Error("source postgres ping failed", zap.Error(err))
+	sqlDB, err := orm.DB()
+	if err != nil {
+		zlog.L().Error("source postgres sql handle failed", zap.Error(err))
 		return err
 	}
-
-	sourcePgDB = db
+	sourcePgDB = sqlDB
 
 	indexCtx, indexCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer indexCancel()
-	if err := ensureSourceKeywordSearchIndexes(indexCtx, db); err != nil {
+	if err := ensureSourceKeywordSearchIndexes(indexCtx, orm); err != nil {
 		zlog.L().Warn("ensure source keyword search indexes failed", zap.Error(err))
 	}
 

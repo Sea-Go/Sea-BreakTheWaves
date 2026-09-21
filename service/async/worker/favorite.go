@@ -13,14 +13,18 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/runtime/httpclient"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry"
+	"gorm.io/gorm"
+
+	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 )
 
 // serveFactConsumer is selected only by an explicit user fact job type. It
-// borrows an already-migrated user fact schema and never creates tables.
+// uses a GORM-managed user fact schema; framework session storage remains separate.
 func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resultErr error) {
 	bundle, err := telemetry.New(ctx, telemetry.Config{Service: workerService(cfg), Environment: cfg.Environment,
 		Version: cfg.Version, InstanceID: cfg.InstanceID, Output: output, Level: slog.LevelInfo,
@@ -37,6 +41,7 @@ func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resul
 		return err
 	}
 	var pool *pgxpool.Pool
+	var db *gorm.DB
 	var graph *usermodel.FactGraphRuntime
 	var metrics *http.Server
 	var dcTransport, rtwTransport *http.Transport
@@ -60,6 +65,11 @@ func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resul
 		}
 		if pool != nil {
 			pool.Close()
+		}
+		if db != nil {
+			if sqlDB, err := db.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
 		}
 		resultErr = errors.Join(resultErr, bundle.Close(shutdown))
 		if resultErr != nil {
@@ -88,6 +98,20 @@ func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resul
 	bindings, err := factBindings(cfg, rtwClient)
 	if err != nil {
 		return fmt.Errorf("construct RTW fact authority binder: %w", err)
+	}
+	manager, err := database.Open(ctx, database.Config{DSN: cfg.FactDSN, Schema: cfg.FactSchema,
+		MaxOpenConns: 4, MaxIdleConns: 2})
+	if err != nil {
+		return fmt.Errorf("open user fact database manager: %w", err)
+	}
+	db = manager
+	for _, migration := range []string{usermodelmigration.SQL, usermodelmigration.CoverageSQL,
+		usermodelmigration.OntologySQL, usermodelmigration.FeaturesSQL, usermodelmigration.ServingSQL,
+		usermodelmigration.CoveredBaselineSQL, usermodelmigration.CoveredSnapshotSQL,
+		usermodelmigration.SubjectRefV2SQL} {
+		if err := database.Exec(ctx, manager, migration); err != nil {
+			return fmt.Errorf("apply user fact schema with GORM: %w", err)
+		}
 	}
 	pgCfg, err := pgxpool.ParseConfig(cfg.FactDSN)
 	if err != nil {
