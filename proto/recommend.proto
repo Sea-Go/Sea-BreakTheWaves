@@ -48,7 +48,26 @@ message BehaviorEvent {
 message SubmitEventsRequest { repeated BehaviorEvent events = 1; }
 message SubmitEventsResponse { int32 accepted = 1; repeated string rejected = 2; }
 
+message Skill {
+  string name = 1;
+  string description = 2;
+  string category = 3;
+  string cost_level = 4;
+  bool online = 5;
+}
+
+message SkillListRequest {}
+message SkillListResponse { repeated Skill skills = 1; }
+message EvaluationSummaryRequest {
+  string surface = 1;
+  string window = 2;
+}
+message EvaluationSummaryResponse { bytes json = 1; }
+
 service RecommendService {
   rpc Recommend(RecommendRequest) returns (RecommendResponse);
+  rpc StreamRecommend(RecommendRequest) returns (stream RecommendResponse);
   rpc SubmitEvents(SubmitEventsRequest) returns (SubmitEventsResponse);
+  rpc ListSkills(SkillListRequest) returns (SkillListResponse);
+  rpc EvaluationSummary(EvaluationSummaryRequest) returns (EvaluationSummaryResponse);
 }

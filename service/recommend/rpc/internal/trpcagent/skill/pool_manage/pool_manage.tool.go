@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
-	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic"
+	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic/legacy"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model/poolrefill"
 

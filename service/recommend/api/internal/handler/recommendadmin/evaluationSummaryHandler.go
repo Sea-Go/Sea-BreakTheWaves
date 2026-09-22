@@ -1,6 +1,3 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package recommendadmin
 
 import (
@@ -14,11 +11,12 @@ import (
 func EvaluationSummaryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		l := recommendadmin.NewEvaluationSummaryLogic(r.Context(), svcCtx)
-		err := l.EvaluationSummary()
+		resp, err := l.EvaluationSummary(r.FormValue("surface"), r.FormValue("window"))
 		if err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
-		} else {
-			httpx.Ok(w)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
 	}
 }

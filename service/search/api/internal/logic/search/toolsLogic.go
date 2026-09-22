@@ -1,31 +1,27 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package search
 
 import (
 	"context"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/svc"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/searchservice"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type ToolsLogic struct {
-	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
+	logx.Logger
 }
 
 func NewToolsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ToolsLogic {
-	return &ToolsLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
+	return &ToolsLogic{ctx: ctx, svcCtx: svcCtx, Logger: logx.WithContext(ctx)}
 }
 
-func (l *ToolsLogic) Tools() error {
-	// todo: add your logic here and delete this line
-
-	return nil
+func (l *ToolsLogic) Tools() ([]string, error) {
+	out, err := l.svcCtx.SearchService.Tools(l.ctx, &searchservice.ToolsRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return out.Tools, nil
 }

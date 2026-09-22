@@ -2,3 +2,7 @@ Name: search-api
 Host: 0.0.0.0
 Port: 20731
 Timeout: 30000
+SearchRpc:
+  Endpoints:
+    - 127.0.0.1:30881
+  Timeout: 30000

@@ -1,6 +1,3 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package search
 
 import (
@@ -8,26 +5,19 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/svc"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/types"
-
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type SearchAuthorsLogic struct {
-	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
+	logx.Logger
 }
 
 func NewSearchAuthorsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SearchAuthorsLogic {
-	return &SearchAuthorsLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
+	return &SearchAuthorsLogic{ctx: ctx, svcCtx: svcCtx, Logger: logx.WithContext(ctx)}
 }
 
-func (l *SearchAuthorsLogic) SearchAuthors(req *types.StructuredSearchReq) (resp *types.SearchResp, err error) {
-	// todo: add your logic here and delete this line
-
-	return
+func (l *SearchAuthorsLogic) SearchAuthors(req *types.StructuredSearchReq) (*types.SearchResp, error) {
+	return structuredSearch(l.ctx, l.svcCtx, req, "authors")
 }

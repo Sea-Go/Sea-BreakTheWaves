@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	types "github.com/Sea-Go/Sea-BreakTheWaves/service/common/types"
-	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic"
+	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic/legacy"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model"
 )
 

@@ -1,6 +1,3 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package recommend
 
 import (
@@ -8,26 +5,23 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/svc"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/types"
-
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/recommendservice"
 	"github.com/zeromicro/go-zero/core/logx"
+	"google.golang.org/grpc"
 )
 
 type RecommendStreamLogic struct {
-	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
+	logx.Logger
 }
 
 func NewRecommendStreamLogic(ctx context.Context, svcCtx *svc.ServiceContext) *RecommendStreamLogic {
-	return &RecommendStreamLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
+	return &RecommendStreamLogic{ctx: ctx, svcCtx: svcCtx, Logger: logx.WithContext(ctx)}
 }
 
-func (l *RecommendStreamLogic) RecommendStream(req *types.RecommendReq) error {
-	// todo: add your logic here and delete this line
-
-	return nil
+func (l *RecommendStreamLogic) RecommendStream(req *types.RecommendReq) (recommendservice.RecommendService_StreamRecommendClient, error) {
+	return l.svcCtx.RecommendService.StreamRecommend(l.ctx, recommendRequest(req))
 }
+
+var _ grpc.ClientStream = (recommendservice.RecommendService_StreamRecommendClient)(nil)

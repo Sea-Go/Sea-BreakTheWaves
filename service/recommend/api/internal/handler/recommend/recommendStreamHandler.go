@@ -1,9 +1,8 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package recommend
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/api/internal/logic/recommend"
@@ -19,13 +18,26 @@ func RecommendStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
-
 		l := recommend.NewRecommendStreamLogic(r.Context(), svcCtx)
-		err := l.RecommendStream(&req)
+		stream, err := l.RecommendStream(&req)
 		if err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
-		} else {
-			httpx.Ok(w)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			httpx.ErrorCtx(r.Context(), w, errors.New("streaming unsupported"))
+			return
+		}
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				break
+			}
+			fmt.Fprintf(w, "event: recommend\ndata: %s\n\n", resp.String())
+			flusher.Flush()
 		}
 	}
 }

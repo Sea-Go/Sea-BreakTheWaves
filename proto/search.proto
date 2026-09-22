@@ -28,6 +28,19 @@ message SearchResponse {
   string error_message = 6;
 }
 
+message StructuredSearchRequest {
+  string request_id = 1;
+  string query = 2;
+  int32 limit = 3;
+  string mode = 4;
+}
+
+message ToolsRequest {}
+
+message ToolsResponse { repeated string tools = 1; }
+
 service SearchService {
   rpc Search(SearchRequest) returns (SearchResponse);
+  rpc SearchStructured(StructuredSearchRequest) returns (SearchResponse);
+  rpc Tools(ToolsRequest) returns (ToolsResponse);
 }

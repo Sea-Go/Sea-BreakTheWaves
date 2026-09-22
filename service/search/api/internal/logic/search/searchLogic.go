@@ -1,6 +1,3 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package search
 
 import (
@@ -8,26 +5,37 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/svc"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/types"
-
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/searchservice"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type SearchLogic struct {
-	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
+	logx.Logger
 }
 
 func NewSearchLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SearchLogic {
-	return &SearchLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
+	return &SearchLogic{ctx: ctx, svcCtx: svcCtx, Logger: logx.WithContext(ctx)}
 }
 
-func (l *SearchLogic) Search(req *types.SearchReq) (resp *types.SearchResp, err error) {
-	// todo: add your logic here and delete this line
+func (l *SearchLogic) Search(req *types.SearchReq) (*types.SearchResp, error) {
+	out, err := l.svcCtx.SearchService.Search(l.ctx, &searchservice.SearchRequest{
+		SearchRequestId: req.SearchRequestId, UserId: req.UserId, SessionId: req.SessionId,
+		Query: req.Query, TopK: req.Topk, NeedAnswer: req.NeedAnswer, Explain: req.Explain,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return mapSearchResponse(out), nil
+}
 
-	return
+func mapSearchResponse(out *searchservice.SearchResponse) *types.SearchResp {
+	resp := &types.SearchResp{TraceId: out.TraceId, SearchRequestId: out.SearchRequestId,
+		Status: out.Status, Answer: out.Answer, ErrMsg: out.ErrorMessage}
+	for _, hit := range out.Hits {
+		resp.Hits = append(resp.Hits, types.SearchHit{ArticleId: hit.ArticleId, Title: hit.Title,
+			Snippet: hit.Snippet, ArticleScore: hit.Score, VectorScore: hit.Score, MatchScore: hit.Score})
+	}
+	return resp
 }

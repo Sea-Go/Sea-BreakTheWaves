@@ -11,7 +11,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/logx"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/metricx"
 	types "github.com/Sea-Go/Sea-BreakTheWaves/service/common/types"
-	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic"
+	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic/legacy"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model"
 
 	"go.uber.org/zap"

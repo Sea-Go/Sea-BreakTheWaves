@@ -14,7 +14,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/logx"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/skillsys"
-	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/logic"
+	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/logic/legacy"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/model"
 
 	"github.com/milvus-io/milvus/client/v2/entity"

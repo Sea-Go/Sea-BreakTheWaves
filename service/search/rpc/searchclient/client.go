@@ -9,7 +9,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/skillsys"
 	trpcmodel "github.com/Sea-Go/Sea-BreakTheWaves/service/common/trpcagent/model"
-	logic "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/logic"
+	logic "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/logic/legacy"
 	model "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/model"
 	searchagent "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/trpcagent/agent"
 	agent "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/trpcagent/agent/llm/legacyagent"

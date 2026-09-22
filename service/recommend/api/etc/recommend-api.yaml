@@ -2,3 +2,7 @@ Name: recommend-api
 Host: 0.0.0.0
 Port: 20721
 Timeout: 30000
+RecommendRpc:
+  Endpoints:
+    - 127.0.0.1:30882
+  Timeout: 30000

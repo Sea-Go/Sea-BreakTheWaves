@@ -1,71 +1,120 @@
-# Search / Recommend / Async 工程结构
+# Go-zero Search / Recommend / Async 架构
 
-目标结构只有一套业务服务目录。根目录不保留 BTW 的 `internal/`、`cmd/` 或数据生产工程；数据契约、数仓和训练工程由外部数据侧维护。
+本项目现在以 go-zero 作为唯一 HTTP/zrpc 服务框架。数据生产工程已迁至外部数据侧归档，本仓库只保留搜广推确定性服务代码和必要共享技术设施。
 
 ## 顶层
 
 ```text
-service/
-  common/          跨服务技术设施、客户端、契约和共享检索算子
-  search/          搜索 API、核心 Search、评测、验收工具、searchclient
-  recommend/       推荐 API、核心 Recommend、推荐内部模型与客户端
-  async/           内容同步、Worker、用户模型、事件账本、投影与治理
-api/               对外 HTTP 契约源
-proto/             内部 RPC 契约源
-deploy/            本地依赖编排与 Docker 配置
-service/*/api/      Go-zero REST API 入口
-service/*/legacyapi/ 迁移期保留的旧 Search API 入口
+api/                    HTTP API 契约源，goctl 生成 API 层
+proto/                  gRPC/zrpc 契约源，goctl 生成 RPC 层
+service/search/         搜索域
+service/recommend/      推荐域
+service/async/          异步与用户模型域
+service/common/         无业务语义的共享技术设施
+deploy/                 Docker Compose、Prometheus、OTel Collector
+migrations/             服务 PostgreSQL schema
 ```
 
-Go-zero 采用 `rest` 服务、`etc/` 配置、`handler → logic → svc → types` 分层；`.api` 文件由 goctl 消费并作为 HTTP 路由契约源。
-
-## 服务内部
+每个业务域采用标准 go-zero 结构：
 
 ```text
-service/search/
-  api/                  Search API 进程
-  internal/app/         RTW 搜索适配
-  internal/search/      Search 核心与 tRPC Graph
-  internal/transport/   HTTP transport
-  internal/evaluation/  搜索评测
-  internal/warehouse/   Search source 投影
-  rpc/                  稳定 searchclient 与 tRPC 能力装配
-
-service/recommend/
-  api/                  Recommend API 进程
-  internal/app/         RTW 推荐适配
-  internal/recommend/   推荐核心
-  rpc/                  稳定 recommendclient 与推荐运行时
-
-service/async/
-  api/                  Async 管理 API
-  worker/               Async Worker 进程
-  internal/app/         Worker 编排
-  internal/content/     内容编译与索引账本
-  internal/usermodel/   用户模型 owner
-  internal/warehouse/   社区、收藏、特征基线、Wiki 质量投影
+service/<domain>/
+├── api/
+│   ├── <domain>.go
+│   ├── etc/<domain>-api.yaml
+│   └── internal/
+│       ├── config/
+│       ├── handler/
+│       ├── logic/
+│       ├── svc/
+│       └── types/
+└── rpc/
+    ├── sea.<domain>.v1.go
+    ├── etc/
+    ├── <domain>service/       # 生成 zrpc client
+    ├── pb/
+    └── internal/
+        ├── config/
+        ├── logic/
+        ├── server/
+        ├── svc/
+        ├── model/
+        └── trpcagent/         # Search/Recommend 的 tRPC-Agent-Go 能力
 ```
 
-## 共享设施
+## 调用链
 
 ```text
-service/common/artifacts
-service/common/clients
-service/common/corpus
-service/common/retrieval
-service/common/runtime
-service/common/telemetry
-service/common/sourcecoverage
-service/common/trpcagent
-service/common/usermodelcontract
+HTTP request
+  → go-zero handler
+  → api/internal/logic
+  → api/internal/svc 持有的 zrpc client
+  → go-zero zrpc server
+  → rpc/internal/logic
+  → tRPC-Agent-Go Runner / Graph / Tool
+  → rpc/internal/model / common client / storage
 ```
 
-`service/common` 不依赖 Search、Recommend、Async 内部包。
-`service/async` 不依赖 Search/Recommend 内部包。
-Search 和 Recommend 不互相依赖内部包。
-Recommend 通过 `service/common/usermodelcontract` 消费 Async 拥有的用户模型契约。
+API 层不直接访问数据库，也不直接启动业务 runtime。跨服务同步调用只通过生成的 `<domain>service` client；异步边界通过 Async RPC 和 worker/mq 处理。
 
-## tRPC-Agent-Go
+## 端口
 
-`service/common/trpcagent` 提供框架 `model.Model`、Session、Memory、Telemetry 和 Event 适配。
-Search/Recommend 的 `rpc/internal/trpcagent` 装配各自 Runner、Graph、Tool、Prompt、Plugin、Skill。
+| 服务 | HTTP | zrpc |
+| --- | ---: | ---: |
+| Search | 20731 | 30881 |
+| Recommend | 20721 | 30882 |
+| Async | 20741 | 30883 |
+
+## 启动
+
+```sh
+# Search
+cd service/search/rpc && go run .
+cd service/search/api && go run .
+
+# Recommend
+cd service/recommend/rpc && go run .
+cd service/recommend/api && go run .
+
+# Async API / RPC / worker
+cd service/async/rpc && go run .
+cd service/async/api && go run .
+cd service/async/rpc/cmd/worker && go run .
+```
+
+## tRPC-Agent-Go 边界
+
+`service/common/trpcagent` 提供应用侧 GORM 之外的框架技术适配：
+
+- `model.Model`
+- Session 后端
+- 只读 Memory
+- Telemetry
+- Runner Event 桥接
+
+Search / Recommend 的 `rpc/internal/trpcagent` 分别拥有：
+
+- Agent
+- Runner
+- Graph
+- Tool
+- Prompt
+- Plugin
+- Skill
+- Event
+
+tRPC-Agent-Go 自管理的 Postgres Session 存储继续由框架初始化，不纳入应用 GORM 管理范围。
+
+## 依赖边界
+
+```text
+search/api        → search/rpc/searchservice
+recommend/api     → recommend/rpc/recommendservice
+async/api         → async/rpc/asyncservice
+search/rpc        → common, 本域 internal
+recommend/rpc     → common, 本域 internal
+async/rpc         → common, async/internal
+common            → 不依赖任何业务域
+```
+
+禁止 Search 与 Recommend 互相引用 internal；禁止 API 层直连数据库；禁止业务域复制 go-zero generated client 后手改生成文件。

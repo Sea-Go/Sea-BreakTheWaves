@@ -1,6 +1,3 @@
-// Code scaffolded by goctl. Safe to edit.
-// goctl 1.10.2
-
 package recommend
 
 import (
@@ -14,11 +11,11 @@ import (
 func SkillListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		l := recommend.NewSkillListLogic(r.Context(), svcCtx)
-		err := l.SkillList()
+		resp, err := l.SkillList()
 		if err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
-		} else {
-			httpx.Ok(w)
+			return
 		}
+		httpx.OkJsonCtx(r.Context(), w, map[string]any{"skills": resp})
 	}
 }

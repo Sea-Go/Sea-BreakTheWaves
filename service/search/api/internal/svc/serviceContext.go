@@ -1,11 +1,18 @@
 package svc
 
-import "github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/config"
+import (
+	searchservice "github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/searchservice"
+
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/config"
+	"github.com/zeromicro/go-zero/zrpc"
+)
 
 type ServiceContext struct {
-	Config config.Config
+	Config        config.Config
+	SearchService searchservice.SearchService
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
-	return &ServiceContext{Config: c}
+	conn := zrpc.MustNewClient(c.SearchRpc)
+	return &ServiceContext{Config: c, SearchService: searchservice.NewSearchService(conn)}
 }

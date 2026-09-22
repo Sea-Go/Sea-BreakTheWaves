@@ -9,7 +9,7 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
 	trpcmodel "github.com/Sea-Go/Sea-BreakTheWaves/service/common/trpcagent/model"
-	logic "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic"
+	logic "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic/legacy"
 	model "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model"
 	recommendagent "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/trpcagent/agent"
 	core "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/trpcagent/core"
@@ -23,6 +23,7 @@ type (
 	RecommendResponse     = core.RecommendResponse
 	EventBatchRequest     = core.EventBatchRequest
 	EventBatchResponse    = core.EventBatchResponse
+	BehaviorEvent         = core.BehaviorEvent
 	TraceQueryRequest     = core.TraceQueryRequest
 	StreamEvent           = core.StreamEvent
 	UserIdentity          = core.UserIdentity

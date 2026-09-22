@@ -17,9 +17,9 @@
 | 目录 | 当前职责 | 说明 |
 | --- | --- | --- |
 | `service/common` | 共享客户端、运行时、检索算子、遥测和 tRPC-Agent 适配 | 见各包文档 |
-| `service/search` | 搜索 API、核心检索/总结、评测与工具 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
-| `service/recommend` | 推荐 API、候选/排序核心与推荐客户端 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
-| `service/async` | 内容同步、Worker、用户模型与异步投影 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `service/search` | go-zero API/zrpc、tRPC-Agent-Go 搜索运行时 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `service/recommend` | go-zero API/zrpc、tRPC-Agent-Go 推荐运行时 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `service/async` | go-zero API/zrpc、Worker、用户模型与异步投影 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
 | `deploy` | 本地依赖编排和 Docker 配置 | [部署](deploy/README.md) |
 
 这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；

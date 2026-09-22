@@ -3,7 +3,7 @@ package poolrefill
 import (
 	"testing"
 
-	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic"
+	searchsvc "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic/legacy"
 )
 
 func TestMergeQueryMatchResultsUsesBestScoresAndDedupes(t *testing.T) {
