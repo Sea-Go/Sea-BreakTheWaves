@@ -10,18 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var sourceFiles = []string{
-	"../../../migrations/usermodel/001_facts.sql",
-	"../../../migrations/usermodel/002_coverage_verification.sql",
-	"../../../migrations/usermodel/002_ontology.sql",
-	"../../../migrations/usermodel/003_features.sql",
-	"../../../migrations/usermodel/004_serving.sql",
-	"../../../migrations/usermodel/005_covered_baseline.sql",
-	"../../../migrations/usermodel/006_covered_snapshot.sql",
-}
+var schemaSource = "../schema.go"
 
 func fixtureDB(t *testing.T) (*pgx.Conn, string) {
 	t.Helper()
@@ -38,52 +32,53 @@ func fixtureDB(t *testing.T) (*pgx.Conn, string) {
 	if _, err := conn.Exec(ctx, `CREATE SCHEMA `+pgx.Identifier{schema}.Sanitize()); err != nil {
 		t.Fatal("create fixture schema", err)
 	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal("parse isolated PostgreSQL fixture", err)
+	}
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal("open isolated PostgreSQL GORM fixture", err)
+	}
+	if err := usermodel.MigratePoolInSchema(ctx, pool, schema); err != nil {
+		t.Fatal("apply isolated GORM schema fixture", err)
+	}
+	if _, err := conn.Exec(ctx, `SET search_path TO `+pgx.Identifier{schema}.Sanitize()); err != nil {
+		t.Fatal("select fixture schema", err)
+	}
+	pool.Close()
 	t.Cleanup(func() {
 		_, _ = conn.Exec(context.Background(), `DROP SCHEMA `+pgx.Identifier{schema}.Sanitize()+` CASCADE`)
 		_ = conn.Close(context.Background())
 	})
-	if _, err := conn.Exec(ctx, `SET search_path TO `+pgx.Identifier{schema}.Sanitize()); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range sourceFiles {
-		body, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := conn.Exec(ctx, string(body), pgx.QueryExecModeSimpleProtocol); err != nil {
-			t.Fatal("apply isolated migration fixture", name, err)
-		}
-	}
 	return conn, schema
 }
 
-func TestFrozenMigrationCatalogAndReadOnlyEmptyAudit(t *testing.T) {
+func TestFrozenGORMCatalogAndReadOnlyEmptyAudit(t *testing.T) {
 	conn, schema := fixtureDB(t)
-	h := sha256.New()
-	for _, name := range sourceFiles {
-		body, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		logicalName := strings.TrimPrefix(name, "../../../")
-		_, _ = h.Write([]byte(logicalName))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write(body)
-		_, _ = h.Write([]byte{0})
+	body, err := os.ReadFile(schemaSource)
+	if err != nil {
+		t.Fatal(err)
 	}
+	h := sha256.New()
+	_, _ = h.Write(body)
 	want, sourceSHA, err := Contract()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sourceSHA != hex.EncodeToString(h.Sum(nil)) {
-		t.Fatal("frozen source hash differs from the seven migrations")
+		t.Fatal("frozen source hash differs from the GORM schema")
 	}
 	live, err := Inspect(context.Background(), conn, schema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if live.SHA256() != want.SHA256() {
-		t.Fatal("isolated PG16 catalog differs from frozen migration contract")
+		t.Fatal("isolated PG16 catalog differs from frozen GORM contract")
 	}
 	var stages []Observation
 	report, err := Run(context.Background(), conn, schema, func(o Observation) { stages = append(stages, o) })
@@ -94,7 +89,7 @@ func TestFrozenMigrationCatalogAndReadOnlyEmptyAudit(t *testing.T) {
 		t.Fatalf("Run catalog %s != contract %s", report.LiveCatalogSHA256, want.SHA256())
 	}
 	if report.L1+report.L2+report.L3 != 0 {
-		t.Fatalf("empty migration fixture has findings: %+v", report.Findings)
+		t.Fatalf("empty GORM fixture has findings: %+v", report.Findings)
 	}
 	if report.Transaction != "repeatable_read/read_only" || len(stages) < 3 || report.ReportSHA256 == "" {
 		t.Fatal("read-only audit contract is incomplete")
@@ -119,7 +114,7 @@ func TestSyntheticAndCrossTenantRowsBlockProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The legacy head has no FK after this deliberate schema-drift fixture.
-	_, err = conn.Exec(ctx, `ALTER TABLE usermodel_feature_heads DROP CONSTRAINT usermodel_feature_heads_authority_id_tenant_id_subject_id__fkey`)
+	_, err = conn.Exec(ctx, `ALTER TABLE usermodel_feature_heads DROP CONSTRAINT fk_usermodel_feature_heads_baseline`)
 	if err != nil {
 		t.Fatal(err)
 	}

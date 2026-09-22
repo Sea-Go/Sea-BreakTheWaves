@@ -18,7 +18,6 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry"
 	"gorm.io/gorm"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 )
@@ -105,13 +104,8 @@ func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resul
 		return fmt.Errorf("open user fact database manager: %w", err)
 	}
 	db = manager
-	for _, migration := range []string{usermodelmigration.SQL, usermodelmigration.CoverageSQL,
-		usermodelmigration.OntologySQL, usermodelmigration.FeaturesSQL, usermodelmigration.ServingSQL,
-		usermodelmigration.CoveredBaselineSQL, usermodelmigration.CoveredSnapshotSQL,
-		usermodelmigration.SubjectRefV2SQL} {
-		if err := database.Exec(ctx, manager, migration); err != nil {
-			return fmt.Errorf("apply user fact schema with GORM: %w", err)
-		}
+	if err := usermodel.MigrateSchema(ctx, manager); err != nil {
+		return fmt.Errorf("apply user fact schema with GORM: %w", err)
 	}
 	pgCfg, err := pgxpool.ParseConfig(cfg.FactDSN)
 	if err != nil {

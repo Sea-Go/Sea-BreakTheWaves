@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
 // Catalog is the physical PostgreSQL contract, including columns and the keys
-// that the seven frozen usermodel migrations actually create.
+// that the scoped usermodel GORM schema creates.
 type Catalog struct {
 	Tables []Table `json:"tables"`
 }
@@ -47,7 +48,7 @@ type UniqueKey struct {
 	Predicate string   `json:"predicate,omitempty"`
 }
 
-var migrationTables = []string{
+var scopedTables = []string{
 	"usermodel_subject_state", "usermodel_events", "usermodel_unmapped_events",
 	"usermodel_subject_bindings", "usermodel_active_facts", "usermodel_attributions",
 	"usermodel_watermarks", "usermodel_outbox", "usermodel_coverage_prefix",
@@ -65,7 +66,7 @@ func readCatalog(ctx context.Context, tx pgx.Tx, schema string) (Catalog, error)
 	rows, err := tx.Query(ctx, `SELECT relname FROM pg_catalog.pg_class c
 		JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
 		WHERE n.nspname=$1 AND c.relkind='r' AND c.relname=ANY($2::text[])
-		ORDER BY relname`, schema, migrationTables)
+		ORDER BY relname`, schema, scopedTables)
 	if err != nil {
 		return c, err
 	}
@@ -98,7 +99,7 @@ func readCatalog(ctx context.Context, tx pgx.Tx, schema string) (Catalog, error)
 }
 
 // Inspect is for generating/reviewing a structural oracle from an isolated
-// migration fixture. It uses the same read-only snapshot as the audit.
+// GORM schema fixture. It uses the same read-only snapshot as the audit.
 func Inspect(ctx context.Context, conn *pgx.Conn, schema string) (Catalog, error) {
 	if schema == "" {
 		return Catalog{}, fmt.Errorf("schema is required")
@@ -159,6 +160,9 @@ func readConstraints(ctx context.Context, tx pgx.Tx, schema string, t *Table) er
 		if err := rows.Scan(&con.Name, &con.Kind, &con.Columns, &con.RefTable, &con.RefColumns, &con.Definition); err != nil {
 			return err
 		}
+		// GORM qualifies referenced tables with the current schema. The contract
+		// is schema-relative so isolated acceptance schemas remain comparable.
+		con.Definition = strings.ReplaceAll(con.Definition, schema+".", "")
 		if con.Columns == nil {
 			con.Columns = []string{}
 		}
@@ -213,10 +217,10 @@ func (c Catalog) ByName() map[string]Table {
 }
 
 func (c Catalog) ValidateNames() error {
-	if len(c.Tables) != len(migrationTables) {
-		return fmt.Errorf("catalog has %d of %d scoped tables", len(c.Tables), len(migrationTables))
+	if len(c.Tables) != len(scopedTables) {
+		return fmt.Errorf("catalog has %d of %d scoped tables", len(c.Tables), len(scopedTables))
 	}
-	want := append([]string(nil), migrationTables...)
+	want := append([]string(nil), scopedTables...)
 	sort.Strings(want)
 	for i, t := range c.Tables {
 		if t.Name != want[i] {

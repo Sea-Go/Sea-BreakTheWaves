@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/eventing"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/sourcecoverage"
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
@@ -123,7 +122,7 @@ func coverageTestSubject(t *testing.T, prefix sourcecoverage.GlobalPrefixRef,
 func coverageTestStore(t *testing.T) *Store {
 	t.Helper()
 	store := testStore(t, nil)
-	if _, err := store.db.Exec(context.Background(), usermodelmigration.CoverageSQL); err != nil {
+	if err := MigratePool(context.Background(), store.db); err != nil {
 		t.Fatal(err)
 	}
 	return store

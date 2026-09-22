@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/corpus"
 	"github.com/jackc/pgx/v5"
@@ -51,7 +50,7 @@ func testStore(t *testing.T) *Store {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		admin.Close()
 	})
-	if _, err := pool.Exec(ctx, contentmigration.SQL); err != nil {
+	if err := MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	return NewStore(pool)

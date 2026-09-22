@@ -20,4 +20,4 @@ content_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1
 content_started=true
 export CONTENT_TEST_POSTGRES_DSN="postgres://$(id -un)@127.0.0.1:$content_port/postgres?sslmode=disable"
 go test -race -count=1 -v ./service/async/internal/content ./service/common/artifacts | tee "$content_tmp/go-test.log"
-go vet ./service/async/internal/content ./service/common/artifacts ./service/common/corpus ./migrations/content
+go vet ./service/async/internal/content ./service/common/artifacts ./service/common/corpus

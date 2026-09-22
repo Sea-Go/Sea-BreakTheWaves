@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/eventing"
@@ -183,7 +182,7 @@ func factWorkerPool(t *testing.T) *pgxpool.Pool {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		admin.Close()
 	})
-	if _, err := pool.Exec(ctx, usermodelmigration.SQL); err != nil {
+	if err := usermodel.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	return pool

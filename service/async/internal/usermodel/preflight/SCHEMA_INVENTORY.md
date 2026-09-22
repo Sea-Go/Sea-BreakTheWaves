@@ -1,8 +1,8 @@
 # SubjectRef v2 阶段一：BTW usermodel 物理结构清单
 
-依据：BTW 开发集成提交 `f51723e0a1db3b5029342ef8207fb2255be79cec` 的七份 `migrations/usermodel/001..006` SQL，
-按部署顺序应用到隔离 PostgreSQL 16，再从 `pg_catalog` 读取真实列、主键、外键和唯一索引。
-迁移源 SHA-256：`fdb6615e728a8a0714cb8b5c491199fa67b0e1d84f8f9d8facbb1f5545e4ab97`。本文由 `render-inventory.py` 从 `contract.json` 生成。
+依据：`service/async/internal/usermodel/schema.go` 的 GORM 模型，
+通过 `AutoMigrate` 应用到隔离 PostgreSQL 16，再从 `pg_catalog` 读取真实列、主键、外键和唯一索引。
+GORM schema 源 SHA-256：`2bcf8dc6b73478d5bc83de402e5d3a753d7fa71ab3fb4bf6d9e22e026c7d0755`。本文由 `render-inventory.py` 从 `contract.json` 生成。
 
 实际是 23 张表：19 张有完整 `(authority_id,tenant_id,subject_id)` 列，
 1 张未映射事件以外部主体为键，2 张 Ontology 表只按 authority/tenant 建键，
@@ -18,7 +18,7 @@
 | `usermodel_covered_baselines_v2` | authority_id, tenant_id, subject_id, revision, generation, artifact_url, artifact_sha256, schema_version, status, spec_version, spec_hash, prefix_manifest_sha256, subject_receipt_sha256, through_offset, input_state_version, as_of, available_at, candidate_raw, candidate_body, accepted_at | authority_id, tenant_id, subject_id, revision | authority_id, tenant_id, subject_id, generation | prefix_manifest_sha256, authority_id, tenant_id, subject_id → usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id) |
 | `usermodel_covered_bundle_candidates_v2` | authority_id, tenant_id, subject_id, bundle_id, snapshot_id, pair_id, space_id, encoder_id, pair_feature_spec_hash, bundle_raw_sha256, bundle_raw, bundle_body, status, created_at | authority_id, tenant_id, subject_id, bundle_id | authority_id, tenant_id, subject_id, snapshot_id, pair_id | authority_id, tenant_id, subject_id, snapshot_id → usermodel_covered_snapshots_v2(authority_id, tenant_id, subject_id, snapshot_id) |
 | `usermodel_covered_snapshots_v2` | authority_id, tenant_id, subject_id, snapshot_id, baseline_revision, baseline_artifact_sha256, prefix_manifest_sha256, subject_receipt_sha256, spec_version, spec_hash, input_state_version, snapshot_raw_sha256, snapshot_raw, snapshot_body, status, created_at | authority_id, tenant_id, subject_id, snapshot_id | authority_id, tenant_id, subject_id, baseline_revision | authority_id, tenant_id, subject_id, baseline_revision → usermodel_covered_baselines_v2(authority_id, tenant_id, subject_id, revision); prefix_manifest_sha256, authority_id, tenant_id, subject_id → usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id) |
-| `usermodel_events` | authority_id, tenant_id, subject_id, producer, event_id, normalized_hash, event_body, action, semantic_kind, occurred_at, observed_at, received_at, source_partition, source_sequence, supersedes_producer, supersedes_event_id, status, initial_status, initial_version, accepted_version | authority_id, tenant_id, subject_id, producer, event_id | authority_id, tenant_id, subject_id, producer, source_partition, source_sequence [partial: (source_sequence IS NOT NULL)]; authority_id, tenant_id, subject_id, supersedes_producer, supersedes_event_id [partial: (supersedes_event_id IS NOT NULL)] | authority_id, tenant_id, subject_id → usermodel_subject_state(authority_id, tenant_id, subject_id) |
+| `usermodel_events` | authority_id, tenant_id, subject_id, producer, event_id, normalized_hash, event_body, action, semantic_kind, occurred_at, observed_at, received_at, source_partition, source_sequence, supersedes_producer, supersedes_event_id, status, initial_status, initial_version, accepted_version | authority_id, tenant_id, subject_id, producer, event_id | authority_id, tenant_id, subject_id, producer, source_partition, source_sequence [partial: (source_sequence IS NOT NULL)]; authority_id, tenant_id, subject_id, producer, supersedes_producer, supersedes_event_id [partial: (supersedes_event_id IS NOT NULL)] | authority_id, tenant_id, subject_id → usermodel_subject_state(authority_id, tenant_id, subject_id) |
 | `usermodel_feature_baselines` | authority_id, tenant_id, subject_id, revision, generation, spec_version, spec_hash, baseline_hash, baseline_body, accepted_at | authority_id, tenant_id, subject_id, revision | authority_id, tenant_id, subject_id, generation | authority_id, tenant_id, subject_id → usermodel_subject_state(authority_id, tenant_id, subject_id) |
 | `usermodel_feature_heads` | authority_id, tenant_id, subject_id, revision, changed_at | authority_id, tenant_id, subject_id | 无 | authority_id, tenant_id, subject_id, revision → usermodel_feature_baselines(authority_id, tenant_id, subject_id, revision) |
 | `usermodel_feature_snapshot_versions` | authority_id, tenant_id, subject_id, snapshot_id, snapshot_body, created_at | authority_id, tenant_id, subject_id, snapshot_id | 无 | authority_id, tenant_id, subject_id → usermodel_subject_state(authority_id, tenant_id, subject_id) |
@@ -34,7 +34,7 @@
 | `usermodel_unmapped_events` | authority_id, tenant_id, external_subject_id, producer, event_id, normalized_hash, event_body, received_at, bound_subject_id, bound_version, bound_status | authority_id, tenant_id, external_subject_id, producer, event_id | 无 | 无 |
 | `usermodel_watermarks` | authority_id, tenant_id, subject_id, producer, source_partition, contiguous_sequence, max_seen_sequence | authority_id, tenant_id, subject_id, producer, source_partition | 无 | 无 |
 
-清单中的“无 FK”表示当前旧 schema 未用物理 FK 强制该关系，不代表预检会跳过逻辑所有权：
+清单中的“无 FK”表示当前 GORM schema 未用物理 FK 强制该关系，不代表预检会跳过逻辑所有权：
 `outbox`、`watermarks`、`subject_bindings` 与已绑定 `unmapped_events` 的主体归属由只读查询另审。
-Serving `pair_id/approval_ref` 的 recommend 授权方不在本阶段 `migrations/usermodel` 范围内，
+Serving `pair_id/approval_ref` 的 recommend 授权方不在本 scoped usermodel schema 范围内，
 本工具只校验 pointer 与所指 bundle 的主体和 pair 一致；外部批准真实性留待后续阶段。

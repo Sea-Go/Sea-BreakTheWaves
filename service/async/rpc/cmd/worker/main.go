@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
@@ -189,10 +188,12 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 		return fmt.Errorf("open content database manager: %w", err)
 	}
 	db = manager
-	if err := database.Exec(ctx, manager, contentmigration.SQL); err != nil {
-		return fmt.Errorf("apply content schema with GORM: %w", err)
+	if cfg.ContentMigrate {
+		if err := content.Migrate(ctx, manager); err != nil {
+			return fmt.Errorf("apply content schema with GORM: %w", err)
+		}
+		logger.InfoContext(ctx, "content schema managed by GORM", "event", "content.worker.schema_ready", "outcome", "succeeded")
 	}
-	logger.InfoContext(ctx, "content schema managed by GORM", "event", "content.worker.schema_ready", "outcome", "succeeded")
 	pgCfg, err := pgxpool.ParseConfig(cfg.ContentDSN)
 	if err != nil {
 		return errors.New("invalid content Postgres DSN") // never write credentials to logs
@@ -207,6 +208,12 @@ func serve(ctx context.Context, cfg config, output io.Writer) (resultErr error) 
 	}
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping content Postgres: %w", err)
+	}
+	var buildsTable, dispatchTable *string
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('content_builds')::text,
+		to_regclass('content_index_dispatch')::text`).Scan(&buildsTable, &dispatchTable); err != nil ||
+		buildsTable == nil || dispatchTable == nil {
+		return errors.New("content schema must be migrated before worker start")
 	}
 	objects, err := artifacts.NewLocal(cfg.ArtifactDir)
 	if err != nil {

@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 )
 
 func TestSubjectRefV2StrictJSON(t *testing.T) {
@@ -43,47 +41,10 @@ func TestSubjectRefV2StrictJSON(t *testing.T) {
 func v2TestStore(t *testing.T) (*Store, *Store) {
 	t.Helper()
 	old := testStore(t, nil)
-	if _, err := old.db.Exec(context.Background(), usermodelmigration.SubjectRefV2SQL); err != nil {
+	if err := MigratePool(context.Background(), old.db); err != nil {
 		t.Fatal(err)
 	}
 	return old, NewStore(old.db, nil, WithSubjectRefV2Candidate())
-}
-
-func TestSubjectRefV2MigrationRetryRejectsMissingGuard(t *testing.T) {
-	old, _ := v2TestStore(t)
-	ctx := context.Background()
-	if _, err := old.db.Exec(ctx, `ALTER TABLE usermodel_subjectref_v2_projection
-		DROP CONSTRAINT usermodel_sr_v2_canonical_uq`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err == nil {
-		t.Fatal("retry silently accepted a table without v2 issuer/UID uniqueness")
-	}
-}
-
-func TestSubjectRefV2MigrationRetryRejectsWeakSameNamedGuard(t *testing.T) {
-	old, _ := v2TestStore(t)
-	ctx := context.Background()
-	if _, err := old.db.Exec(ctx, `ALTER TABLE usermodel_subjectref_v2_projection
-		DROP CONSTRAINT usermodel_sr_v2_identity_ck,
-		ADD CONSTRAINT usermodel_sr_v2_identity_ck CHECK (issuer='rtw.identity')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err == nil {
-		t.Fatal("retry accepted a same-named CHECK that no longer binds the old platform slot")
-	}
-}
-
-func TestSubjectRefV2MigrationRetryRejectsMissingProjectedAtDefault(t *testing.T) {
-	old, _ := v2TestStore(t)
-	ctx := context.Background()
-	if _, err := old.db.Exec(ctx, `ALTER TABLE usermodel_subjectref_v2_projection
-		ALTER COLUMN projected_at DROP DEFAULT`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err == nil {
-		t.Fatal("retry accepted a sidecar that can no longer insert a projected_at value")
-	}
 }
 
 func v2Fact(id string, sequence int64) Event {
@@ -126,7 +87,7 @@ func TestSubjectRefV2HistoricalProjectionAndRollback(t *testing.T) {
 		WHERE issuer=$1 AND subject_id=$2`, ref.Issuer, ref.SubjectID).Scan(&projectedAtBefore); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := old.db.Exec(ctx, usermodelmigration.SubjectRefV2SQL); err != nil {
+	if err := MigratePool(ctx, old.db); err != nil {
 		t.Fatalf("additive migration could not be retried: %v", err)
 	}
 	if err := old.db.QueryRow(ctx, `SELECT projected_at::text FROM usermodel_subjectref_v2_projection

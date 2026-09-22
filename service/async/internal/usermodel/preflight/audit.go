@@ -17,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const SourceCommit = "f51723e0a1db3b5029342ef8207fb2255be79cec"
+const SourceCommit = "gorm-schema"
 
-// The contract is produced from an isolated PG16 instance after applying only
-// migrations/usermodel/001..006 in deployment order. Audit never applies DDL.
+// The contract is produced from an isolated PG16 instance initialized with the
+// GORM usermodel schema. Audit never applies DDL.
 //
 //go:embed contract.json
 var contractBytes []byte
@@ -104,7 +104,7 @@ func Run(ctx context.Context, conn *pgx.Conn, schema string, observer Observer) 
 	report.SourceSHA256 = sourceSHA
 	report.ContractSHA256 = want.SHA256()
 	report.Transaction = "repeatable_read/read_only"
-	report.Scope = "usermodel migrations 001..006; production not verified by this report"
+	report.Scope = "usermodel GORM schema; production not verified by this report"
 	observe(observer, Observation{Stage: "usermodel.preflight", Outcome: "started"})
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {

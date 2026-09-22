@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
@@ -179,7 +178,7 @@ func TestRTWRealProviderIndexDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, contentmigration.SQL); err != nil {
+	if err := content.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	store := content.NewStore(pool)

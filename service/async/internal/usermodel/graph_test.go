@@ -237,7 +237,7 @@ func assertFactGraphPostgresRunnerNativeTrace(t *testing.T) {
 	if err := s.db.QueryRow(context.Background(), "SELECT COUNT(*) FROM usermodel_events WHERE event_id=$1", cancelledEvent.EventID).Scan(&cancelledCount); err != nil || cancelledCount != 0 {
 		t.Fatalf("cancelled Run committed fact: count=%d err=%v", cancelledCount, err)
 	}
-	if _, err := s.db.Exec(context.Background(), "DROP TABLE usermodel_outbox"); err != nil {
+	if _, err := s.db.Exec(context.Background(), "DROP TABLE usermodel_outbox CASCADE"); err != nil {
 		t.Fatal(err)
 	}
 	failedEvent := fixture("graph-outbox-failure", 3)

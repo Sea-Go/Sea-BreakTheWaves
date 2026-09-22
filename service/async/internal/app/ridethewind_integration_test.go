@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
@@ -213,7 +212,7 @@ func prepareContent(t *testing.T, ctx context.Context, dc *datacenter.Client, wo
 		t.Fatal(e)
 	}
 	defer pool.Close()
-	if _, e = pool.Exec(ctx, contentmigration.SQL); e != nil {
+	if e = content.MigratePool(ctx, pool); e != nil {
 		t.Fatal(e)
 	}
 	objects, e := artifacts.NewLocal(os.Getenv("SEA_TEST_OBJECT_DIRECTORY"))

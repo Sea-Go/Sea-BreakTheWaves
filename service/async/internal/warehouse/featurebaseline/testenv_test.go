@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"testing"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry"
 	"github.com/jackc/pgx/v5"
@@ -87,21 +86,8 @@ func servingWarehouseRunner(t *testing.T, observed ...*telemetry.Bundle) (Runner
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		admin.Close()
 	})
-	if _, err := pool.Exec(ctx, usermodelmigration.SQL); err != nil {
+	if err := usermodel.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
-	}
-	for _, path := range []string{
-		"../../../migrations/usermodel/002_ontology.sql",
-		"../../../migrations/usermodel/003_features.sql",
-		"../../../migrations/usermodel/004_serving.sql",
-	} {
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, string(body)); err != nil {
-			t.Fatal(err)
-		}
 	}
 	var bundle *telemetry.Bundle
 	if len(observed) > 0 {

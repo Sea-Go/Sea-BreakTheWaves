@@ -4,7 +4,7 @@
 
 ## 区域和依赖
 
-- W1：`internal/content/`、`internal/corpus/`、`internal/artifacts/`、`migrations/content/`、`scripts/test-content.sh`及本文；root是唯一writer。
+- W1：`service/async/internal/content/`、`service/common/artifacts/`、`service/common/corpus/`、`scripts/test-content.sh`及本文；root是唯一writer。
 - R1：RTW权威 `api/knowledge.api`、DC H04/H05、其他领域与原始在途工作树。
 - D1：tRPC-Agent-Go核心v1.8.1与pgx/v5；不修改模块缓存或复制框架internal。
 - G1：provider DTO由runtime任务生成，content只消费。
@@ -18,6 +18,8 @@
 `NewChunker`复用公开 `knowledge/chunking.NewFixedSizeChunking`，先沿RTW `paragraph:N`定义划分来源段落，再使用框架的UTF-8安全切分与overlap。片段保留原文对象、原始段落字节范围、规范化rune span及前后邻接。修订和分块profile参与chunk身份；重复文本共享encoding key，保留不同chunk ID与来源。采用固定排序且不写生成时间，重放生成相同manifest字节。
 
 分块profile在PG首次绑定精确参数和parser/chunker版本；同ID更换参数会拒绝，必须使用新ID。未知格式、坏UTF-8、NUL、hash不匹配或任一必需正文为空均使整个准备失败，不能静默剔除后缩小覆盖分母。当前正式支持UTF-8 text/plain及text/markdown；PDF/OCR与更细Markdown标题结构仍未实现。
+
+表结构由 `service/async/internal/content/schema.go` 的 GORM Model 声明，并由 `content.Migrate` 初始化。
 
 `Store`保存内容领域的固定输入、当前DC fence、分块引用、各lane引用及Outbox。它不分配DC任务或私自创造执行权。并发重试只接受当前epoch；相同工件可重放，不同工件不能覆盖。取消版本和永久修订tombstone拒绝后续构建；旧失效事件不能回退状态。最终READY和Outbox同事务，最后SQL再次校验数据库时间，避免等待/Outbox写入拖过租约后提交。
 

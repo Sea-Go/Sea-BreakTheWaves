@@ -48,9 +48,9 @@
               "producer",
               "event_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_active_facts_authority_id_tenant_id_subject_id_p_fkey",
+            "name": "fk_usermodel_active_facts_event",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -160,9 +160,9 @@
               "producer",
               "event_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_attributions_authority_id_tenant_id_subject_id_p_fkey",
+            "name": "fk_usermodel_attributions_event",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -204,7 +204,7 @@
           {
             "name": "manifest_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "source_offset",
@@ -224,7 +224,7 @@
           {
             "name": "input_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "authority_id",
@@ -244,7 +244,7 @@
           {
             "name": "normalized_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "accepted_version",
@@ -260,23 +260,15 @@
         "constraints": [
           {
             "columns": [
-              "accepted_version"
-            ],
-            "definition": "CHECK ((accepted_version > 0))",
-            "kind": "c",
-            "name": "usermodel_coverage_event_accepted_version_check"
-          },
-          {
-            "columns": [
               "authority_id",
               "tenant_id",
               "subject_id",
               "producer",
               "event_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, producer, event_id) REFERENCES usermodel_events(authority_id, tenant_id, subject_id, producer, event_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_coverage_event_authority_id_tenant_id_subject_id_fkey",
+            "name": "fk_usermodel_coverage_event_event",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -290,13 +282,21 @@
             "columns": [
               "manifest_sha256"
             ],
-            "definition": "FOREIGN KEY (manifest_sha256) REFERENCES usermodel_coverage_prefix(manifest_sha256)",
+            "definition": "FOREIGN KEY (manifest_sha256) REFERENCES usermodel_coverage_prefix(manifest_sha256) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_coverage_event_manifest_sha256_fkey",
+            "name": "fk_usermodel_coverage_event_prefix",
             "ref_columns": [
               "manifest_sha256"
             ],
             "ref_table": "usermodel_coverage_prefix"
+          },
+          {
+            "columns": [
+              "accepted_version"
+            ],
+            "definition": "CHECK ((accepted_version > 0))",
+            "kind": "c",
+            "name": "usermodel_coverage_event_accepted_version_check"
           },
           {
             "columns": [
@@ -332,7 +332,7 @@
           {
             "name": "manifest_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "producer",
@@ -352,12 +352,12 @@
           {
             "name": "event_index_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "batch_evidence_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "ref_body",
@@ -404,7 +404,7 @@
           {
             "name": "manifest_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "authority_id",
@@ -424,12 +424,12 @@
           {
             "name": "receipt_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "sparse_index_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "event_count",
@@ -451,23 +451,23 @@
         "constraints": [
           {
             "columns": [
+              "manifest_sha256"
+            ],
+            "definition": "FOREIGN KEY (manifest_sha256) REFERENCES usermodel_coverage_prefix(manifest_sha256) ON DELETE RESTRICT",
+            "kind": "f",
+            "name": "fk_usermodel_coverage_subject_prefix",
+            "ref_columns": [
+              "manifest_sha256"
+            ],
+            "ref_table": "usermodel_coverage_prefix"
+          },
+          {
+            "columns": [
               "event_count"
             ],
             "definition": "CHECK ((event_count >= 0))",
             "kind": "c",
             "name": "usermodel_coverage_subject_event_count_check"
-          },
-          {
-            "columns": [
-              "manifest_sha256"
-            ],
-            "definition": "FOREIGN KEY (manifest_sha256) REFERENCES usermodel_coverage_prefix(manifest_sha256)",
-            "kind": "f",
-            "name": "usermodel_coverage_subject_manifest_sha256_fkey",
-            "ref_columns": [
-              "manifest_sha256"
-            ],
-            "ref_table": "usermodel_coverage_prefix"
           },
           {
             "columns": [
@@ -529,7 +529,7 @@
           {
             "name": "artifact_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "schema_version",
@@ -549,17 +549,17 @@
           {
             "name": "spec_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "prefix_manifest_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "subject_receipt_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "through_offset",
@@ -599,6 +599,24 @@
           }
         ],
         "constraints": [
+          {
+            "columns": [
+              "prefix_manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (prefix_manifest_sha256, authority_id, tenant_id, subject_id) REFERENCES usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
+            "kind": "f",
+            "name": "fk_usermodel_covered_baselines_v2_coverage_subject",
+            "ref_columns": [
+              "manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_coverage_subject"
+          },
           {
             "columns": [
               "input_state_version"
@@ -649,35 +667,6 @@
             "definition": "CHECK (((through_offset > 0) AND (through_offset <= '9007199254740991'::bigint)))",
             "kind": "c",
             "name": "usermodel_covered_baselines_v2_through_offset_check"
-          },
-          {
-            "columns": [
-              "authority_id",
-              "tenant_id",
-              "subject_id",
-              "generation"
-            ],
-            "definition": "UNIQUE (authority_id, tenant_id, subject_id, generation)",
-            "kind": "u",
-            "name": "usermodel_covered_baselines_v_authority_id_tenant_id_subjec_key"
-          },
-          {
-            "columns": [
-              "prefix_manifest_sha256",
-              "authority_id",
-              "tenant_id",
-              "subject_id"
-            ],
-            "definition": "FOREIGN KEY (prefix_manifest_sha256, authority_id, tenant_id, subject_id) REFERENCES usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id)",
-            "kind": "f",
-            "name": "usermodel_covered_baselines_v_prefix_manifest_sha256_autho_fkey",
-            "ref_columns": [
-              "manifest_sha256",
-              "authority_id",
-              "tenant_id",
-              "subject_id"
-            ],
-            "ref_table": "usermodel_coverage_subject"
           }
         ],
         "name": "usermodel_covered_baselines_v2",
@@ -687,18 +676,18 @@
               "authority_id",
               "tenant_id",
               "subject_id",
-              "revision"
+              "generation"
             ],
-            "name": "usermodel_covered_baselines_v2_pkey"
+            "name": "usermodel_covered_baselines_v2_generation_uq"
           },
           {
             "columns": [
               "authority_id",
               "tenant_id",
               "subject_id",
-              "generation"
+              "revision"
             ],
-            "name": "usermodel_covered_baselines_v_authority_id_tenant_id_subjec_key"
+            "name": "usermodel_covered_baselines_v2_pkey"
           }
         ]
       },
@@ -722,12 +711,12 @@
           {
             "name": "bundle_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "snapshot_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "pair_id",
@@ -747,12 +736,12 @@
           {
             "name": "pair_feature_spec_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "bundle_raw_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "bundle_raw",
@@ -784,9 +773,9 @@
               "subject_id",
               "snapshot_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, snapshot_id) REFERENCES usermodel_covered_snapshots_v2(authority_id, tenant_id, subject_id, snapshot_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, snapshot_id) REFERENCES usermodel_covered_snapshots_v2(authority_id, tenant_id, subject_id, snapshot_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_covered_bundle_cand_authority_id_tenant_id_subje_fkey",
+            "name": "fk_usermodel_covered_bundle_candidates_v2_snapshot",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -794,18 +783,6 @@
               "snapshot_id"
             ],
             "ref_table": "usermodel_covered_snapshots_v2"
-          },
-          {
-            "columns": [
-              "authority_id",
-              "tenant_id",
-              "subject_id",
-              "snapshot_id",
-              "pair_id"
-            ],
-            "definition": "UNIQUE (authority_id, tenant_id, subject_id, snapshot_id, pair_id)",
-            "kind": "u",
-            "name": "usermodel_covered_bundle_cand_authority_id_tenant_id_subjec_key"
           },
           {
             "columns": [
@@ -824,7 +801,7 @@
             ],
             "definition": "CHECK ((status = 'candidate_default_off'::text))",
             "kind": "c",
-            "name": "usermodel_covered_bundle_candidates_v2_status_check"
+            "name": "usermodel_covered_bundles_v2_status_check"
           }
         ],
         "name": "usermodel_covered_bundle_candidates_v2",
@@ -834,19 +811,19 @@
               "authority_id",
               "tenant_id",
               "subject_id",
-              "snapshot_id",
-              "pair_id"
+              "bundle_id"
             ],
-            "name": "usermodel_covered_bundle_cand_authority_id_tenant_id_subjec_key"
+            "name": "usermodel_covered_bundle_candidates_v2_pkey"
           },
           {
             "columns": [
               "authority_id",
               "tenant_id",
               "subject_id",
-              "bundle_id"
+              "snapshot_id",
+              "pair_id"
             ],
-            "name": "usermodel_covered_bundle_candidates_v2_pkey"
+            "name": "usermodel_covered_bundles_v2_pair_uq"
           }
         ]
       },
@@ -870,7 +847,7 @@
           {
             "name": "snapshot_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "baseline_revision",
@@ -880,17 +857,17 @@
           {
             "name": "baseline_artifact_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "prefix_manifest_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "subject_receipt_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "spec_version",
@@ -900,7 +877,7 @@
           {
             "name": "spec_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "input_state_version",
@@ -910,7 +887,7 @@
           {
             "name": "snapshot_raw_sha256",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "snapshot_raw",
@@ -935,6 +912,42 @@
           }
         ],
         "constraints": [
+          {
+            "columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "baseline_revision"
+            ],
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, baseline_revision) REFERENCES usermodel_covered_baselines_v2(authority_id, tenant_id, subject_id, revision) ON DELETE RESTRICT",
+            "kind": "f",
+            "name": "fk_usermodel_covered_snapshots_v2_baseline",
+            "ref_columns": [
+              "authority_id",
+              "tenant_id",
+              "subject_id",
+              "revision"
+            ],
+            "ref_table": "usermodel_covered_baselines_v2"
+          },
+          {
+            "columns": [
+              "prefix_manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "definition": "FOREIGN KEY (prefix_manifest_sha256, authority_id, tenant_id, subject_id) REFERENCES usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
+            "kind": "f",
+            "name": "fk_usermodel_covered_snapshots_v2_coverage_subject",
+            "ref_columns": [
+              "manifest_sha256",
+              "authority_id",
+              "tenant_id",
+              "subject_id"
+            ],
+            "ref_table": "usermodel_coverage_subject"
+          },
           {
             "columns": [
               "baseline_revision"
@@ -969,53 +982,6 @@
             "definition": "CHECK ((status = 'historical_default_off'::text))",
             "kind": "c",
             "name": "usermodel_covered_snapshots_v2_status_check"
-          },
-          {
-            "columns": [
-              "authority_id",
-              "tenant_id",
-              "subject_id",
-              "baseline_revision"
-            ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, baseline_revision) REFERENCES usermodel_covered_baselines_v2(authority_id, tenant_id, subject_id, revision)",
-            "kind": "f",
-            "name": "usermodel_covered_snapshots_v_authority_id_tenant_id_subje_fkey",
-            "ref_columns": [
-              "authority_id",
-              "tenant_id",
-              "subject_id",
-              "revision"
-            ],
-            "ref_table": "usermodel_covered_baselines_v2"
-          },
-          {
-            "columns": [
-              "authority_id",
-              "tenant_id",
-              "subject_id",
-              "baseline_revision"
-            ],
-            "definition": "UNIQUE (authority_id, tenant_id, subject_id, baseline_revision)",
-            "kind": "u",
-            "name": "usermodel_covered_snapshots_v_authority_id_tenant_id_subjec_key"
-          },
-          {
-            "columns": [
-              "prefix_manifest_sha256",
-              "authority_id",
-              "tenant_id",
-              "subject_id"
-            ],
-            "definition": "FOREIGN KEY (prefix_manifest_sha256, authority_id, tenant_id, subject_id) REFERENCES usermodel_coverage_subject(manifest_sha256, authority_id, tenant_id, subject_id)",
-            "kind": "f",
-            "name": "usermodel_covered_snapshots_v_prefix_manifest_sha256_autho_fkey",
-            "ref_columns": [
-              "manifest_sha256",
-              "authority_id",
-              "tenant_id",
-              "subject_id"
-            ],
-            "ref_table": "usermodel_coverage_subject"
           }
         ],
         "name": "usermodel_covered_snapshots_v2",
@@ -1025,18 +991,18 @@
               "authority_id",
               "tenant_id",
               "subject_id",
-              "snapshot_id"
+              "baseline_revision"
             ],
-            "name": "usermodel_covered_snapshots_v2_pkey"
+            "name": "usermodel_covered_snapshots_v2_baseline_uq"
           },
           {
             "columns": [
               "authority_id",
               "tenant_id",
               "subject_id",
-              "baseline_revision"
+              "snapshot_id"
             ],
-            "name": "usermodel_covered_snapshots_v_authority_id_tenant_id_subjec_key"
+            "name": "usermodel_covered_snapshots_v2_pkey"
           }
         ]
       },
@@ -1070,7 +1036,7 @@
           {
             "name": "normalized_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "event_body",
@@ -1147,21 +1113,13 @@
         "constraints": [
           {
             "columns": [
-              "action"
-            ],
-            "definition": "CHECK ((action = ANY (ARRAY['assert'::text, 'correct'::text, 'retract'::text])))",
-            "kind": "c",
-            "name": "usermodel_events_action_check"
-          },
-          {
-            "columns": [
               "authority_id",
               "tenant_id",
               "subject_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_events_authority_id_tenant_id_subject_id_fkey",
+            "name": "fk_usermodel_events_subject",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1171,12 +1129,11 @@
           },
           {
             "columns": [
-              "supersedes_producer",
-              "supersedes_event_id"
+              "action"
             ],
-            "definition": "CHECK (((supersedes_producer IS NULL) = (supersedes_event_id IS NULL)))",
+            "definition": "CHECK ((action = ANY (ARRAY['assert'::text, 'correct'::text, 'retract'::text])))",
             "kind": "c",
-            "name": "usermodel_events_check"
+            "name": "usermodel_events_action_check"
           },
           {
             "columns": [
@@ -1185,7 +1142,7 @@
             ],
             "definition": "CHECK (((action = 'assert'::text) = (supersedes_event_id IS NULL)))",
             "kind": "c",
-            "name": "usermodel_events_check1"
+            "name": "usermodel_events_action_successor_check"
           },
           {
             "columns": [
@@ -1230,6 +1187,15 @@
             "definition": "CHECK ((status = ANY (ARRAY['accepted'::text, 'pending_dependency'::text])))",
             "kind": "c",
             "name": "usermodel_events_status_check"
+          },
+          {
+            "columns": [
+              "supersedes_producer",
+              "supersedes_event_id"
+            ],
+            "definition": "CHECK (((supersedes_producer IS NULL) = (supersedes_event_id IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_events_supersedes_pair_check"
           }
         ],
         "name": "usermodel_events",
@@ -1261,6 +1227,7 @@
               "authority_id",
               "tenant_id",
               "subject_id",
+              "producer",
               "supersedes_producer",
               "supersedes_event_id"
             ],
@@ -1304,12 +1271,12 @@
           {
             "name": "spec_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "baseline_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "baseline_body",
@@ -1328,22 +1295,11 @@
             "columns": [
               "authority_id",
               "tenant_id",
-              "subject_id",
-              "generation"
-            ],
-            "definition": "UNIQUE (authority_id, tenant_id, subject_id, generation)",
-            "kind": "u",
-            "name": "usermodel_feature_baselines_authority_id_tenant_id_subject__key"
-          },
-          {
-            "columns": [
-              "authority_id",
-              "tenant_id",
               "subject_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_feature_baselines_authority_id_tenant_id_subject_fkey",
+            "name": "fk_usermodel_feature_baselines_subject",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1380,7 +1336,7 @@
               "subject_id",
               "generation"
             ],
-            "name": "usermodel_feature_baselines_authority_id_tenant_id_subject__key"
+            "name": "usermodel_feature_baselines_generation_uq"
           },
           {
             "columns": [
@@ -1430,9 +1386,9 @@
               "subject_id",
               "revision"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, revision) REFERENCES usermodel_feature_baselines(authority_id, tenant_id, subject_id, revision)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, revision) REFERENCES usermodel_feature_baselines(authority_id, tenant_id, subject_id, revision) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_feature_heads_authority_id_tenant_id_subject_id__fkey",
+            "name": "fk_usermodel_feature_heads_baseline",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1484,7 +1440,7 @@
           {
             "name": "snapshot_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "snapshot_body",
@@ -1505,9 +1461,9 @@
               "tenant_id",
               "subject_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_feature_snapshot_ve_authority_id_tenant_id_subje_fkey",
+            "name": "fk_usermodel_feature_snapshot_versions_subject",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1570,7 +1526,7 @@
           {
             "name": "spec_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "baseline_revision",
@@ -1606,9 +1562,9 @@
               "tenant_id",
               "subject_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_feature_snapshots_authority_id_tenant_id_subject_fkey",
+            "name": "fk_usermodel_feature_snapshots_subject",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1667,7 +1623,7 @@
           {
             "name": "definition_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "definition_body",
@@ -1684,14 +1640,6 @@
         "constraints": [
           {
             "columns": [
-              "definition_version"
-            ],
-            "definition": "CHECK ((definition_version > 0))",
-            "kind": "c",
-            "name": "usermodel_ontology_definitions_definition_version_check"
-          },
-          {
-            "columns": [
               "authority_id",
               "tenant_id",
               "definition_version"
@@ -1699,6 +1647,14 @@
             "definition": "PRIMARY KEY (authority_id, tenant_id, definition_version)",
             "kind": "p",
             "name": "usermodel_ontology_definitions_pkey"
+          },
+          {
+            "columns": [
+              "definition_version"
+            ],
+            "definition": "CHECK ((definition_version > 0))",
+            "kind": "c",
+            "name": "usermodel_ontology_definitions_version_check"
           }
         ],
         "name": "usermodel_ontology_definitions",
@@ -1744,9 +1700,9 @@
               "tenant_id",
               "definition_version"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, definition_version) REFERENCES usermodel_ontology_definitions(authority_id, tenant_id, definition_version)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, definition_version) REFERENCES usermodel_ontology_definitions(authority_id, tenant_id, definition_version) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_ontology_heads_authority_id_tenant_id_definition_fkey",
+            "name": "fk_usermodel_ontology_heads_definition",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1831,9 +1787,9 @@
               "tenant_id",
               "definition_version"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, definition_version) REFERENCES usermodel_ontology_definitions(authority_id, tenant_id, definition_version)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, definition_version) REFERENCES usermodel_ontology_definitions(authority_id, tenant_id, definition_version) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_ontology_projection_authority_id_tenant_id_defin_fkey",
+            "name": "fk_usermodel_ontology_projections_definition",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1847,9 +1803,9 @@
               "tenant_id",
               "subject_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id) REFERENCES usermodel_subject_state(authority_id, tenant_id, subject_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_ontology_projection_authority_id_tenant_id_subje_fkey",
+            "name": "fk_usermodel_ontology_projections_subject",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -1891,7 +1847,7 @@
       {
         "columns": [
           {
-            "identity": "a",
+            "default": "nextval('usermodel_outbox_outbox_id_seq'::regclass)",
             "name": "outbox_id",
             "not_null": true,
             "type": "bigint"
@@ -1951,17 +1907,6 @@
         "constraints": [
           {
             "columns": [
-              "authority_id",
-              "tenant_id",
-              "subject_id",
-              "state_version"
-            ],
-            "definition": "UNIQUE (authority_id, tenant_id, subject_id, state_version)",
-            "kind": "u",
-            "name": "usermodel_outbox_authority_id_tenant_id_subject_id_state_ve_key"
-          },
-          {
-            "columns": [
               "outbox_id"
             ],
             "definition": "PRIMARY KEY (outbox_id)",
@@ -1973,18 +1918,18 @@
         "unique": [
           {
             "columns": [
+              "outbox_id"
+            ],
+            "name": "usermodel_outbox_pkey"
+          },
+          {
+            "columns": [
               "authority_id",
               "tenant_id",
               "subject_id",
               "state_version"
             ],
-            "name": "usermodel_outbox_authority_id_tenant_id_subject_id_state_ve_key"
-          },
-          {
-            "columns": [
-              "outbox_id"
-            ],
-            "name": "usermodel_outbox_pkey"
+            "name": "usermodel_outbox_version_uq"
           }
         ]
       },
@@ -2008,7 +1953,7 @@
           {
             "name": "bundle_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "pair_id",
@@ -2023,7 +1968,7 @@
           {
             "name": "feature_snapshot_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "bundle_body",
@@ -2045,9 +1990,9 @@
               "subject_id",
               "feature_snapshot_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, feature_snapshot_id) REFERENCES usermodel_feature_snapshot_versions(authority_id, tenant_id, subject_id, snapshot_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, feature_snapshot_id) REFERENCES usermodel_feature_snapshot_versions(authority_id, tenant_id, subject_id, snapshot_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_serving_bundles_authority_id_tenant_id_subject_i_fkey",
+            "name": "fk_usermodel_serving_bundles_snapshot",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -2106,7 +2051,7 @@
           {
             "name": "bundle_id",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "state",
@@ -2138,22 +2083,14 @@
         "constraints": [
           {
             "columns": [
-              "approval_revision"
-            ],
-            "definition": "CHECK ((approval_revision > 0))",
-            "kind": "c",
-            "name": "usermodel_serving_pointers_approval_revision_check"
-          },
-          {
-            "columns": [
               "authority_id",
               "tenant_id",
               "subject_id",
               "bundle_id"
             ],
-            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, bundle_id) REFERENCES usermodel_serving_bundles(authority_id, tenant_id, subject_id, bundle_id)",
+            "definition": "FOREIGN KEY (authority_id, tenant_id, subject_id, bundle_id) REFERENCES usermodel_serving_bundles(authority_id, tenant_id, subject_id, bundle_id) ON DELETE RESTRICT",
             "kind": "f",
-            "name": "usermodel_serving_pointers_authority_id_tenant_id_subject__fkey",
+            "name": "fk_usermodel_serving_pointers_bundle",
             "ref_columns": [
               "authority_id",
               "tenant_id",
@@ -2161,6 +2098,14 @@
               "bundle_id"
             ],
             "ref_table": "usermodel_serving_bundles"
+          },
+          {
+            "columns": [
+              "approval_revision"
+            ],
+            "definition": "CHECK ((approval_revision > 0))",
+            "kind": "c",
+            "name": "usermodel_serving_pointers_approval_revision_check"
           },
           {
             "columns": [
@@ -2348,7 +2293,7 @@
           {
             "name": "normalized_hash",
             "not_null": true,
-            "type": "character(64)"
+            "type": "text"
           },
           {
             "name": "event_body",
@@ -2380,24 +2325,6 @@
         "constraints": [
           {
             "columns": [
-              "bound_subject_id",
-              "bound_version"
-            ],
-            "definition": "CHECK (((bound_subject_id IS NULL) = (bound_version IS NULL)))",
-            "kind": "c",
-            "name": "usermodel_unmapped_events_check"
-          },
-          {
-            "columns": [
-              "bound_subject_id",
-              "bound_status"
-            ],
-            "definition": "CHECK (((bound_subject_id IS NULL) = (bound_status IS NULL)))",
-            "kind": "c",
-            "name": "usermodel_unmapped_events_check1"
-          },
-          {
-            "columns": [
               "authority_id",
               "tenant_id",
               "external_subject_id",
@@ -2407,6 +2334,24 @@
             "definition": "PRIMARY KEY (authority_id, tenant_id, external_subject_id, producer, event_id)",
             "kind": "p",
             "name": "usermodel_unmapped_events_pkey"
+          },
+          {
+            "columns": [
+              "bound_subject_id",
+              "bound_status"
+            ],
+            "definition": "CHECK (((bound_subject_id IS NULL) = (bound_status IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_unmapped_events_status_binding_check"
+          },
+          {
+            "columns": [
+              "bound_subject_id",
+              "bound_version"
+            ],
+            "definition": "CHECK (((bound_subject_id IS NULL) = (bound_version IS NULL)))",
+            "kind": "c",
+            "name": "usermodel_unmapped_events_version_binding_check"
           }
         ],
         "name": "usermodel_unmapped_events",
@@ -2493,5 +2438,5 @@
       }
     ]
   },
-  "source_sha256": "fdb6615e728a8a0714cb8b5c491199fa67b0e1d84f8f9d8facbb1f5545e4ab97"
+  "source_sha256": "2bcf8dc6b73478d5bc83de402e5d3a753d7fa71ab3fb4bf6d9e22e026c7d0755"
 }

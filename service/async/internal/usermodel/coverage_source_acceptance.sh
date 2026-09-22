@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fact_root="$(cd "$(dirname "$0")/../.." && pwd)"
+fact_root="$(cd "$(dirname "$0")/../../../.." && pwd)"
 fact_dc_root="${SEA_DC_PLATFORM_ROOT:?set SEA_DC_PLATFORM_ROOT to an isolated DataCenter checkout}"
 fact_rtw_root="${SEA_RTW_FAVORITE_ROOT:?set SEA_RTW_FAVORITE_ROOT to the RTW authority checkout}"
 fact_pg_bin="${FACT_PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
@@ -119,7 +119,7 @@ env.update({
 })
 with open(log_path, 'w', encoding='utf-8') as output:
     result = subprocess.run(['go', 'test', '-mod=readonly', '-race', '-count=1', '-v',
-                             '-run', '^TestCoverageVerifierRealDCAndRTW$', './internal/usermodel'],
+                             '-run', '^TestCoverageVerifierRealDCAndRTW$', './service/async/internal/usermodel'],
                             cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT,
                             check=False)
 raise SystemExit(result.returncode)
@@ -127,7 +127,7 @@ PY
 : > "$fact_release"
 wait "$fact_rtw_pid"
 fact_rtw_pid=""
-(cd "$fact_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go vet ./internal/usermodel ./migrations/usermodel)
+(cd "$fact_root" && GOFLAGS='-p=2' GOMAXPROCS=2 go vet ./service/async/internal/usermodel)
 (cd "$fact_root" && go mod verify)
 (cd "$fact_root" && git diff --check)
 rg '^--- PASS:|^PASS$|^ok[[:space:]]' "$fact_tmp/rtw-test.log" "$fact_tmp/btw-test.log" || true

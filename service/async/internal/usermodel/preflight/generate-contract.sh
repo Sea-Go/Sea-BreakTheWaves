@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../../../../.."
 
 preflight_pg_bin="${USERMODEL_PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 test -x "$preflight_pg_bin/initdb"
@@ -25,39 +25,25 @@ preflight_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0
 preflight_started=true
 export USERMODEL_PREFLIGHT_FIXTURE_DSN="postgres://$(id -un)@127.0.0.1:$preflight_port/postgres?sslmode=disable"
 
-preflight_files=(
-  migrations/usermodel/001_facts.sql
-  migrations/usermodel/002_coverage_verification.sql
-  migrations/usermodel/002_ontology.sql
-  migrations/usermodel/003_features.sql
-  migrations/usermodel/004_serving.sql
-  migrations/usermodel/005_covered_baseline.sql
-  migrations/usermodel/006_covered_snapshot.sql
-)
-for preflight_file in "${preflight_files[@]}"; do
-  "$preflight_pg_bin/psql" -X -v ON_ERROR_STOP=1 "$USERMODEL_PREFLIGHT_FIXTURE_DSN" \
-    -f "$preflight_file" >"$preflight_tmp/migration.log"
-done
-GOMAXPROCS=2 go run -mod=readonly -p=2 ./cmd/usermodel-subjectref-preflight \
-  --run --mode catalog --dsn-env USERMODEL_PREFLIGHT_FIXTURE_DSN \
+GOMAXPROCS=2 go run -mod=readonly ./service/async/rpc/cmd/usermodel-schema \
+  --run --dsn-env USERMODEL_PREFLIGHT_FIXTURE_DSN --schema gorm_contract \
+  >"$preflight_tmp/schema.log" 2>&1
+GOMAXPROCS=2 go run -mod=readonly ./service/async/rpc/cmd/usermodel-subjectref-preflight \
+  --run --mode catalog --dsn-env USERMODEL_PREFLIGHT_FIXTURE_DSN --schema gorm_contract \
   >"$preflight_tmp/catalog.json" 2>"$preflight_tmp/cli.log"
-python3 - "$preflight_tmp/catalog.json" "internal/usermodel/preflight/contract.json" "${preflight_files[@]}" <<'PY'
+python3 - "$preflight_tmp/catalog.json" "service/async/internal/usermodel/schema.go" \
+  "service/async/internal/usermodel/preflight/contract.json" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
-catalog_path, output_path, *source_files = sys.argv[1:]
+catalog_path, schema_path, output_path = sys.argv[1:]
 catalog = json.loads(pathlib.Path(catalog_path).read_text())
 if len(catalog['tables']) != 23:
     raise SystemExit('isolated catalog does not contain 23 scoped tables')
-source = hashlib.sha256()
-for name in source_files:
-    source.update(name.encode())
-    source.update(b'\0')
-    source.update(pathlib.Path(name).read_bytes())
-    source.update(b'\0')
+source = pathlib.Path(schema_path).read_bytes()
 pathlib.Path(output_path).write_text(json.dumps({
-    'source_sha256': source.hexdigest(), 'catalog': catalog,
+    'source_sha256': hashlib.sha256(source).hexdigest(), 'catalog': catalog,
 }, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
 PY

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -62,7 +61,7 @@ func testStore(t *testing.T, bundle *telemetry.Bundle) *Store {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		admin.Close()
 	})
-	if _, err := pool.Exec(ctx, usermodelmigration.SQL); err != nil {
+	if err := MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	return NewStore(pool, bundle)
@@ -422,7 +421,7 @@ func TestPostgresActiveImpressionIDUniqueAndOnlyBehaviorAttributed(t *testing.T)
 func TestPostgresOutboxFailureRollsBackFactAndVersion(t *testing.T) {
 	s := testStore(t, nil)
 	ctx := context.Background()
-	if _, err := s.db.Exec(ctx, "DROP TABLE usermodel_outbox"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE usermodel_outbox CASCADE"); err != nil {
 		t.Fatal(err)
 	}
 	e := fixture("rollback", 1)

@@ -3,10 +3,9 @@ package svc
 import (
 	"context"
 
-	recommendmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/recommend"
 	commonconfig "github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
+	recommendstorage "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model"
 	recommendclient "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/recommendclient"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/config"
@@ -25,10 +24,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 	ctx := context.Background()
-	if err := database.Exec(ctx, infra.PostgresGORM(), recommendmigration.SQL); err != nil {
-		panic(err)
-	}
-	if err := database.Exec(ctx, infra.PostgresGORM(), recommendmigration.PairSQL); err != nil {
+	if err := recommendstorage.MigrateSchema(ctx, infra.PostgresGORM()); err != nil {
 		panic(err)
 	}
 	return &ServiceContext{Config: c, Recommend: recommendclient.NewRuntime("internal/trpcagent/skill")}

@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/eventing"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/sourcecoverage"
@@ -65,10 +64,10 @@ func coveredPGStore(t *testing.T) *usermodel.Store {
 		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		admin.Close()
 	})
-	if _, err := pool.Exec(ctx, usermodelmigration.SQL); err != nil {
+	if err := usermodel.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, usermodelmigration.CoverageSQL); err != nil {
+	if err := usermodel.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	return usermodel.NewStore(pool, nil)

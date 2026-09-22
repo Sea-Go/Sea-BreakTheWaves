@@ -15,7 +15,7 @@
 | `BTW_POLL_INTERVAL`, `BTW_HTTP_TIMEOUT` | Go duration，例如 `500ms`、`10s` |
 | `BTW_DC_URL`, `BTW_DC_TOKEN` | DataCenter API 与技术令牌 |
 | `BTW_RTW_URL`, `BTW_RTW_TOKEN` | RideTheWind 知识 API 与 worker 令牌 |
-| `BTW_CONTENT_POSTGRES_DSN`, `BTW_CONTENT_SCHEMA`, `BTW_CONTENT_MIGRATE` | 内容执行账本的独立数据库、已有 schema、是否显式应用 `migrations/content.SQL` |
+| `BTW_CONTENT_POSTGRES_DSN`, `BTW_CONTENT_SCHEMA`, `BTW_CONTENT_MIGRATE` | 内容执行账本的独立数据库、已有 schema、是否显式执行 GORM `content.Migrate` |
 | `BTW_ARTIFACT_DIR` | 与本地 RTW 共享的工件目录 |
 | `BTW_CHUNK_PROFILE_ID`, `BTW_CHUNK_SIZE`, `BTW_CHUNK_OVERLAP` | 仅准备进程需要。固定 chunk profile；参数改变需要新 profile ID |
 | `BTW_SESSION_POSTGRES_DSN`, `BTW_SESSION_SCHEMA`, `BTW_SESSION_TABLE_PREFIX`, `BTW_SESSION_INITIALIZE` | tRPC-Agent-Go 框架 Session 数据库及是否初始化 |

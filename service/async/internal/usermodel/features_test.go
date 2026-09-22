@@ -12,22 +12,7 @@ import (
 
 func featureTestStore(t *testing.T) *Store {
 	t.Helper()
-	s := testStore(t, nil)
-	ontologySQL, err := os.ReadFile("../../migrations/usermodel/002_ontology.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(context.Background(), string(ontologySQL)); err != nil {
-		t.Fatal(err)
-	}
-	body, err := os.ReadFile("../../migrations/usermodel/003_features.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(context.Background(), string(body)); err != nil {
-		t.Fatal(err)
-	}
-	return s
+	return testStore(t, nil)
 }
 
 func featureFixture(id string, sequence int64, at time.Time) Event {

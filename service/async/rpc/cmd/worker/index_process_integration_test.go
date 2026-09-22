@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/jobs"
@@ -43,7 +42,7 @@ func TestActualIndexWorkerBuildsThreeLanes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	if _, err := pool.Exec(ctx, contentmigration.SQL); err != nil {
+	if err := content.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	artifactDir := t.TempDir()

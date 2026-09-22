@@ -15,10 +15,10 @@
 
 ## 交接与验收边界
 
-WS08-D 的固定基线用户编码、不可变 Bundle、推荐域授权接口及主体/配对 CAS 指针见 [ServingBundle 验收](serving_acceptance.md)。部署须在原有三次迁移之后显式执行 `migrations/usermodel/004_serving.sql`；构造 Store 不自动迁移。当前只完成固定基线与隔离跨存储消费者联验，正式 DC 用户塔预测和 recommend 配对发布仍待接入。
+WS08-D 的固定基线用户编码、不可变 Bundle、推荐域授权接口及主体/配对 CAS 指针见 [ServingBundle 验收](serving_acceptance.md)。部署时由 worker 调用 `usermodel.MigrateSchema` 完成 GORM 表结构初始化；构造 Store 不自动迁移。当前只完成固定基线与隔离跨存储消费者联验，正式 DC 用户塔预测和 recommend 配对发布仍待接入。
 
-部署者显式运行 `migrations/usermodel/001_facts.sql`。构造 `NewStore(pool, processTelemetryBundle)` 不迁移数据库、不创建 logger/Tracer/Registry；正式入口需注入进程唯一的 Bundle，并由 Runner/Graph Tool 传递真实 Context。隔离包测试验证了 domain stage 的单行 JSON、Span 与指标入口，**没有证明**正式 Runner 框架原生 Span、Collector 下钻或实际 RTW→DC→BTW 投递。
+构造 `NewStore(pool, processTelemetryBundle)` 不迁移数据库、不创建 logger/Tracer/Registry；正式入口需注入进程唯一的 Bundle，并由 Runner/Graph Tool 传递真实 Context。隔离包测试验证了 domain stage 的单行 JSON、Span 与指标入口，**没有证明**正式 Runner 框架原生 Span、Collector 下钻或实际 RTW→DC→BTW 投递。
 
 WS08-B/C 消费 `Current` 与 `OutboxAfter`，按固定 `projection_version` 和逐来源水位重算图/特征。WS07-B 消费 `History` 及 outbox 的证据引用，将历史事实和缺口与相同源事件在仓内对账；本包不将 PG `current` 用作不可变历史训练输入。真实 H09.a/H04 适配器还需要绑定 RTW 签发主体、producer、EventSpec 与来源位置，不能直接反序列化不可信 payload 后调用 `Append`。
 
-局部真 PG 验收：`internal/usermodel/test-postgres.sh`。脚本使用随机端口、临时 PG16 数据目录和随机 schema，运行包级 race 测试与 vet；测试结束停止数据库。详细结果见 [验收结果](验收结果.md)。
+局部真 PG 验收：`service/async/internal/usermodel/test-postgres.sh`。脚本使用随机端口、临时 PG16 数据目录和随机 schema，运行包级 race 测试与 vet；测试结束停止数据库。详细结果见 [验收结果](验收结果.md)。

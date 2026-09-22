@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/runtime/httpclient"
@@ -54,7 +53,7 @@ func factProcessPool(t *testing.T) (*pgxpool.Pool, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, usermodelmigration.SQL); err != nil {
+	if err := usermodel.MigratePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

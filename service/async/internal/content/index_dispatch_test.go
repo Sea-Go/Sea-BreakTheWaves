@@ -7,14 +7,13 @@ import (
 	"testing"
 	"time"
 
-	contentmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
 )
 
 func TestPostgresIndexDispatchLeaseRestartAndFencing(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.Exec(ctx, contentmigration.SQL); err != nil {
+	if err := MigratePool(ctx, s.db); err != nil {
 		t.Fatalf("versioned migration replay: %v", err)
 	}
 	fence := claimFixture(t, s)

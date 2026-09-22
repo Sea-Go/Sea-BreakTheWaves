@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"testing"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/warehouse/featurebaseline"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/sourcecoverage"
@@ -20,7 +19,7 @@ import (
 func coveredSnapshotStore(t *testing.T) (*usermodel.Store, *pgxpool.Pool) {
 	t.Helper()
 	store, pool := coveredBaselineStore(t)
-	if _, err := pool.Exec(context.Background(), usermodelmigration.CoveredSnapshotSQL); err != nil {
+	if err := usermodel.MigratePool(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
 	return store, pool

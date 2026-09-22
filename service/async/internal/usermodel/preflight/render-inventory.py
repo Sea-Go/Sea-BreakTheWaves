@@ -12,9 +12,9 @@ assert len(tables) == 23 and three == 19
 lines = [
     '# SubjectRef v2 阶段一：BTW usermodel 物理结构清单',
     '',
-    '依据：BTW 开发集成提交 `f51723e0a1db3b5029342ef8207fb2255be79cec` 的七份 `migrations/usermodel/001..006` SQL，',
-    '按部署顺序应用到隔离 PostgreSQL 16，再从 `pg_catalog` 读取真实列、主键、外键和唯一索引。',
-    f'迁移源 SHA-256：`{contract["source_sha256"]}`。本文由 `render-inventory.py` 从 `contract.json` 生成。',
+    '依据：`service/async/internal/usermodel/schema.go` 的 GORM 模型，',
+    '通过 `AutoMigrate` 应用到隔离 PostgreSQL 16，再从 `pg_catalog` 读取真实列、主键、外键和唯一索引。',
+    f'GORM schema 源 SHA-256：`{contract["source_sha256"]}`。本文由 `render-inventory.py` 从 `contract.json` 生成。',
     '',
     '实际是 23 张表：19 张有完整 `(authority_id,tenant_id,subject_id)` 列，',
     '1 张未映射事件以外部主体为键，2 张 Ontology 表只按 authority/tenant 建键，',
@@ -45,9 +45,9 @@ for table in tables:
 
 lines += [
     '',
-    '清单中的“无 FK”表示当前旧 schema 未用物理 FK 强制该关系，不代表预检会跳过逻辑所有权：',
+    '清单中的“无 FK”表示当前 GORM schema 未用物理 FK 强制该关系，不代表预检会跳过逻辑所有权：',
     '`outbox`、`watermarks`、`subject_bindings` 与已绑定 `unmapped_events` 的主体归属由只读查询另审。',
-    'Serving `pair_id/approval_ref` 的 recommend 授权方不在本阶段 `migrations/usermodel` 范围内，',
+    'Serving `pair_id/approval_ref` 的 recommend 授权方不在本 scoped usermodel schema 范围内，',
     '本工具只校验 pointer 与所指 bundle 的主体和 pair 一致；外部批准真实性留待后续阶段。',
     '',
 ]

@@ -12,7 +12,6 @@ service/recommend/      推荐域
 service/async/          异步与用户模型域
 service/common/         无业务语义的共享技术设施
 deploy/                 Docker Compose、Prometheus、OTel Collector
-migrations/             服务 PostgreSQL schema
 ```
 
 每个业务域采用标准 go-zero 结构：
@@ -56,6 +55,17 @@ HTTP request
 ```
 
 API 层不直接访问数据库，也不直接启动业务 runtime。跨服务同步调用只通过生成的 `<domain>service` client；异步边界通过 Async RPC 和 worker/mq 处理。
+
+## PostgreSQL schema ownership
+
+应用表结构不使用根目录 SQL migration。各业务 owner 在 `rpc/internal/model` 或域内 schema 文件中声明 GORM Model，并由 `service/common/database.AutoMigrate` 初始化：
+
+- `service/async/internal/content/schema.go`
+- `service/async/internal/usermodel/schema.go`
+- `service/recommend/rpc/internal/model/schema.go`
+- `service/common/infra/schema.go`
+
+PostgreSQL trigger、视图和 trigram 索引属于数据库专用 guard/查询增强，在 GORM 表结构初始化后安装。tRPC-Agent-Go 管理的 Session schema 仍由框架生命周期负责，不纳入应用 GORM schema。
 
 ## 端口
 

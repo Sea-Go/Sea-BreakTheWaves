@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -52,15 +51,7 @@ func (a fixedPairAuthorizer) AuthorizePair(context.Context, PairRef) (PairAuthor
 
 func servingTestStore(t *testing.T) *Store {
 	t.Helper()
-	s := featureTestStore(t)
-	body, err := os.ReadFile("../../migrations/usermodel/004_serving.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(context.Background(), string(body)); err != nil {
-		t.Fatal(err)
-	}
-	return s
+	return featureTestStore(t)
 }
 
 func testPair(t *testing.T) PairRef {

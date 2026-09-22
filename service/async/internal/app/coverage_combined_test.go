@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	usermodelmigration "github.com/Sea-Go/Sea-BreakTheWaves/migrations/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/warehouse/favoritesource"
@@ -70,28 +69,8 @@ func joinedEnv(t *testing.T, warehouseDSN, modelDSN, dcURL, dcToken, authorityUR
 		t.Fatal(err)
 	}
 	t.Cleanup(model.Close)
-	featuresSQL, err := os.ReadFile("../../../../migrations/usermodel/003_features.sql")
-	if err != nil {
+	if err := usermodel.MigratePool(ctx, model); err != nil {
 		t.Fatal(err)
-	}
-	servingSQL, err := os.ReadFile("../../../../migrations/usermodel/004_serving.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, migration := range []struct {
-		name string
-		sql  string
-	}{
-		{"001_facts", usermodelmigration.SQL},
-		{"002_coverage", usermodelmigration.CoverageSQL},
-		{"003_features", string(featuresSQL)},
-		{"004_serving", string(servingSQL)},
-		{"005_covered_baseline", usermodelmigration.CoveredBaselineSQL},
-		{"006_covered_snapshot", usermodelmigration.CoveredSnapshotSQL},
-	} {
-		if _, err := model.Exec(ctx, migration.sql); err != nil {
-			t.Fatalf("model migration %s: %v", migration.name, err)
-		}
 	}
 	observed, err := telemetry.New(ctx, telemetry.Config{Service: "coverage-combined-acceptance", Environment: "test", Version: "v2",
 		InstanceID: "isolated", Output: io.Discard, Level: slog.LevelInfo, TraceExporter: tracetest.NewInMemoryExporter(), SampleRatio: 1})

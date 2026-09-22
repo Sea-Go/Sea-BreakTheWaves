@@ -3,7 +3,6 @@ package usermodel
 import (
 	"context"
 	"errors"
-	"os"
 	"reflect"
 	"slices"
 	"sync"
@@ -29,15 +28,7 @@ func ontologyFixture(tenant string, version int64) OntologyDefinition {
 
 func ontologyTestStore(t *testing.T) *Store {
 	t.Helper()
-	s := testStore(t, nil)
-	body, err := os.ReadFile("../../migrations/usermodel/002_ontology.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(context.Background(), string(body)); err != nil {
-		t.Fatal(err)
-	}
-	return s
+	return testStore(t, nil)
 }
 
 func ontologyValue(p OntologyProjection, name string) int64 {
