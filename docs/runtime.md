@@ -105,7 +105,7 @@ H05兼容更新：提供者4f5abf5显式增加mean_maxsim；SDK已从此提交�
 
 `Runtime.New`/`OpenPostgres` 现在强制接收已安装Bundle。一次Run产生带run/session ID的 `runtime.run.started/finished`、真实Span及请求级成功/失败/取消/超时计数和耗时；OOM或panic不会被写成成功。关闭时Bundle拒绝新阶段并等待在途阶段，再有界关闭Exporter；写日志失败增加有界指标，不递归打印。调用者仍须按Runner→Bundle顺序关闭；Domain content的Preparer/Reconciler同样强制接收Bundle，在真实PG提交结果之后写含build/attempt/epoch及固定工件hash的终态。
 
-此前局部证据：`go test -race -count=1 ./internal/telemetry ./internal/runtime ./internal/content` 用实际JSON writer、有效trace/span ID、Exporter接收、应用Prometheus `/metrics`、写入失败、关闭竞争、panic拒收及PG知识构建测试核验；任务脚本 `scripts/test-content.sh` 与 `internal/runtime/acceptance.sh` 已分别通过随机端口隔离PG，后者仍只证明原有DC/RTW业务交接和Bundle调用兼容。测试中的内存Exporter/Discard模式不构成Collector或跨仓Trace验收。
+此前局部证据：`go test -race -count=1 ./internal/telemetry ./internal/runtime ./internal/content` 用实际JSON writer、有效trace/span ID、Exporter接收、应用Prometheus `/metrics`、写入失败、关闭竞争、panic拒收及PG知识构建测试核验；任务脚本 `service/async/rpc/internal/content/test-postgres.sh` 与 `internal/runtime/acceptance.sh` 已分别通过随机端口隔离PG，后者仍只证明原有DC/RTW业务交接和Bundle调用兼容。测试中的内存Exporter/Discard模式不构成Collector或跨仓Trace验收。
 
 新增框架证据：`internal/runtime/framework_trace_test.go` 在独立子进程实际执行 `Runner→LLMAgent→typed FunctionTool`，内存Exporter收到 `runtime.run` 及同Trace父子链上的框架 `invoke_agent`、`chat`、`execute_tool` Span，后三者 instrumentation scope 为 `trpc.agent.go`。同一次调用抓取真实 `/metrics`，同时看到应用与框架三个meter的指标，返回HTTP 200且没有用户/会话/Agent实例ID标签；普通与race测试均通过。此测试证明**隔离Runtime组件**使用了框架原生观测，未证明内容、搜索、推荐生产入口已采用框架编排。
 

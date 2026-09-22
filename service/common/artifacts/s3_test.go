@@ -20,7 +20,7 @@ func TestSharedS3WikiBytesAreReadableByRTWKeyAndCorruptionRejects(t *testing.T) 
 	host := os.Getenv("SEA_ARTIFACT_S3_HOST")
 	bucket := os.Getenv("SEA_ARTIFACT_S3_BUCKET")
 	if host == "" || bucket == "" {
-		t.Skip("run scripts/test-shared-s3-artifacts.py with isolated SeaweedFS")
+		t.Skip("set SEA_ARTIFACT_S3_HOST and SEA_ARTIFACT_S3_BUCKET for an isolated SeaweedFS instance")
 	}
 	construct := func() *minio.Client {
 		t.Helper()

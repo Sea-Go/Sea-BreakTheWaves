@@ -14,7 +14,7 @@ BTW 的 PrepareWorker 与 IndexWorker 共同经 `claimAllocatedRTWBuildFence` �
 
 ```bash
 # BTW 独立树：本地 PG、Graph/worker 与三路 exact 夹具
-bash scripts/test-content.sh
+bash service/async/rpc/internal/content/test-postgres.sh
 bash cmd/worker/acceptance.sh
 
 # RTW 独立树：真 User Center/RTW PG/BTW 子进程/真 DC jobs 服务

@@ -26,7 +26,7 @@
 
 ```sh
 go test ./...
-bash scripts/test-content.sh
+bash service/async/rpc/internal/content/test-postgres.sh
 ```
 
 ## 前言

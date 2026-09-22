@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../../../../.."
 content_pg_bin="${CONTENT_PG_BIN:-/opt/homebrew/opt/postgresql@16/bin}"
 test -x "$content_pg_bin/initdb"
 content_tmp="$(mktemp -d "${TMPDIR:-/tmp}/sea-content-acceptance.XXXXXX")"

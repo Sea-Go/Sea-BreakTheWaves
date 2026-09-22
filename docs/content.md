@@ -4,7 +4,7 @@
 
 ## 区域和依赖
 
-- W1：`service/async/rpc/internal/content/`、`service/common/artifacts/`、`service/common/corpus/`、`scripts/test-content.sh`及本文；root是唯一writer。
+- W1：`service/async/rpc/internal/content/`、`service/common/artifacts/`、`service/common/corpus/`、`service/async/rpc/internal/content/test-postgres.sh`及本文；root是唯一writer。
 - R1：RTW权威 `api/knowledge.api`、DC H04/H05、其他领域与原始在途工作树。
 - D1：tRPC-Agent-Go核心v1.8.1与pgx/v5；不修改模块缓存或复制框架internal。
 - G1：provider DTO由runtime任务生成，content只消费。
@@ -29,7 +29,7 @@
 
 ## 验收
 
-在仓根运行 `CONTENT_KEEP_EVIDENCE=1 bash scripts/test-content.sh`。脚本自行创建并停止专属PG16，每例独立schema，执行content/artifacts的race和vet。直接go test未提供CONTENT_TEST_POSTGRES_DSN时会跳过PG测试，不等于完成真实数据库验收。
+在仓根运行 `CONTENT_KEEP_EVIDENCE=1 bash service/async/rpc/internal/content/test-postgres.sh`。脚本自行创建并停止专属PG16，每例独立schema，执行content/artifacts的race和vet。直接go test未提供CONTENT_TEST_POSTGRES_DSN时会跳过PG测试，不等于完成真实数据库验收。
 
 已通过：CRLF/中文/重复字符/overlap来源位置；输入排序与重放同hash；重复文本不丢修订；空/坏必需输入整批拒绝；16代并发fence；三路缺失、缺片、重复/外来ID、错空间、损坏对象、查询失败；取消、过期、乱序tombstone和新代不得复活；Outbox写入耗时导致过期时READY及Outbox全回滚；同profile偷偷变参拒绝。
 

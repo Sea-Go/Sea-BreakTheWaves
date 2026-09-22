@@ -11,7 +11,7 @@
 | 统一观测 | `WithTelemetry` 注入已有 BTW Bundle，真实 JSON 行有固定 service/version/component、Trace ID 和 Span ID；build 的两个 encode 子 Span 和 project 子 Span 共享父 Trace。成功 6 次、合同拒收 1 次出现在同一 Prometheus registry 且无 build ID 维度。仅包内 `LOCAL_VERIFIED`；正式 Agent Runner/Tool→worker→检索及 Collector→DataCenter 下钻未验收。 |
 | 模块回归 | `go test -race ./...`、`go vet ./...` 通过；它覆盖 BTW 根模块，不覆盖旧 recommendation 独立子模块，也不把跳过的外部环境测试算通过。 |
 
-原生两进程验收脚本为 `scripts/lite_acceptance.py`，本轮使用隔离构建的 `milvus_lite-3.2.1` wheel（SHA256 `0742fb4c54858bcc6fc3c2142ec651e2b0f4ae30f19e21d4fbc6db65b9e16c7b`）、PyMilvus 2.6.11、FAISS CPU。最终原始 Go 日志在 `/tmp/sea-multivector-verified.3cTynN/go-0.log`（SHA256 `913c9d4e99d1532081b33477fc4d6a45e438c54ce646c780e1f01904a0a7e8da`）与 `go-1.log`（`9fd6dab80c294411db68fb5ddfab96094d3eac0afc9dc1ccf60bdb816bd0d4fc`）；原生证明 JSON SHA256 `4f04d9d984db5d2e739d941cd664397a9b8ba2e971f31c7921d34e144dbe63fa`。
+历史原生两进程验收曾使用包内临时脚本，本轮使用隔离构建的 `milvus_lite-3.2.1` wheel（SHA256 `0742fb4c54858bcc6fc3c2142ec651e2b0f4ae30f19e21d4fbc6db65b9e16c7b`）、PyMilvus 2.6.11、FAISS CPU。最终原始 Go 日志在 `/tmp/sea-multivector-verified.3cTynN/go-0.log`（SHA256 `913c9d4e99d1532081b33477fc4d6a45e438c54ce646c780e1f01904a0a7e8da`）与 `go-1.log`（`9fd6dab80c294411db68fb5ddfab96094d3eac0afc9dc1ccf60bdb816bd0d4fc`）；原生证明 JSON SHA256 `4f04d9d984db5d2e739d941cd664397a9b8ba2e971f31c7921d34e144dbe63fa`。
 
 真实 DC/BGE 在只绑定任务回环端口的隔离 PostgreSQL、提供者、网关和 Milvus Lite 上执行；提供者与 DC 的 owner 自身 `go test` 通过后才发布一次性 runtime。最终报告 SHA256 `2b9f880ab9c72decaf8b8a78db06d2ea300c6f67653e6344247324c0c37fe133`；DC 测试日志 SHA256 `a66e99bc716129f46d8230bf149bb9ced4d0adc1cf4b915948bc898eedb0b175`。一次性 runtime 中的访问 token 没有提交，联验结束后测试 owner 已释放 BGE/DC/PostgreSQL，Milvus 进程也已停止。只复用已缓存且锁定 hash 的 2.30 GB 模型权重，没有再次下载或写生产。
 

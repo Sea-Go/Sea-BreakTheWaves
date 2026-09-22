@@ -30,7 +30,7 @@ Go 检查：`go test ./...`、`go test -race ./internal/retrieval/dense ./intern
 - `Open` 校验文件并创建可复用快照；`Load` 在此基础上加载并校验已存在的后端投影，不修复或重建。常驻检索进程应持有选定 Snapshot，避免每次重复读取全部向量。当前快照在内存中保存原向量，大语料资源预算尚未验收。
 - `Snapshot.Search` 要求 `IndexRef/ModuleID/ReleaseID/Generation/ValidRevisionIDs/Text/TopK`。有效集合需由权威失效状态提供，空集合不是全域；失效事件消费与最终发布指针属于上游 content/search 集成。
 - `VerifyAndProbe` 直接实现 content 的既有方法签名，实际读分片、回查后端全覆盖和数值、独立 query 编码并搜索。content 最终租约/fence/READY 提交不归本包。
-- `scripts/acceptance.sh --lite` 安装锁定的隔离 Python 依赖，并启动、停止、重启其独占 Lite 进程。脚本输出属于验收证据，不是业务日志实现。真实 DC 检查用 `DENSE_DC_URL`、`DENSE_DC_CONFIG`、本次 token；`DENSE_REAL_BACKEND=milvus` 另需显式 Milvus 地址，不得默认使用共享生产。
+- 历史 `--lite` 验收曾由包内脚本启动独占 Lite 进程；该临时验收脚本已删除，当前仓库不提供生产脚本入口。脚本输出属于验收证据，不是业务日志实现。真实 DC 检查用 `DENSE_DC_URL`、`DENSE_DC_CONFIG`、本次 token；`DENSE_REAL_BACKEND=milvus` 另需显式 Milvus 地址，不得默认使用共享生产。
 
 ## 尚未达到的门禁
 

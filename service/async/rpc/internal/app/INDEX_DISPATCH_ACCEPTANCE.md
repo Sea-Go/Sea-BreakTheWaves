@@ -15,7 +15,7 @@ RTW 可能已接纳 `READY` 而 DC ACK 暂时失败，此时 RTW 仍未发布，
 
 | 验证 | 结果 |
 | --- | --- |
-| `bash scripts/test-content.sh` | PASS。隔离 PG16、迁移重复应用、并发唯一领取、租约过期重领、旧 claim_epoch 拒收、同 Ref 新 DC epoch 恢复及 outbox 最终 delivered。 |
+| `bash service/async/rpc/internal/content/test-postgres.sh` | PASS。隔离 PG16、迁移重复应用、并发唯一领取、租约过期重领、旧 claim_epoch 拒收、同 Ref 新 DC epoch 恢复及 outbox 最终 delivered。 |
 | `go test -mod=readonly -race -count=1 -run 'Test(IndexWorker\|IndexDispatch\|DecodeIndex)' ./internal/app` | PASS。RTW 已提交但 HTTP 回复丢失、未提交后重启扫描、旧 claim、RTW 取消/终态冲突、DC attempts 耗尽、旧 RTW 接纳标记与当前 Ref 冲突、单次成功顺序。 |
 | `bash cmd/worker/acceptance.sh` | PASS。真实子进程、PG16、框架 Graph/Runner、三路 exact 数值索引和探针；RTW/DC HTTP 为协议替身，断言 RTW 同 fence/Ref READY 先于 DC 技术 ACK，最终 outbox delivered。 |
 | `go test -mod=readonly -race -count=1 ./...`、`go vet ./...`、`go mod verify` | PASS。根模块 race/vet/依赖完整性。 |

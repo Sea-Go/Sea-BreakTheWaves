@@ -14,13 +14,13 @@
 
 ## 已执行验证
 
-基线：`feat/content-index-coordinator-20260914` 从 `ac3cc4ca7b17af04f73c7dbea9c1db5eae79f61c` 建立，Go 模块锁定 `trpc.group/trpc-go/trpc-agent-go v1.8.1`；测试使用 `scripts/test-content.sh` 临时创建的独立 PostgreSQL 16 实例与每例独立 schema，不使用共享或生产数据库。
+基线：`feat/content-index-coordinator-20260914` 从 `ac3cc4ca7b17af04f73c7dbea9c1db5eae79f61c` 建立，Go 模块锁定 `trpc.group/trpc-go/trpc-agent-go v1.8.1`；测试使用 `service/async/rpc/internal/content/test-postgres.sh` 临时创建的独立 PostgreSQL 16 实例与每例独立 schema，不使用共享或生产数据库。
 
 | 命令 | 结果 | 覆盖 |
 | --- | --- | --- |
-| `GOFLAGS='-run=TestIndexCoordinator' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | 三路READY/重放、新技术attempt只读恢复且不重复Outbox、局部失败重试、投影ResumeIndex、旧lease/new epoch、伪造generation、独立probe失败、未知/冲突resume、缺失indexer |
-| `GOFLAGS='-skip=TestPrepareGraph' bash scripts/test-content.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | content 非 Graph 用例与 artifacts 全部用例，包括真实 PG ledger/reconcile |
-| `bash scripts/test-content.sh` | 原独立分支失败；集成修复后完整通过 | 含Graph正常/错误/取消、同代协调器、PG ledger/reconcile和artifacts的完整race+vet |
+| `GOFLAGS='-run=TestIndexCoordinator' bash service/async/rpc/internal/content/test-postgres.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | 三路READY/重放、新技术attempt只读恢复且不重复Outbox、局部失败重试、投影ResumeIndex、旧lease/new epoch、伪造generation、独立probe失败、未知/冲突resume、缺失indexer |
+| `GOFLAGS='-skip=TestPrepareGraph' bash service/async/rpc/internal/content/test-postgres.sh` | 通过，`go test -race -count=1 -v` 与 `go vet` 均 exit 0 | content 非 Graph 用例与 artifacts 全部用例，包括真实 PG ledger/reconcile |
+| `bash service/async/rpc/internal/content/test-postgres.sh` | 原独立分支失败；集成修复后完整通过 | 含Graph正常/错误/取消、同代协调器、PG ledger/reconcile和artifacts的完整race+vet |
 
 原整包race栈一：写方为tRPC-Agent-Go v1.8.1 `telemetry/metric/metric.go:225`的`initInvokeAgentMetrics`，经本仓`Bundle.InstallGlobals`于后续PG测试才初始化；此前取消Graph goroutine仍在读框架Meter。集成分支将一次性装配提前到content测试进程`TestMain`、任何Runner协程之前，消除该时序。之后完整脚本揭露栈二：原始Runner修补error Event的`Response.Choices`时，GraphAgent原生Trace仍读取同一个Event。Graph组件测试现在与正式项目Runtime使用相同公开`Plugin.OnEvent → Event.Clone`所有权规则；不改框架缓存、不中止错误测试。定向错误测试race连跑10次、完整隔离PG16脚本及根模块全包race通过。**这只验证项目适配路径**，不代表锁定框架裸Runner的错误Event竞态已在上游修复；正式worker也必须使用项目Runtime及同样插件。
 

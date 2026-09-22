@@ -11,8 +11,16 @@ import (
 	"testing"
 )
 
-func TestAsyncBusinessCodeStaysUnderRPCInternal(t *testing.T) {
-	for _, path := range []string{"service/async/internal", "service/async/migrations"} {
+func TestAncillaryScriptAndMigrationDirectoriesStayAbsent(t *testing.T) {
+	for _, path := range []string{
+		"scripts",
+		"service/async/internal",
+		"service/async/migrations",
+		"service/search/migrations",
+		"service/recommend/migrations",
+		"service/common/retrieval/dense/scripts",
+		"service/common/retrieval/multivector/scripts",
+	} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s must stay absent (err=%v)", path, err)
 		}

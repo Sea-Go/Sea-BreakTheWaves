@@ -20,7 +20,7 @@ func testStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := os.Getenv("CONTENT_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("CONTENT_TEST_POSTGRES_DSN unset; use scripts/test-content.sh for real PG acceptance")
+		t.Skip("CONTENT_TEST_POSTGRES_DSN unset; use service/async/rpc/internal/content/test-postgres.sh for real PG acceptance")
 	}
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, dsn)
