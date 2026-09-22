@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/runtime/httpclient"
 	"github.com/jackc/pgx/v5"

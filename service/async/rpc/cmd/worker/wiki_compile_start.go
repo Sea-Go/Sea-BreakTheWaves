@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/app"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry"
 )

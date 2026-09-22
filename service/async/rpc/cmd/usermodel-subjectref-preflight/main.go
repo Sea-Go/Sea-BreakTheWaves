@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel/preflight"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/usermodel/preflight"
 	"github.com/jackc/pgx/v5"
 )
 

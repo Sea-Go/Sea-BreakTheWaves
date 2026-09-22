@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/usermodel"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/database"
 )
 

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/content"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/content"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/artifacts"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/jobs"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/ridethewind"

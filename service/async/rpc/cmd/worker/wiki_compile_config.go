@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/internal/app"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/app"
 )
 
 const wikiCompileNativeSessionSource = "dc-native-app-user"

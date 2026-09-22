@@ -60,8 +60,8 @@ API 层不直接访问数据库，也不直接启动业务 runtime。跨服务�
 
 应用表结构不使用根目录 SQL migration。各业务 owner 在 `rpc/internal/model` 或域内 schema 文件中声明 GORM Model，并由 `service/common/database.AutoMigrate` 初始化：
 
-- `service/async/internal/content/schema.go`
-- `service/async/internal/usermodel/schema.go`
+- `service/async/rpc/internal/content/schema.go`
+- `service/async/rpc/internal/usermodel/schema.go`
 - `service/recommend/rpc/internal/model/schema.go`
 - `service/common/infra/schema.go`
 
@@ -123,7 +123,7 @@ recommend/api     → recommend/rpc/recommendservice
 async/api         → async/rpc/asyncservice
 search/rpc        → common, 本域 internal
 recommend/rpc     → common, 本域 internal
-async/rpc         → common, async/internal
+async/rpc         → common, 本域 internal
 common            → 不依赖任何业务域
 ```
 

@@ -11,6 +11,14 @@ import (
 	"testing"
 )
 
+func TestAsyncBusinessCodeStaysUnderRPCInternal(t *testing.T) {
+	for _, path := range []string{"service/async/internal", "service/async/migrations"} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s must stay absent (err=%v)", path, err)
+		}
+	}
+}
+
 func TestApplicationSchemaStaysInDomainGORMOwners(t *testing.T) {
 	if _, err := os.Stat("migrations"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("root migrations directory must stay absent (err=%v)", err)
