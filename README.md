@@ -334,19 +334,24 @@ Sea-BreakTheWaves/
 
 ## Go-zero 服务入口
 
-Search / Recommend / Async 三个 API 已提供 go-zero 运行入口：
+每个域都由 go-zero API 和 zrpc 组成。先启动 RPC，再启动 API：
 
 ```sh
-cd service/search/api && go run . && cd ../../..
-cd service/recommend/api && go run . && cd ../../..
-cd service/async/api && go run . && cd ../../..
+# Search
+cd service/search/rpc && go run .
+cd service/search/api && go run .
+
+# Recommend
+cd service/recommend/rpc && go run .
+cd service/recommend/api && go run .
+
+# Async RPC / API / Worker
+cd service/async/rpc && go run .
+cd service/async/api && go run .
+cd service/async/rpc/cmd/worker && go run .
 ```
 
-默认端口分别为 `20731`、`20721`、`20741`。如需指定配置：
-
-```sh
-cd service/search/api && go run . -f etc/search-api.yaml
-```
+HTTP 与 zrpc 端口见 [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md)。
 
 ## 快速开始
 
@@ -359,22 +364,15 @@ cd Sea-BreakTheWaves
 
 ### 2. 准备配置
 
-复制配置模板：
+业务通用配置位于各 RPC 目录：
 
-```bash
-cp config.yaml.example config.yaml
+```text
+service/search/rpc/etc/config.yaml
+service/recommend/rpc/etc/config.yaml
+service/async/rpc/etc/config.yaml
 ```
 
-然后至少修改以下关键配置：
-
-- `postgres.dsn`
-- `milvus.address`
-- `ali.apikey`
-- `Kafka.address`
-- `neo4j.address`
-- `services.httpPort`
-
----
+go-zero API/RPC 配置位于同一 `etc/` 目录。至少确认 PostgreSQL、Milvus、Kafka、Neo4j、模型网关，以及 RPC `ListenOn` 与 API `Endpoints`。
 
 ### 3. 启动基础依赖
 
@@ -382,51 +380,22 @@ cp config.yaml.example config.yaml
 docker compose -f deploy/docker-compose.yaml up -d
 ```
 
-项目中的 `deploy/docker-compose.yaml` 已包含以下组件：
-
-- etcd
-- postgres (包含 exporter)
-- redis (包含 exporter 与 redisinsight)
-- neo4j (包含 neodash)
-- kafka (包含 exporter 与 kafka-ui)
-- minio
-- milvus
-- elasticsearch (包含 exporter)
-- kibana
-- prometheus
-- grafana
-- jaeger
-- node-exporter
-- cadvisor
-
----
-
 ### 4. 启动服务
 
-```bash
-go run main.go
-```
-
-启动成功后，默认监听地址为：
-
-```text
-0.0.0.0:20721
-```
-
----
+按本文开头的顺序启动各域 RPC 和 API。
 
 ### 5. 健康检查
 
 ```bash
+curl http://localhost:20731/health
 curl http://localhost:20721/health
+curl http://localhost:20741/health
 ```
 
 期望响应：
 
 ```json
-{
-  "status": "ok"
-}
+{"status":"ok"}
 ```
 
 ---

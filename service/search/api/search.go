@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/config"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/api/internal/handler"
@@ -27,6 +28,15 @@ func main() {
 	defer server.Stop()
 
 	ctx := svc.NewServiceContext(c)
+
+	server.AddRoute(rest.Route{
+		Method: http.MethodGet,
+		Path:   "/health",
+		Handler: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		},
+	})
 	handler.RegisterHandlers(server, ctx)
 
 	fmt.Printf("Starting server at %s:%d...\n", c.Host, c.Port)
