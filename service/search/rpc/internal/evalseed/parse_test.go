@@ -121,3 +121,17 @@ func TestParseRoundTripEvaluate(t *testing.T) {
 	}
 	approxEqual(t, "文件输入的手算例 A nDCG@10", got, handNDCGA)
 }
+
+func TestParseRunRejectsMixedFormats(t *testing.T) {
+	mixed := "q-00 doc-01\nq-00 doc-02 1\n"
+	if _, err := ParseRun(strings.NewReader(mixed)); err == nil {
+		t.Fatal("expected error for mixed two/three column run rows")
+	}
+	// 同格式（全两列/全三列）不受影响。
+	if _, err := ParseRun(strings.NewReader("q-00 doc-01\nq-00 doc-02\n")); err != nil {
+		t.Fatalf("two-column run rejected: %v", err)
+	}
+	if _, err := ParseRun(strings.NewReader("q-00 doc-01 2\nq-00 doc-02 1\n")); err != nil {
+		t.Fatalf("three-column run rejected: %v", err)
+	}
+}

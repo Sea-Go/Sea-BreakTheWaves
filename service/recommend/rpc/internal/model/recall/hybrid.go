@@ -32,6 +32,10 @@ type HybridRecaller struct {
 	recallers []domain.Recaller
 	poolSize  int
 	topK      int
+	// sem 在实例上共享：同一 HybridRecaller 的并发 Recall 调用共用
+	// 一个并发上限（CodeRabbit 评审指出每调用建信号量会使总并发
+	// 超过 poolSize，打爆下游）。
+	sem chan struct{}
 }
 
 // NewHybridRecaller 创建混合召回器。
@@ -45,6 +49,7 @@ func NewHybridRecaller(recallers []domain.Recaller, poolSize, topK int) (*Hybrid
 		recallers: recallers,
 		poolSize:  poolSize,
 		topK:      topK,
+		sem:       make(chan struct{}, poolSize),
 	}, nil
 }
 
@@ -72,17 +77,16 @@ func (h *HybridRecaller) Recall(ctx context.Context, req domain.RecallRequest) (
 	results := make([]domain.RecallResult, len(h.recallers))
 
 	// errgroup 负责错误传播与 ctx 取消；信号量限制实际并发度
-	sem := make(chan struct{}, h.poolSize)
 	g, gctx := errgroup.WithContext(ctx)
 	for i, r := range h.recallers {
 		i, r := i, r // 捕获循环变量
 		g.Go(func() error {
 			select {
-			case sem <- struct{}{}:
+			case h.sem <- struct{}{}:
 			case <-gctx.Done():
 				return gctx.Err()
 			}
-			defer func() { <-sem }()
+			defer func() { <-h.sem }()
 			res, err := r.Recall(gctx, req)
 			results[i] = res
 			return err

@@ -33,8 +33,10 @@ rep.WriteText(w)                               // 确定性纯文本报告（可
 - **run**：本包接受三列 `qid docid rank`（按 rank 升序稳定排序，rank 相同按文件行序）与两列 `qid docid`（行序即排名），是 trec_eval 六列 run 的最小子集。trec_eval 本体评测前需转换为六列：
 
   ```sh
-  awk '{print $1, "Q0", $2, NR, 1-$3*0.001, "sea"}' run.txt > run.trec
-  # 或两列输入：awk '{print $1, "Q0", $2, NR, 0.999, "sea"}'
+  # 三列输入（qid docid rank）：rank 用第 3 列，score 随 rank 严格递减
+  awk '{print $1, "Q0", $2, $3, 1-$3*0.001, "sea"}' run.txt > run.trec
+  # 两列输入（qid docid）：按行序为每个 qid 生成从 1 递增的 rank 与递减 score
+  awk '{c[$1]++; print $1, "Q0", $2, c[$1], 1-c[$1]*0.001, "sea"}' run.txt > run.trec
   ```
 
   常用对照命令：`trec_eval -m ndcg_cut.10 -m recall.100 -m recip_rank qrels.txt run.trec`（trec_eval 的 recip_rank 截断到前 10 需自行用 `mrr_cut.10` 口径核对；本包 MRR@10 与其 `recip_rank`（全排名）在首位命中在前 10 时一致）。

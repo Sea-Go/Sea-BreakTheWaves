@@ -96,6 +96,10 @@ func ParseRun(r io.Reader) (Run, error) {
 	states := map[string]*qidState{}
 	scanner := bufio.NewScanner(r)
 	lineNo := 0
+	// format 记录本文件已用的列数（2 或 3）。混用两种格式会使排序语义
+	// 不明（两列 rank=0 会全部排到三列之前，分数静默错误），同一文件
+	// 内混用直接报错（CodeRabbit 评审发现）。
+	format := 0
 	for scanner.Scan() {
 		lineNo++
 		line := strings.TrimSpace(scanner.Text())
@@ -105,6 +109,11 @@ func ParseRun(r io.Reader) (Run, error) {
 		fields := strings.Fields(line)
 		if len(fields) != 2 && len(fields) != 3 {
 			return nil, fmt.Errorf("evalseed: run 第 %d 行字段数期望 2 或 3（qid docid [rank]），实际 %d", lineNo, len(fields))
+		}
+		if format == 0 {
+			format = len(fields)
+		} else if format != len(fields) {
+			return nil, fmt.Errorf("evalseed: run 第 %d 行列数 %d 与此前格式（%d 列）不一致，两列与三列格式不得混用", lineNo, len(fields), format)
 		}
 		qid, doc := fields[0], fields[1]
 		rank := 0
