@@ -14,7 +14,7 @@ v, err := evalseed.NDCGAt10(qrels, run)        // 单指标也可独立调用（
 rep.WriteText(w)                               // 确定性纯文本报告（可作回归基线 diff）
 ```
 
-内存构造同样可行：`Qrels map[qid]map[docid]int`、`Run map[qid][]string`（后者按 rank 升序）。
+内存构造同样可行：`Qrels map[qid]map[docid]int`、`Run map[qid][]string`（后者按 rank 升序，且同一 qid 内 docid 不可重复）。
 
 ## 指标口径与公式出处
 
@@ -46,6 +46,7 @@ rep.WriteText(w)                               // 确定性纯文本报告（可
 | --- | --- |
 | qrels 为空 / run 为空 | `errEmptyQrels` / `errEmptyRun`（可 `errors.Is` 判别）；空 run 视为上游检索失败而非真实零分 |
 | run 中出现 qrels 未知的 qid | 报错并指明 qid（防止未标注查询混入均值） |
+| run 同一 qid 内出现重复 docid | 报错并指明 qid/docid 与重复 rank（避免指标重复计分） |
 | 查询无 rel>0 文档 | 各指标记 0，不产生 NaN |
 | 解析格式错误（列数、非整数、rank<1、docid 重复等） | 报错并带行号 |
 

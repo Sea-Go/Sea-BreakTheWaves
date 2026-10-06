@@ -224,6 +224,9 @@ func TestInputErrors(t *testing.T) {
 		if _, err := fn(qrels, Run{"unknown": {"d1"}}); err == nil || !strings.Contains(err.Error(), "unknown") {
 			t.Errorf("%s 未知 qid 期望报错并包含 qid，实际 %v", name, err)
 		}
+		if _, err := fn(qrels, Run{"q": {"d1", "d1"}}); err == nil || !strings.Contains(err.Error(), "重复") {
+			t.Errorf("%s 重复 docid 期望报错并包含重复，实际 %v", name, err)
+		}
 	}
 
 	if _, err := Evaluate(Qrels{}, Run{"q": {"d1"}}); !errors.Is(err, errEmptyQrels) {
@@ -234,6 +237,9 @@ func TestInputErrors(t *testing.T) {
 	}
 	if _, err := Evaluate(qrels, Run{"q": {}, "unknown": {"d1"}}); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Errorf("Evaluate 未知 qid 期望报错，实际 %v", err)
+	}
+	if _, err := Evaluate(qrels, Run{"q": {"d1", "d1"}}); err == nil || !strings.Contains(err.Error(), "重复") {
+		t.Errorf("Evaluate 重复 docid 期望报错，实际 %v", err)
 	}
 }
 

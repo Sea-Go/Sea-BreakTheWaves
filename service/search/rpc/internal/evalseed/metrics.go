@@ -54,6 +54,13 @@ func validate(qrels Qrels, run Run) error {
 		if _, ok := qrels[qid]; !ok {
 			return fmt.Errorf("evalseed: run 中的 qid %q 未出现在 qrels（拒绝把未标注查询混入均值）", qid)
 		}
+		seen := make(map[string]int, len(run[qid]))
+		for i, doc := range run[qid] {
+			if prev, ok := seen[doc]; ok {
+				return fmt.Errorf("evalseed: run 中 qid %q 的 doc %q 重复（rank %d 与 rank %d）", qid, doc, prev, i+1)
+			}
+			seen[doc] = i + 1
+		}
 	}
 	return nil
 }

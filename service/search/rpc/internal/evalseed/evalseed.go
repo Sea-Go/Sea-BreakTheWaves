@@ -29,7 +29,7 @@ import (
 // rel=0 或缺失均按 0（不相关）处理。
 type Qrels map[string]map[string]int
 
-// Run 检索结果：qid → 按 rank 升序排列的 docid 列表（rank 1 为首位）。
+// Run 检索结果：qid → 按 rank 升序排列的 docid 列表（rank 1 为首位，同一 qid 内 docid 不可重复）。
 type Run map[string][]string
 
 // QueryDetail 单条查询的指标明细。
