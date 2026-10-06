@@ -1,14 +1,19 @@
-// seeds.go —— 冻结种子集的装载与结构树派生（dev 形态）。
+// Package devseed 把冻结种子集语料装载成检索侧可用的只读 Store（dev
+// 形态）：corpus/*.md → 假编码（fakerepr，镜像 cmd/indexer 口径）→
+// M2 工件量化落位（manifest + 三路内容寻址载荷）→ retrieval.Load 装载 →
+// 逐文档 AttachSource（deriveTree 派生结构树，RTW structure.Derive 的
+// dev 替身）。
 //
-// 语料/查询/qrels 来自 testdata/index/seeds（冻结声明见该目录 README）。
-// 结构树派生（deriveTree）是 RTW structure.Derive 的 dev 替身：按空行
-// 分块，标题块（# 开头）成标题节点，正文块成段落节点（level=7、全局
-// 段落序），导读（>）、分隔线（---）与尾注（<!--）块跳过——段落计数
-// 口径与种子集构造口径一致。
-package main
+// 消费方：cmd/retr_eval（评测入口）、cmd/search_demo（演示入口）与
+// internal/pipeline 的种子集测试。抽出共享包是为了避免 seeds 装载口径
+// 出现多份拷贝（先例：cmd/retr_eval 曾自带完整副本）。
+//
+// 边界：只消费冻结种子集，不做索引生产/切换（归 M2 indexer 与
+// artifact.Switcher 层）；deriveTree 是 markdown 结构派生的 dev 替身，
+// 段落计数口径与种子集构造口径一致（见 testdata/index/seeds/README）。
+package devseed
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,42 +24,94 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/evalseed"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/evidence"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/fakerepr"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/retrieval"
 )
 
-// seedDoc 是语料侧的单文档：源文本 + 派生的修订/结构引用。
-type seedDoc struct {
-	DocKey       string
+// Doc 是语料侧的单文档：源文本 + 派生的修订/结构引用。
+type Doc struct {
+	// DocKey 稳定文档键（语料文件名去扩展名）。
+	DocKey string
+	// StructureRef 结构引用（M2 事件惯例：structure/<doc_key>）。
 	StructureRef string
-	RevisionID   string
-	Source       []byte
+	// RevisionID 冻结修订 ID（内容哈希前 16 hex，确定性替身）。
+	RevisionID string
+	// Source 冻结源文本字节。
+	Source []byte
 }
 
-// loadCorpus 读 corpus/doc-*.md（按文件名排序），修订 ID = 内容哈希前 16
-// hex（冻结修订的确定性替身），structure_ref 按 M2 事件惯例。
-func loadCorpus(seedsDir string) ([]seedDoc, error) {
+// Corpus 是一次种子集装载的结果：可直接检索的 Store + 语料清单与
+// 工件元数据（encoder_id / manifest_id，供演示与对账输出）。
+type Corpus struct {
+	// Store 装载完成（含结构树/源文本）的只读检索库。
+	Store *retrieval.Store
+	// Docs 语料文档清单（按 doc_key 字典序）。
+	Docs []Doc
+	// ManifestID 本次装载的工件 manifest ID。
+	ManifestID string
+	// EncoderID 编码器标识（恒为 fakerepr.EncoderID）。
+	EncoderID string
+}
+
+// LoadCorpus 跑通"语料 → 假编码 → 工件量化 → 装载 → 补源"全链路，
+// 返回可直接检索的 Corpus。任一环节失败即整体失败（全有或全无）。
+func LoadCorpus(seedsDir string) (*Corpus, error) {
+	if seedsDir == "" {
+		return nil, fmt.Errorf("devseed: seeds 目录为空")
+	}
+	docs, err := loadCorpusDocs(seedsDir)
+	if err != nil {
+		return nil, err
+	}
+	sink, manifest, err := buildSink(docs)
+	if err != nil {
+		return nil, err
+	}
+	store, err := retrieval.Load(sink, manifest.Docs)
+	if err != nil {
+		return nil, fmt.Errorf("devseed: 装载工件: %w", err)
+	}
+	for _, d := range docs {
+		tree, err := DeriveTree(d.Source, d.RevisionID)
+		if err != nil {
+			return nil, err
+		}
+		if err := store.AttachSource(d.DocKey, tree, d.Source); err != nil {
+			return nil, fmt.Errorf("devseed: 补齐文档 %s: %w", d.DocKey, err)
+		}
+	}
+	return &Corpus{
+		Store:      store,
+		Docs:       docs,
+		ManifestID: manifest.ManifestID,
+		EncoderID:  fakerepr.EncoderID,
+	}, nil
+}
+
+// loadCorpusDocs 读 corpus/doc-*.md（按文件名排序），修订 ID = 内容哈希
+// 前 16 hex（冻结修订的确定性替身），structure_ref 按 M2 事件惯例。
+func loadCorpusDocs(seedsDir string) ([]Doc, error) {
 	dir := filepath.Join(seedsDir, "corpus")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("retr_eval: 读语料目录 %s: %w", dir, err)
+		return nil, fmt.Errorf("devseed: 读语料目录 %s: %w", dir, err)
 	}
-	var docs []seedDoc
+	var docs []Doc
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
 		source, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("retr_eval: 读语料 %s: %w", e.Name(), err)
+			return nil, fmt.Errorf("devseed: 读语料 %s: %w", e.Name(), err)
 		}
 		if len(source) == 0 {
-			return nil, fmt.Errorf("retr_eval: 语料 %s 为空", e.Name())
+			return nil, fmt.Errorf("devseed: 语料 %s 为空", e.Name())
 		}
 		sum := sha256.Sum256(source)
 		key := strings.TrimSuffix(e.Name(), ".md")
-		docs = append(docs, seedDoc{
+		docs = append(docs, Doc{
 			DocKey:       key,
 			StructureRef: "structure/" + key,
 			RevisionID:   "rev-" + hex.EncodeToString(sum[:8]),
@@ -62,70 +119,18 @@ func loadCorpus(seedsDir string) ([]seedDoc, error) {
 		})
 	}
 	if len(docs) == 0 {
-		return nil, fmt.Errorf("retr_eval: 语料目录 %s 无 .md 文档", dir)
+		return nil, fmt.Errorf("devseed: 语料目录 %s 无 .md 文档", dir)
 	}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].DocKey < docs[j].DocKey })
 	return docs, nil
 }
 
-// seedQuery 是 queries.jsonl 的一行（gold 以 qrels.txt 为准，此处只取
-// qid 顺序与查询文本）。
-type seedQuery struct {
-	Qid  string
-	Text string
-}
-
-// loadQueries 解析 queries.jsonl。
-func loadQueries(seedsDir string) ([]seedQuery, error) {
-	f, err := os.Open(filepath.Join(seedsDir, "queries.jsonl"))
-	if err != nil {
-		return nil, fmt.Errorf("retr_eval: 读 queries.jsonl: %w", err)
-	}
-	defer f.Close()
-	var queries []seedQuery
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
-	line := 0
-	for sc.Scan() {
-		line++
-		s := strings.TrimSpace(sc.Text())
-		if s == "" {
-			continue
-		}
-		var q struct {
-			Qid  string `json:"qid"`
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal([]byte(s), &q); err != nil {
-			return nil, fmt.Errorf("retr_eval: queries.jsonl 第 %d 行: %w", line, err)
-		}
-		if q.Qid == "" {
-			return nil, fmt.Errorf("retr_eval: queries.jsonl 第 %d 行缺 qid", line)
-		}
-		queries = append(queries, seedQuery{Qid: q.Qid, Text: q.Text})
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("retr_eval: 读 queries.jsonl: %w", err)
-	}
-	if len(queries) == 0 {
-		return nil, fmt.Errorf("retr_eval: queries.jsonl 无查询")
-	}
-	return queries, nil
-}
-
-// loadQrels 解析 qrels.txt。
-func loadQrels(seedsDir string) (evalseed.Qrels, error) {
-	f, err := os.Open(filepath.Join(seedsDir, "qrels.txt"))
-	if err != nil {
-		return nil, fmt.Errorf("retr_eval: 读 qrels.txt: %w", err)
-	}
-	defer f.Close()
-	return evalseed.ParseQrels(f)
-}
-
-// deriveTree 从 markdown 源文本派生结构树（RTW structure.Derive 的 dev
-// 替身）。节点覆盖源文本字节区间 [CharStart, CharEnd)（不含块尾换行）。
-func deriveTree(source []byte, revisionID string) (evidence.TreeJSON, error) {
+// DeriveTree 从 markdown 源文本派生结构树（RTW structure.Derive 的 dev
+// 替身）。按空行分块：标题块（# 开头）成标题节点，正文块成段落节点
+// （level=7、全局段落序），导读（>）、分隔线（---）与尾注（<!--）块
+// 跳过——段落计数口径与种子集构造口径一致。节点覆盖源文本字节区间
+// [CharStart, CharEnd)（不含块尾换行）。
+func DeriveTree(source []byte, revisionID string) (evidence.TreeJSON, error) {
 	tree := evidence.TreeJSON{RevisionID: revisionID}
 	paraIdx := 0
 	nodeSeq := 0
@@ -171,7 +176,7 @@ func deriveTree(source []byte, revisionID string) (evidence.TreeJSON, error) {
 		i = j
 	}
 	if paraIdx == 0 {
-		return evidence.TreeJSON{}, fmt.Errorf("retr_eval: 修订 %s 的语料无段落节点", revisionID)
+		return evidence.TreeJSON{}, fmt.Errorf("devseed: 修订 %s 的语料无段落节点", revisionID)
 	}
 	return tree, nil
 }
@@ -251,17 +256,20 @@ func classifyBlock(first string) (kind blockKind, level int, title string) {
 
 // buildSink 把语料按 M2 工件约定编码落位：三路量化载荷（内容寻址 ref）
 // + manifest 对象。返回 sink 与 manifest（docs 顺序即语料字典序）。
-func buildSink(docs []seedDoc) (map[string][]byte, retrieval.WholeDocIndexManifest, error) {
+func buildSink(docs []Doc) (map[string][]byte, retrieval.WholeDocIndexManifest, error) {
 	type payloads struct{ dense, sparse, multi []byte }
 	lanes := make([]payloads, len(docs))
 	entries := make([]retrieval.DocEntry, len(docs))
 	for i, d := range docs {
-		repr := encodeDoc(d.DocKey, d.StructureRef, d.RevisionID)
+		// 文档侧编码种子：doc_key‖structure_ref‖revision_id（C-1 事件只含
+		// 内容引用，正文编码归真实实现；与 cmd/indexer 同口径）。
+		text := d.DocKey + "\x1f" + d.StructureRef + "\x1f" + d.RevisionID
+		repr := fakerepr.Encode(text)
 		dense := retrieval.QuantizeF32(repr.Dense)
-		sparse := retrieval.EncodeImpact(repr.Sparse)
-		multi := retrieval.QuantizeMulti(repr.Multi, repr.MultiDim)
+		sparse := retrieval.EncodeImpact(repr.Terms)
+		multi := retrieval.QuantizeMulti(repr.Multi, repr.MultiRows)
 		if multi == nil {
-			return nil, retrieval.WholeDocIndexManifest{}, fmt.Errorf("retr_eval: 文档 %s multi 量化失败", d.DocKey)
+			return nil, retrieval.WholeDocIndexManifest{}, fmt.Errorf("devseed: 文档 %s multi 量化失败", d.DocKey)
 		}
 		lanes[i] = payloads{dense: dense, sparse: sparse, multi: multi}
 		entries[i] = retrieval.DocEntry{
@@ -270,14 +278,17 @@ func buildSink(docs []seedDoc) (map[string][]byte, retrieval.WholeDocIndexManife
 			DenseRef:     payloadRef("dense", dense),
 			SparseRef:    payloadRef("sparse", sparse),
 			MultiRef:     payloadRef("multi", multi),
-			MultiTokens:  len(repr.Multi) / repr.MultiDim,
+			MultiTokens:  repr.MultiRows,
 			EncoderID:    repr.EncoderID,
 			SourceChars:  utf8.RuneCount(d.Source),
 			BudgetBytes:  len(dense) + len(sparse) + len(multi),
 		}
 	}
 	m := retrieval.WholeDocIndexManifest{
-		ModuleID:  "sea-search-dev",
+		ModuleID: "sea-search-dev",
+		// ReleaseID 冻结为 retr_eval 历史口径：manifest_id 是内容寻址
+		// （含 release_id），改动会改变 manifest_id 并使已记录的评测
+		// 输出不可对照（见 cmd/retr_eval/README.md 样例）。
 		ReleaseID: "retr-eval-v1",
 		Docs:      entries,
 	}
@@ -290,7 +301,7 @@ func buildSink(docs []seedDoc) (map[string][]byte, retrieval.WholeDocIndexManife
 	}
 	mj, err := json.Marshal(m)
 	if err != nil {
-		return nil, retrieval.WholeDocIndexManifest{}, fmt.Errorf("retr_eval: 序列化 manifest: %w", err)
+		return nil, retrieval.WholeDocIndexManifest{}, fmt.Errorf("devseed: 序列化 manifest: %w", err)
 	}
 	sink[retrieval.ManifestKey(m.ManifestID)] = mj
 	return sink, m, nil
