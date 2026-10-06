@@ -11,6 +11,7 @@ package retrieval
 import (
 	"math"
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -49,12 +50,19 @@ func (sn Snapshot) Sparse(query map[uint32]float32) []Scored {
 		return nil
 	}
 	var out []Scored
+	// Sort query term IDs for deterministic float32 summation (Go map
+	// iteration order is randomized; FP addition is not associative).
+	terms := make([]uint32, 0, len(query))
+	for term := range query {
+		terms = append(terms, term)
+	}
+	sort.Slice(terms, func(i, j int) bool { return terms[i] < terms[j] })
 	for _, key := range sn.DocKeys() {
 		d, _ := sn.Doc(key)
 		var score float32
-		for term, qw := range query {
+		for _, term := range terms {
 			if dw, ok := d.Sparse[term]; ok {
-				score += qw * dw
+				score += query[term] * dw
 			}
 		}
 		if score > 0 {

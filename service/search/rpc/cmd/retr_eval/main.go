@@ -147,7 +147,12 @@ func buildRequest(store *retrieval.Store, qrels evalseed.Qrels, qid string, tier
 		if dense == nil {
 			dense = append([]float32(nil), d.Dense...)
 		} else {
-			for i := range dense {
+			// Guard against gold docs with different dense vector lengths.
+			n := len(dense)
+			if len(d.Dense) < n {
+				n = len(d.Dense)
+			}
+			for i := 0; i < n; i++ {
 				dense[i] += d.Dense[i]
 			}
 		}
