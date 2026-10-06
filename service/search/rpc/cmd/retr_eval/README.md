@@ -39,16 +39,14 @@ q-00      0.972121 0.936040 0.936040        1.000000 1.000000 1.000000
 ## 流程
 
 ```
-corpus/*.md ──loadCorpus──▶ seedDoc{source, revision=sha256[:16], structure_ref}
-   │ encodeDoc（镜像 cmd/indexer/fake.go：dense 64 维 / 词频 hash / multi 8×64）
+corpus/*.md ──internal/devseed.LoadCorpus──▶ Store（含结构树/源文本）
+   │   loadCorpusDocs：source, revision=sha256[:16], structure_ref
+   │   fakerepr.Encode（镜像 cmd/indexer/fake.go：dense 64 维 / 词频 hash / multi 8×64）
+   │   QuantizeF32/EncodeImpact/QuantizeMulti ──▶ sink{manifestID/<内容寻址ref>, manifest.v1.json}
+   │   retrieval.Load（解码三路）+ AttachSource（DeriveTree：markdown→结构树，RTW structure.Derive 的 dev 替身）
    ▼
-QuantizeF32/EncodeImpact/QuantizeMulti ──▶ sink{manifestID/<内容寻址ref>, manifest.v1.json}
-   │ retrieval.Load（解码三路）
-   ▼
-Store ──AttachSource（deriveTree：markdown→结构树，RTW structure.Derive 的 dev 替身）──▶ Searcher
-   │ buildRequest（gold→查询表示三件套，确定性）
-   ▼
-三档 Search ──▶ evalseed.Run ──▶ evalseed.Evaluate ──▶ 报告
+Searcher ── buildRequest（gold→查询表示三件套，确定性；本包 queries.go）──▶ 三档 Search
+   ──▶ evalseed.Run ──▶ evalseed.Evaluate ──▶ 报告
 ```
 
 ## dev 口径（近似声明）
@@ -66,8 +64,11 @@ Store ──AttachSource（deriveTree：markdown→结构树，RTW structure.Der
 
 ## 同步义务
 
-- `fake.go` 镜像 `service/async/rpc/cmd/indexer/fake.go`（package main
-  不可导入）：两侧假编码口径必须一致，否则评测与 M2 索引不可对照；
+- 语料装载与结构树派生（loadCorpus/buildSink/deriveTree）已上提
+  [internal/devseed](../../internal/devseed/)、假编码上提
+  [internal/fakerepr](../../internal/fakerepr/)（与 cmd/search_demo、
+  internal/pipeline 共享；后者镜像 `service/async/rpc/cmd/indexer` 的
+  fake.go——两侧假编码口径必须一致，否则评测与 M2 索引不可对照）；
 - 工件量化/键约定经 `retrieval` 包的 `artifactmirror.go` 镜像
   artifact 域（详见该包 README 的镜像声明）。
 
