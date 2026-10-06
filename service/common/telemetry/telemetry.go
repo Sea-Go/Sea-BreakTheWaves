@@ -36,7 +36,6 @@ var eventName = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,5}$`)
 type Config struct {
 	Service       string
 	Environment   string
-	Version       string
 	InstanceID    string
 	Output        io.Writer
 	Level         slog.Level
@@ -65,7 +64,7 @@ type Bundle struct {
 }
 
 func New(ctx context.Context, cfg Config) (*Bundle, error) {
-	if cfg.Service == "" || cfg.Environment == "" || cfg.Version == "" || cfg.InstanceID == "" || cfg.Output == nil ||
+	if cfg.Service == "" || cfg.Environment == "" || cfg.InstanceID == "" || cfg.Output == nil ||
 		(cfg.TraceExporter == nil && cfg.OTLPEndpoint == "") || (cfg.TraceExporter != nil && cfg.OTLPEndpoint != "") {
 		return nil, fmt.Errorf("%w: process identity, output and one trace exporter required", ErrConfig)
 	}
@@ -81,7 +80,7 @@ func New(ctx context.Context, cfg Config) (*Bundle, error) {
 		}
 	}
 	res, err := resource.New(ctx, resource.WithAttributes(attribute.String("service.name", cfg.Service),
-		attribute.String("service.version", cfg.Version), attribute.String("deployment.environment", cfg.Environment)))
+		attribute.String("deployment.environment", cfg.Environment)))
 	if err != nil {
 		return nil, fmt.Errorf("create telemetry resource: %w", err)
 	}
@@ -124,7 +123,7 @@ func New(ctx context.Context, cfg Config) (*Bundle, error) {
 		return a
 	}})
 	b.base = slog.New(&contextHandler{next: handler, dropped: b.dropped}).With(
-		"service", cfg.Service, "environment", cfg.Environment, "service_version", cfg.Version, "instance_id", cfg.InstanceID)
+		"service", cfg.Service, "environment", cfg.Environment, "instance_id", cfg.InstanceID)
 	b.provider = sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res), sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRatio))))
 	b.tracer = b.provider.Tracer("github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry")
 	return b, nil
@@ -258,11 +257,11 @@ func (b *Bundle) Begin(ctx context.Context, component, event string, attrs ...sl
 
 var spanField = map[string]bool{
 	"request_id": true, "operation_id": true, "run_id": true, "session_id": true,
-	"job_id": true, "build_id": true, "module_id": true, "release_id": true,
+	"job_id": true, "build_id": true, "module_id": true,
 	"revision_id": true, "generation": true, "attempt_id": true, "search_id": true,
 	"pair_id": true, "model_call_id": true, "logical_call_id": true, "candidate_id": true, "task": true,
 	"publication_revision": true,
-	"lease_epoch":          true, "cancel_version": true, "configuration_id": true, "representation_contract_id": true,
+	"lease_epoch":          true, "configuration_id": true, "representation_contract_id": true,
 	"representation_space": true, "lane": true,
 }
 

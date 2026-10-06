@@ -1,0 +1,11 @@
+.git
+.agents
+.env
+.env.*
+**/etc/config.yaml
+**/etc/config.yml
+**/*secret*
+**/__pycache__
+**/.pytest_cache
+.venv
+var

@@ -1,0 +1,7 @@
+interface:
+  display_name: "BreakTheWaves 搜广推与 Agent 开发规范"
+  short_description: "BTW 项目开发入口：搜广推算法、Agent、内容索引、训练评测与 go-zero 工程解耦"
+  default_prompt: "使用 $breakthewaves-workstyle 处理我当前指定的 BreakTheWaves 任务。按任务涉及的搜索、推荐、广告算法、离线内容与物品加工或 Agent 取证生成，依据完整目录确定能力所有者、实现位置和实际消费者。结合 go-zero 的契约生成、handler／logic／svc 分工、进程内领域接入、JSON／SSE 与配置规范，以及 tRPC-Agent-Go 的 Model／Tool／Agent／Graph／Runner、事件、会话和资源生命周期规范执行。开发或修复时，将改动接入真实算法和调用链，补齐所需数据、契约、配置、模型／索引加载及错误取消处理；保持计算高内聚、场景策略独立、外部用户侧与 BTW 物品侧解耦。按改动验证行为、算法效果、证据引用和资源代价，说明实际完成内容、验证结果及未验证范围。若当前任务是评审、架构图、回退或规范维护，则执行该任务对应规则，只交付本次要求的成果。"
+
+policy:
+  allow_implicit_invocation: true

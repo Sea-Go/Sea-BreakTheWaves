@@ -50,7 +50,7 @@ func (b *Bundle) InstallGlobals() error {
 		return err
 	}
 	f := &frameworkLogger{logger: logger}
-	// The version-locked Agent package initializes a2a.Default separately.
+	// The framework Agent package initializes a2a.Default separately.
 	// Both must use the same sink to avoid a second console-format stream.
 	agentlog.Default = f
 	agentlog.ContextDefault = f

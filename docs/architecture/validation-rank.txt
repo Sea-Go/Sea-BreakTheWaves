@@ -1,0 +1,5 @@
+=== RUN   TestRealRankerChangesFixedCandidateOrdering
+    service_test.go:223: real LightGBM HTTP model changed Search order from a,b to b,a with the same candidate set
+--- PASS: TestRealRankerChangesFixedCandidateOrdering (1.42s)
+PASS
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/search	3.160s

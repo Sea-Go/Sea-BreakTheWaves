@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BreakTheWaves · 搜索算法与策略工程架构</title>
+<style>
+:root{--bg:#f3f6f7;--paper:#fff;--ink:#172a36;--muted:#516671;--line:#d8e3e7;--nav:#122937;--blue:#155b83;--cyan:#1d8394;--green:#19745e;--gold:#a8671e;--red:#a84238;--soft:#eef5f7;--mono:#edf2f3}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.72 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--blue)}a:hover{text-decoration:none}aside{position:fixed;inset:0 auto 0 0;width:250px;overflow:auto;background:var(--nav);color:white;padding:28px 22px;z-index:2}.brand{font-size:20px;font-weight:750;line-height:1.25}.brand small{display:block;color:#a8c9d2;font-size:12px;margin-top:6px;font-weight:500}aside nav{margin-top:24px}aside nav a{display:block;color:#c6dbe0;text-decoration:none;padding:6px 0;border-bottom:1px solid #294552;font-size:13px}aside nav a:hover{color:#fff}aside .related{margin-top:24px;border-top:1px solid #42606a;padding-top:13px}aside .related a{display:block;color:#b7e2dd;font-size:13px;margin:6px 0}
+main{margin-left:250px;padding:32px 44px 70px;max-width:1580px}header{background:linear-gradient(130deg,#173e56,#1c665e);color:white;padding:34px 36px;border-radius:18px;margin-bottom:24px}.eyebrow{font-size:11px;font-weight:750;letter-spacing:.18em;text-transform:uppercase;color:#b4e3d8}h1{font-size:38px;line-height:1.2;margin:10px 0 12px}h2{font-size:25px;line-height:1.25;margin:0 0 18px}h3{font-size:17px;line-height:1.35;margin:22px 0 8px}h4{font-size:15px;margin:18px 0 7px}p{margin:9px 0}.lead{font-size:17px;max-width:1100px;color:#e1f3f0}.stamp{display:inline-block;background:#ffffff25;border:1px solid #ffffff5c;border-radius:18px;padding:3px 10px;font-size:12px;margin:5px 8px 0 0}section{background:var(--paper);border:1px solid var(--line);border-radius:15px;padding:28px 30px;margin:22px 0;scroll-margin-top:18px;box-shadow:0 3px 14px #18354910}.subtle{color:var(--muted)}.callout{border-left:4px solid var(--cyan);background:#eef7f8;padding:13px 16px;border-radius:0 8px 8px 0;margin:16px 0}.callout.warn{border-color:#ca9144;background:#fff8ec}.callout.danger{border-color:#c86b5f;background:#fff2ef}.callout.good{border-color:#45a385;background:#eef9f3}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.card{padding:17px;background:var(--soft);border:1px solid var(--line);border-radius:11px}.card strong{display:block;font-size:16px}.card p{font-size:14px}.stat{font-size:28px;font-weight:760;color:var(--blue);line-height:1.2;margin:5px 0}.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:750;letter-spacing:.03em;background:#dfecf0;color:#20586b}.badge.good{background:#def1e7;color:#17624d}.badge.warn{background:#fff0d6;color:#8b5a22}.badge.red{background:#fbe8e4;color:#933d33}
+.table{overflow:auto;margin:13px 0}table{border-collapse:collapse;width:100%;font-size:13px;min-width:670px}th,td{padding:10px 12px;border:1px solid var(--line);vertical-align:top;text-align:left}th{background:#e8f1f3;color:#264653;font-weight:730}td:first-child{font-weight:650}tr:nth-child(even) td{background:#fbfdfd}ul,ol{padding-left:22px;margin:8px 0}li{margin:5px 0}code{background:var(--mono);border-radius:4px;padding:2px 5px;overflow-wrap:anywhere;font-size:.92em}pre{background:#193441;color:#e1f0ee;border-radius:10px;overflow:auto;padding:16px;line-height:1.62;font-size:13px}pre code{background:transparent;color:inherit;padding:0}.formula{font:15px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f0f7f4;border:1px solid #cbe5d9;border-radius:9px;padding:12px 15px;overflow:auto;margin:12px 0}.diagram{background:#edf5f5;border:1px solid #c9dee2;border-radius:12px;padding:18px;overflow:auto}.flow{display:flex;align-items:center;gap:7px;min-width:max-content}.flow .node{background:#fff;border:1px solid #9dc4ca;border-radius:8px;min-width:76px;text-align:center;padding:10px 13px;font-weight:700}.flow .end{background:#d9f0e6;border-color:#75ae91}.flow .arrow{font-size:23px;color:#668b93}.diagram figcaption{font-size:12px;color:var(--muted);margin-top:10px}.path-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}.path{padding:16px;border-radius:11px;background:#f7fafb;border:1px solid var(--line)}.path b{display:block;margin-bottom:8px}.path.fast{border-top:4px solid #539890}.path.balanced{border-top:4px solid #4380ad}.path.deep{border-top:4px solid #ad7a45}.steps{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.steps span{border-radius:7px;padding:5px 9px;background:white;border:1px solid #d0e0e4;font-size:12px}.steps em{font-style:normal;color:#648693}.tier-controls{display:flex;gap:8px;flex-wrap:wrap}.tier-controls button{border:1px solid #afc5ce;background:white;color:#235266;border-radius:8px;padding:7px 14px;font:inherit;font-weight:700;cursor:pointer}.tier-controls button[aria-pressed="true"]{background:#1b607c;color:white;border-color:#1b607c}.tier-panel{display:none;margin-top:15px}.tier-panel.active{display:block}.tier-panel .table{margin-bottom:0}.mini{font-size:12px;color:var(--muted)}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kpi{background:#eef6f7;border:1px solid var(--line);padding:15px;border-radius:9px}.kpi .value{display:block;font-size:24px;font-weight:750;color:#185e7a}.kpi small{color:var(--muted)}.calculator{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.calculator label{font-size:13px;font-weight:700}.calculator input{display:block;width:100%;padding:9px;border:1px solid #a9bec5;border-radius:7px;font:inherit;margin-top:5px}.calc-output{margin-top:14px;padding:15px;background:#e6f4ee;border:1px solid #acd2bf;border-radius:9px;font-weight:700}details{border:1px solid var(--line);border-radius:9px;padding:11px 14px;margin:10px 0;background:#fafcfc}details summary{font-weight:700;cursor:pointer}footer{color:var(--muted);font-size:12px;padding:15px 3px}@media(max-width:1150px){aside{position:static;width:auto;padding:17px 22px}aside nav{display:flex;gap:13px;overflow:auto;margin-top:8px}aside nav a{white-space:nowrap;border:0}aside .related{display:none}main{margin:0;padding:18px}.path-grid,.grid.three,.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){header{padding:24px}h1{font-size:28px}section{padding:20px 17px}.grid,.two-col,.path-grid,.kpi-grid,.calculator{grid-template-columns:1fr}.flow .node{min-width:65px}.table{margin-right:-5px}}@media print{aside{display:none}main{margin:0;max-width:none;padding:0}header{color:var(--ink);background:#fff;border:1px solid var(--line)}.lead,.eyebrow{color:var(--ink)}section{box-shadow:none;break-inside:auto}.tier-panel{display:block}.tier-controls{display:none}}
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand">BreakTheWaves<small>搜索算法与策略工程文档</small></div>
+  <nav aria-label="章节导航">
+    <a href="#summary">01 · 计算总图</a><a href="#contract">02 · 输入与候选单位</a><a href="#tiers">03 · 三档策略</a>
+    <a href="#operators">04 · 检索算子</a><a href="#fusion">05 · 融合与排序</a><a href="#evidence">06 · 迭代取证</a>
+    <a href="#indexing">07 · 离线生产</a><a href="#training">08 · 样本与训练</a><a href="#capacity">09 · 容量成本</a>
+    <a href="#benchmarks">10 · Benchmark</a><a href="#limitations">11 · 已知差距</a><a href="#directories">12 · 工程定位</a>
+  </nav>
+  <div class="related"><a href="recommendation.html">推荐架构 →</a><a href="benchmark.md">完整 Benchmark →</a><a href="validation.md">验证记录 →</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">CURRENT IMPLEMENTATION · ALGORITHM REVIEW</div>
+  <h1>搜索不是一条召回链：它是三套不同的计算预算</h1>
+  <p class="lead">本文以当前代码为准，拆开讲资料怎样变成可检索表示、每档具体调用哪些算子、候选怎样归并与排序、引用怎样成立，以及 Benchmark 到底证明了什么。图只放通用概念；中间件、公式和工程位置都在图外解释。</p>
+  <span class="stamp">完整文本物品</span><span class="stamp">直接／规划／迭代</span><span class="stamp">原文可回读</span><span class="stamp">当前实现与未完成能力分开</span>
+</header>
+<section id="summary">
+  <h2>01 · 计算总图与权威边界</h2>
+  <figure class="diagram" role="img" aria-label="原文离线加工成索引，问题在线召回、融合、核对和引用">
+    <div class="flow"><span class="node">原文</span><span class="arrow">→</span><span class="node">理解</span><span class="arrow">→</span><span class="node">表示</span><span class="arrow">→</span><span class="node">索引</span></div>
+    <div class="flow" style="margin-top:12px"><span class="node">问题</span><span class="arrow">→</span><span class="node">策略</span><span class="arrow">→</span><span class="node">召回</span><span class="arrow">→</span><span class="node">融合</span><span class="arrow">→</span><span class="node">核对</span><span class="arrow">→</span><span class="node end">引用</span></div>
+    <figcaption>第一行是 Worker 的资料生产；第二行是在线搜索。深档在“引用”后评估缺口，必要时重新进入“召回”。</figcaption>
+  </figure>
+  <div class="table"><table><thead><tr><th>系统</th><th>在当前搜索链中的职责</th><th>不是它的职责</th></tr></thead><tbody>
+    <tr><td>PostgreSQL</td><td>来源、修订、当前可见内容、物品与任务；候选返回后按当前 serving 修订和删除状态批量核对。</td><td>不做在线全文相关性或无界图遍历。</td></tr>
+    <tr><td>对象存储</td><td>原文件、完整规范化正文、自然章节、模型矩阵与计算产物；引用必须从保存正文回读。</td><td>摘要不能代替原文。</td></tr>
+    <tr><td>Elasticsearch</td><td>自然章节及有出处语义对象的中英分析、BM25、短语、精确标题、范围过滤与高亮。</td><td>高亮片段本身不是最终引用。</td></tr>
+    <tr><td>Neo4j</td><td>概念、语义对象与所属物品的有界关系；返回路径和原文位置。</td><td>不维护用户 Ontology，也不在线自由扩图。</td></tr>
+    <tr><td>Milvus</td><td>Dense、学习型 Sparse、独立多向量三个检索集合；子向量归并到物品。</td><td>不判定当前文章来源是否仍可见。</td></tr>
+    <tr><td>DataCenter／Agent</td><td>DataCenter 公布并执行 BGE 表示、排序及逻辑生成路由；BTW 的 tRPC-Agent-Go Runner 调用该受控地址。</td><td>模型不直接扩大场景范围，也不把搜索变成长篇答案。</td></tr>
+    <tr><td>Kafka／ClickHouse</td><td>内容与行为进入 Worker、离线反馈和样本聚合。</td><td>普通在线搜索不扫描行为历史。</td></tr>
+  </tbody></table></div>
+  <div class="callout">外部每次传入用户 Ontology。它提供检索上下文与图标签，不赋予新的资料访问范围；BTW 不回查或训练用户塔。搜索返回物品和证据，综合回答由独立问答接口完成。</div>
+  <div class="callout warn">BTW 的模型相关运行配置现在只有 DataCenter 地址。API 与 Worker 启动时从 DataCenter 读取当前表示、排序和逻辑生成模型合同；规划、证据判断、问答、离线理解及 BGE 编码均经同一受控地址。服务身份由部署层文件提供，不在 BTW YAML 保存模型名、空间、供应商地址或密钥。DataCenter 不可用或合同不匹配时明确失败。</div>
+</section>
+<section id="contract">
+  <h2>02 · 输入、候选单位与可见性</h2>
+  <div class="grid">
+    <div class="card"><strong>请求合同</strong><p><code>POST /api/search</code> 接收请求标识、Ontology、场景、query、可选 context、结果数量和 <code>search_level</code>。缺省档位为 balanced。query 为空时当前只回退到图画像排序后的首个词项；context 会进入规划模型，但不能单独替代检索问题。场景由服务端决定根物品类型、候选预算、RRF 常数、超时和交付数量；客户端不能扩充范围。</p></div>
+    <div class="card"><strong>Ontology 在哪里真的起作用</strong><p>有明确 query 时，节点标签会进入图检索种子，整个 Ontology 会进入规划模型，标题／摘要／主题与 Ontology 词项的包含关系成为可选排序特征。query 为空时当前实现只取排序后第一个图画像词项充当问题，不是对全部图节点做完整意图综合。搜索三档不把可选用户向量参与召回。</p></div>
+  </div>
+  <div class="table"><table><thead><tr><th>粒度</th><th>持久身份与来源</th><th>召回与交付语义</th></tr></thead><tbody>
+    <tr><td>整书／文章</td><td>根物品指向不可变来源修订；完整正文与目录另存。</td><td>可以直接返回根物品；网站场景在检索前用根类型排除书籍。</td></tr>
+    <tr><td>自然章节</td><td>章节是原文结构，有顺序、标题、路径和正文区间。</td><td>全文索引的一行可对应章节，但它不是固定长度 chunk 物品。</td></tr>
+    <tr><td>语义对象</td><td>概念／事实／方法有自己的物品 ID、根物品归属、原文位置与关系。</td><td>可独立成为命中；同一本书的不同语义对象当前仍可能分别占用列表名额。</td></tr>
+    <tr><td>计算窗口／子向量</td><td>窗口为长自然结构的模型输入；子向量归属窗口和物品，矩阵保留在对象存储。</td><td>不是独立推荐物品；查询词元的多向量候选先归并到物品 ID。</td></tr>
+  </tbody></table></div>
+  <p>外部索引只提供候选。每条候选带物品 ID、根类型、来源修订和原文位置；在线对有限候选批量核对 PostgreSQL 的当前 serving 修订，过时或删除的候选即使仍在索引中也不能返回。注意：过时行若占满检索后端 Top-K，会挤掉新的有效候选；当前没有自适应补召回。</p>
+  <div class="formula">有效候选 = 后端命中 ∩ 当前可见物品 ∩ 场景允许的根类型 ∩ 命中所指来源修订</div>
+  <p class="mini">普通结果包含 hits、每路原始 scores、实际执行 path、可回读 citations、status 和 warnings。三档搜索最终 <code>hit.score</code> 均为最后一层 RRF 名次分；已加载的 ranker 只改变表达内名次，其原始输出保留在 <code>scores.ranker</code>，不能把最终分解释为概率。</p>
+</section>
+<section id="tiers">
+  <h2>03 · 三档策略：调用顺序和预算不是名称差异</h2>
+  <div class="path-grid">
+    <div class="path fast"><b>fast · 直接</b><div class="steps"><span>原问题</span><em>→</em><span>全文</span><em>→</em><span>关系</span><em>→</em><span>引用</span></div><p>没有生成模型、BGE、向量通道、模型排序或第二轮搜索。</p></div>
+    <div class="path balanced"><b>balanced · 一次规划</b><div class="steps"><span>规划</span><em>→</em><span>多表达</span><em>→</em><span>多路召回</span><em>→</em><span>融合</span></div><p>原问题保留，最多追加两个表达；各表达并行，单轮结束。</p></div>
+    <div class="path deep"><b>deep · 迭代取证</b><div class="steps"><span>拆解</span><em>→</em><span>多路召回</span><em>→</em><span>证据</span><em>→</em><span>缺口</span><em>→</em><span>再查</span></div><p>增加独立多向量与有限窗口核查；有依据缺口才继续。</p></div>
+  </div>
+  <div class="table"><table><thead><tr><th>当前预算项</th><th>fast</th><th>balanced</th><th>deep</th></tr></thead><tbody>
+    <tr><td>第一轮表达</td><td>原问题 1 条</td><td>原问题＋最多 2 条规划表达</td><td>原问题＋最多 4 条规划表达</td></tr>
+    <tr><td>总轮次／不同表达</td><td>1／1</td><td>1／最多 3</td><td>最多 3／最多 12</td></tr>
+    <tr><td>每表达全文候选</td><td>min(40, 场景候选上限)</td><td>min(80, 场景候选上限)</td><td>min(100, 场景候选上限)</td></tr>
+    <tr><td>每表达图候选／最大跳数</td><td>16／1</td><td>32／2</td><td>64／3</td></tr>
+    <tr><td>每向量通道候选</td><td>无</td><td>min(80, 场景候选上限)</td><td>min(100, 场景候选上限)</td></tr>
+    <tr><td>表示输出</td><td>无</td><td>Dense＋学习型 Sparse</td><td>Dense＋Sparse＋多向量</td></tr>
+    <tr><td>额外模型动作</td><td>无</td><td>一次规划；配置时搜索排序</td><td>规划、每轮证据判断、缺口时再规划；配置时搜索排序</td></tr>
+    <tr><td>精确矩阵核查</td><td>无</td><td>无</td><td>每表达初排靠前最多 20 个候选窗口</td></tr>
+  </tbody></table></div>
+  <p>示例场景配置为候选上限 100、最终数量 20、RRF 常数 60、请求期限 30 秒。因此 deep 的“三轮”是上界，不保证在 30 秒内完成。每个表达中，全文章节检索与查询编码可并发；图检索要先拿到全文命中的标题作为种子，然后与向量检索并发。不能把所有通道画成同一时刻启动。</p>
+  <div class="table"><table><thead><tr><th>按当前上限估算的返回行数</th><th>fast</th><th>balanced</th><th>deep</th></tr></thead><tbody>
+    <tr><td>各通道返回候选行之和（去重前）</td><td>至多 56</td><td>至多 816＝3×(80 全文＋32 图＋80 Dense＋80 Sparse)</td><td>至多 5,568＝12×(100 全文＋64 图＋100×3 向量)</td></tr>
+    <tr><td>原文回读／精确窗口核查上界</td><td>10／0</td><td>30／0</td><td>120／240</td></tr>
+  </tbody></table></div>
+  <p class="mini">这是预算的算术上界，不是实测平均候选量或并发吞吐；deep 的每个多向量通道还会按查询子向量逐次请求 Milvus，网络调用数可远高于“通道数”。</p>
+  <div class="formula">单表达耗时近似 ≈ max(T<sub>全文</sub>＋T<sub>图</sub>，max(T<sub>全文</sub>,T<sub>编码</sub>)＋T<sub>向量</sub>)＋T<sub>当前修订核对</sub>＋T<sub>可选排序／精确核查</sub>＋T<sub>原文回读</sub><br>balanced 再加一次规划与跨表达融合；deep 再按已发生的轮次累加证据判断与缺口规划。</div>
+  <div class="tier-controls" role="group" aria-label="切换档位说明"><button type="button" data-tier="fast" aria-pressed="true">fast 细节</button><button type="button" data-tier="balanced" aria-pressed="false">balanced 细节</button><button type="button" data-tier="deep" aria-pressed="false">deep 细节</button></div>
+  <div id="tier-fast" class="tier-panel active"><div class="callout good"><strong>fast 的真实策略边界</strong><br>Elasticsearch 先查标题／摘要／正文，命中标题、原问题和 Ontology 节点标签组成 Neo4j 种子；图最多走一跳。两路按排名融合，再核对当前修订、读回原文。词法命中可覆盖稀有名称、引号短语；它不能主动理解同义措辞。</div></div>
+  <div id="tier-balanced" class="tier-panel"><div class="callout"><strong>balanced 的真实策略边界</strong><br>一次模型规划输出检索表达，不产生新事实。原问题及最多两个变体分别执行全文、图、Dense、Sparse；先表达内融合，再跨表达按名次融合。规划失败时仍可用原问题检索，但状态为 degraded；没有按首轮结果继续改写。</div></div>
+  <div id="tier-deep" class="tier-panel"><div class="callout warn"><strong>deep 的真实策略边界</strong><br>首轮最多 5 条表达，增加独立多向量；读回有限原文后，模型只对这些引用判断表达是否被支持。仍有缺口才带缺口规划下一轮。当前“子问题”是字符串检索表达，没有单独的证据条件 schema；最多 3 轮、12 条不同表达。</div></div>
+</section>
+<section id="operators">
+  <h2>04 · 检索算子：输入、得分和候选如何产生</h2>
+  <h3>4.1 全文：字段化 BM25，不是 BTW 自写分词器</h3>
+  <p>索引行来自完整自然章节以及语义对象引用的原文。标题以 CJK 与 standard 子字段分析，摘要和正文以 CJK 分析；正文存 offsets 供高亮。当前请求是 <code>best_fields</code> 多字段匹配：标题加权 3，摘要加权 2，正文加权 1；标准标题子字段加权 3。标题完全相等的 keyword 子字段额外 boost 5；用户引号内短语产生正文短语查询，boost 3。根类型过滤在 Elasticsearch 内执行，然后按物品 ID 折叠候选。</p>
+  <div class="formula">全文候选 = BM25(标题、摘要、正文) ∪ 精确标题 ∪ 引号短语；原始 _score 仅在全文通道内排序</div>
+  <p>Elasticsearch 高亮只为候选定位。交付引用时，服务端去掉高亮标签，在保存的章节正文中重新查找这一文本，得到 Unicode 码点半开区间；找不到则发 warning，不把高亮直接当证据。当前定位从章节开头寻找首个相同片段；若一章多次出现相同文字，引用真实但可能不是原搜索行最接近的那一次。</p>
+  <h3>4.2 内容图：精确概念种子＋有界路径</h3>
+  <p>概念标签目前按小写、去首尾空白规范化。种子来自原问题、Ontology 节点标签和全文候选标题；去重排序后最多取 8 个标签。图只走“概念提及、归属、语义关系”三类边，使用服务端指定的 1／2／3 跳上限和根类型过滤。语义关系及对象有来源区间，根物品命中可沿路径带回位置。</p>
+  <div class="formula">图候选原始分 = 1 / 路径跳数；真正进入最终排序的是图通道名次，而不是这个分直接与 BM25 相加</div>
+  <p>这是精确标签图检索，当前没有独立的实体链接、别名消歧或图嵌入召回。种子上限和精确匹配会影响长问题的图召回，Benchmark 中规则拓扑的毫秒级结果不能说明语义图质量。</p>
+  <h3>4.3 Dense：语义近邻</h3>
+  <p>BGE-M3 对查询与物品计算 Dense 表示。书籍自然章节过长时，Worker 在章节内以配置的 2,048 码点计算窗口读取，模型服务在自身 token 上限内继续分窗；这些窗口只作为同一根物品的检索表示。Milvus 中 Dense 以 1,024 维 float32 和内积度量检索，基线索引路线为 DISKANN；一次查询中同物品多个窗口取最佳命中后归并。</p>
+  <div class="formula">Dense(q,d) = q · d　　（当前实现使用模型输出和内积，不额外伪造相似度）</div>
+  <p>Dense 解决措辞变化，但若物品有多个窗口，线上取得的是被 ANN 找到的局部表示；当前没有训练出的全书跨章节聚合向量。</p>
+  <h3>4.4 学习型 Sparse：模型词权重＋倒排</h3>
+  <p>同一 BGE-M3 输出 token ID 到非零权重的稀疏向量，索引为 Milvus Sparse 倒排、内积查询。只有查询与物品共有的 token ID 贡献分数；这一路与 Elasticsearch BM25 是不同的编码器和评分语义，不能混称“两个 BM25”。balanced 查询编码选择性请求 Dense＋Sparse，不计算该档不会使用的多向量矩阵。</p>
+  <div class="formula">Sparse(q,d) = Σ<sub>t ∈ nonzero(q) ∩ nonzero(d)</sub> w<sub>q,t</sub> × w<sub>d,t</sub></div>
+  <h3>4.5 多向量：独立召回，再核查一个命中窗口</h3>
+  <p>deep 为每个查询子向量单独检索 Milvus 多向量集合。每个查询向量的命中行先对同物品取最大分，再对所有查询子向量求平均；没有返回该物品的查询向量在当前近似聚合中相当于零贡献。它不是“Dense 候选上的后处理”，但每词元一次近邻调用也会放大网络开销。</p>
+  <div class="formula">近似分(q,d) = [Σ<sub>i</sub> max<sub>j ∈ ANN<sub>i</sub>(d)</sub>(q<sub>i</sub> · d<sub>j</sub>)] / |q|<br>精确窗口 MaxSim(q,D) = [Σ<sub>i</sub> max<sub>j ∈ D</sub>(q<sub>i</sub> · d<sub>j</sub>)] / |q|</div>
+  <p>初排靠前最多 20 个、且已有多向量命中位置的候选，会从对象存储读取<strong>该 ANN 指定窗口</strong>的保存矩阵计算 MaxSim；不是扫描整本书全部矩阵。精确值写进多向量特征，同时保留 ANN 近似值。<strong>当前无搜索排序模型时，这一步不重算 RRF 总分，也不凭精确值自动改变名次</strong>；仅在配置了排序模型且该特征被模型使用时可能影响表达内重排。</p>
+  <div class="callout warn">检索后端的 Top-K 先对“行”发生，再对“物品”归并。长书子向量多时仍可能占据较多行名额；当前没有物品级自适应补候选。语义对象与根物品也有不同 ID，不能说所有书内信息已被根物品级列表去重。</div>
+</section>
+<section id="fusion">
+  <h2>05 · 两层融合、可选排序与特征实际含义</h2>
+  <div class="two-col">
+    <div><h3>表达内：按通道名次</h3><p>全文、图、Dense、Sparse、Multi 的原始分尺度不同。当前先过滤掉不可见修订，再为每个物品汇总各路 RRF。每一路同物品只计第一次出现；最后按候选分裁到场景候选上限。fast 只有全文＋图，因此没有模型排序。</p><div class="formula">S<sub>expr</sub>(d) = Σ<sub>lane 命中 d</sub> 1 / (K + rank<sub>lane</sub>(d) + 1)，示例 K = 60</div></div>
+    <div><h3>表达间：按表达名次</h3><p>balanced／deep 的原问题和规划表达各自完整执行上述流程，再以物品 ID 合并表达结果，按表达内名次再次 RRF。一个表达产生更多候选，不会因为原始分值尺度高而直接压过其他表达；但同物品在更多表达中命中仍会累积排名贡献。</p><div class="formula">S<sub>final</sub>(d) = Σ<sub>expression 命中 d</sub> 1 / (K + rank<sub>expr</sub>(d) + 1)</div></div>
+  </div>
+  <p>如果部署配置指定搜索排序模型，当前实现先在<strong>每个表达内部</strong>用 LightGBM 推理重排，随后跨表达仍按名次融合；它<strong>不是</strong>先合并全部表达候选再做一次全局重排。示例部署配置没有启用搜索排序模型，因此默认搜索实际交付的是 RRF 结果，不能把实验中的融合名次称为模型效果。</p>
+  <div class="table"><table><thead><tr><th>搜索排序特征（当前顺序）</th><th>真实来源与缺失语义</th></tr></thead><tbody>
+    <tr><td>全文分、图分</td><td>Elasticsearch _score；图候选为 1／跳数。未命中时特征值为 0。</td></tr>
+    <tr><td>Dense、Sparse、多向量分</td><td>分别来自 BGE 表示检索；deep 靠前窗口的多向量分可被精确 MaxSim 覆盖。</td></tr>
+    <tr><td>RRF 分</td><td>该表达内多个通道的名次融合分；不等于不同模型原始分加和。</td></tr>
+    <tr><td>图画像重叠</td><td>Ontology 词项是否被物品标题／摘要／主题包含的计数；名称虽叫 graph overlap，当前不是 Neo4j 路径特征。</td></tr>
+    <tr><td>质量与质量缺失</td><td>离线理解给出的可选判断质量；未给出时质量数值为 0，缺失标记为 1。</td></tr>
+    <tr><td>全文缺失、多向量缺失</td><td>各通道未产生命中时为 1；模型需在训练和在线使用同一特征顺序。</td></tr>
+  </tbody></table></div>
+  <div class="callout">当前 11 个搜索特征包含通道分、RRF、图画像文本重叠、质量及缺失标记。表达间融合时同物品的各路原始特征可能由后到表达覆盖；最终列表主要由表达间名次决定。全局学习融合尚未实现或评测。</div>
+  <details><summary>一个可手算的 RRF 例子（说明公式，不是线上结果）</summary><p>假设 K=60，物品 A 在全文排第 1、Dense 排第 3，则表达内得分为 1/61＋1/63≈0.03226。物品 B 只在全文排第 2，得分 1/62≈0.01613。若另一个表达让 B 排第 1、A 排第 5，最终跨表达按新名次再融合：A 得 1/61＋1/65，B 得 1/62＋1/61。这个结果不能解释为两物品的相关概率。</p></details>
+</section>
+<section id="evidence">
+  <h2>06 · deep 的证据状态机与引用闭环</h2>
+  <figure class="diagram" role="img" aria-label="检索得到原文证据后判断是否有缺口，再决定是否迭代"><div class="flow"><span class="node">检索</span><span class="arrow">→</span><span class="node">回读</span><span class="arrow">→</span><span class="node">判断</span><span class="arrow">→</span><span class="node">缺口</span><span class="arrow">→</span><span class="node">再查</span><span class="arrow">→</span><span class="node end">交付</span></div><figcaption>有限轮次的反馈闭环；搜索只交付候选与引用，不生成长篇结论。</figcaption></figure>
+  <ol>
+    <li>规划模型读取原问题、上下文和本轮 Ontology，输出至多 4 条额外检索表达；原问题始终保留。模型文字不能指定更大的资料范围或图跳数。</li>
+    <li>每条表达走全文、图、Dense、Sparse、Multi；表达间融合后，读取各表达靠前最多 10 个候选的保存原文。全文高亮还要在原文中重新定位；其他命中按已保存位置有界读取。</li>
+    <li>证据判断最多接收 16 条引用，每条引文最多 512 个 Unicode 码点，且受场景证据字节预算限制。模型返回“目标表达索引 → 引用 ID”；引用 ID 必须确实存在于本轮回读的集合中。</li>
+    <li>未被支持的目标表达成为缺口。若还有轮次和表达预算，再用缺口请求更具体检索表达；最多 3 轮、12 条不同表达。取消、预算耗尽或证据已足够时停止。</li>
+    <li>结果按最终物品数裁剪引用。如果用于支持某目标的引用被最终裁掉，状态改为依据不足；模型判断失败则为降级，不把已执行的一轮伪装成完整 deep。</li>
+  </ol>
+  <div class="table"><table><thead><tr><th>状态／事件</th><th>搜索接口的真实交付</th></tr></thead><tbody>
+    <tr><td><code>ok</code></td><td>已执行路径内没有通道或证据判断失败；deep 所有目标表达在已回读引用中有支持。</td></tr>
+    <tr><td><code>degraded</code></td><td>规划、单通道、精确核查或证据判断失败，保留已有物品与引用并说明警告。一次实测中证据判断 JSON 未闭合，报 <code>unexpected EOF</code>。</td></tr>
+    <tr><td><code>insufficient_evidence</code></td><td>运行未出错，但预算内仍有目标表达缺少有效引用，或其支持引用在最终列表裁剪后不再交付。</td></tr>
+    <tr><td>依赖错误／取消</td><td>全部通道不可用或请求 Context 被取消时返回错误；不能把它写成“没有相关内容”。</td></tr>
+  </tbody></table></div>
+  <p>每条引用包含物品 ID、不可变来源修订、章节、码点起止和当时读到的文字，并给出可回读地址。现有闭环验证的是“模型引用了真实读过的片段”；它不等于事实真值评估，也不能保证多个来源互相独立。历史修订可能仍保留阅读能力，但在线命中只接受当前 serving 修订；删除会阻止公开阅读。</p>
+</section>
+<section id="indexing">
+  <h2>07 · 离线资料如何生产五路候选</h2>
+  <figure class="diagram" role="img" aria-label="内容从接纳到结构、理解、表示和索引的离线流程"><div class="flow"><span class="node">接纳</span><span class="arrow">→</span><span class="node">结构</span><span class="arrow">→</span><span class="node">理解</span><span class="arrow">→</span><span class="node">表示</span><span class="arrow">→</span><span class="node">投影</span><span class="arrow">→</span><span class="node end">可见</span></div><figcaption>原文件与完整正文在模型推理前先持久接纳；外部投影成功且覆盖完整后才切换权威 serving 修订。</figcaption></figure>
+  <div class="table"><table><thead><tr><th>阶段</th><th>真实产物与处理逻辑</th><th>策略影响</th></tr></thead><tbody>
+    <tr><td>来源接纳</td><td>Kafka 通用内容事件或书籍上传。原文件先入对象存储，再在事务中登记来源修订、事件和 Worker 任务；接纳成功才确认输入。</td><td>重复与乱序由来源的业务修订处理；网站 URL 不触发爬虫。</td></tr>
+    <tr><td>自然结构</td><td>EPUB 按阅读顺序保留目录与章节；UTF-8 TXT／Markdown 保留完整正文及可识别标题。保存码点位置、章节对象引用和阅读范围。</td><td>固定长度模型窗口不变成持久化 chunk 物品；原文可独立阅读。</td></tr>
+    <tr><td>内容理解</td><td>逐自然结构读取，长内容按临时窗口理解；模型给摘要、主题、语言、可选质量、概念／事实／方法及精确原文引语，再递归聚合摘要。</td><td>语义对象与关系必须从输入窗口找到原文；不能截断后宣称全文覆盖。</td></tr>
+    <tr><td>三种表示</td><td>BGE-M3 对根物品的计算窗口和语义对象引语分别编码 Dense／Sparse／词元矩阵；编码产物可按物品与位置复用。</td><td>整书不是一个虚构的单 Dense 向量；窗口与子向量归属根物品和真实位置。</td></tr>
+    <tr><td>外部投影</td><td>全文索引保存章节全文及语义引语；内容图保存根、语义对象、概念与有位置的关系；向量库按行写入三通道。</td><td>向量索引与全文／图都可以暂时含旧行，在线权威可见性由 PostgreSQL 决定。</td></tr>
+    <tr><td>发布与恢复</td><td>只有解析章节全部理解完成、投影成功、Worker 租约和目标修订仍有效才更新当前 serving 修订；旧索引异步清理。</td><td>更新期间旧完成内容仍可见；删除立即从权威库隐藏，迟到 Worker 不能复活旧内容。</td></tr>
+  </tbody></table></div>
+  <div class="callout warn">当前全文投影对单个自然章节设置 64 MiB 配置上限；超过上限会明确报加工错误并保留已接纳原文件，不会静默截断。对象存储的全文与计算矩阵容量要分开计量。</div>
+</section>
+<section id="training">
+  <h2>08 · 样本、排序训练与效果闭环</h2>
+  <div class="two-col"><div class="card"><strong>冷启动样本生产</strong><p>内容理解可生成有原文引语的查询—正例。样本构建再用真实全文、图和向量通道采困难负例，读取候选原文，让教师模型给相关性等级。合成、教师、人审和行为标签要分开统计；源与重复簇决定训练／验证隔离。</p></div><div class="card"><strong>真实可训练消费者</strong><p>搜索排序基线为 LightGBM LambdaRank、NDCG 目标，特征顺序与在线 11 维合同一致。DataCenter 管理真实排序产物并在当前 manifest 中公布；未公布搜索 ranker 时在线仍用 RRF，不把固定业务权重叫作学习排序。</p></div></div>
+  <p>这条链的目标是避免同一本书的相近引语跨训练／验证泄漏。行为样本只有真实展示、观察窗口结束等条件成立才可当负例；仅产生候选不等于曝光。当前 Benchmark 的 SciFact 测试标注<strong>没有用于训练</strong>，也没有为三档在完整语料上完成 ranker 消融。</p>
+  <div class="table"><table><thead><tr><th>应固定的实验变量</th><th>要比较的指标</th><th>当前证据</th></tr></thead><tbody>
+    <tr><td>固定候选，比较 RRF 与搜索排序模型</td><td>NDCG@10、MRR@10、校准与缺失特征影响</td><td>真实训练／加载链可运行；尚无目标语料的在线排序增益结论。</td></tr>
+    <tr><td>固定排序，逐一增加全文／图／Dense／Sparse／Multi</td><td>Recall@K、独立增量、长尾术语与跨章节覆盖</td><td>只有全文完整语料与 24 篇正例必入表示对照，不能跨实验直接比高低。</td></tr>
+    <tr><td>固定语料和资源，改变策略档位</td><td>最终 Recall／NDCG、引用支持率、p95/p99、模型调用、失败率</td><td>三档目前只有一个物品的真实在线冒烟；尚无大语料三档同集对照。</td></tr>
+  </tbody></table></div>
+</section>
+<section id="capacity">
+  <h2>09 · 亿级目标要按“子向量”而非仅按物品计数</h2>
+  <p>当前每条多向量原始行是 1,024 维 float32，约 4,096 字节，且还要存 Dense、Sparse、索引元数据、原文、语义对象、副本和构建临时空间。SciFact 的 24 篇标题＋摘要样本实际产生 9,362 条子向量，平均约 390 条／篇；这不是长书的均值，也不可以直接推广到亿级。</p>
+  <div class="calculator">
+    <label>整物品数量<input id="calc-items" type="number" min="1" max="100000000" value="1000000" inputmode="numeric"></label>
+    <label>平均子向量／物品<input id="calc-sub" type="number" min="1" max="100000" value="390" inputmode="numeric"></label>
+    <label>副本数<input id="calc-replicas" type="number" min="1" max="10" value="1" inputmode="numeric"></label>
+  </div>
+  <div id="calc-output" class="calc-output" aria-live="polite">原始多向量空间：计算中</div>
+  <p class="mini">公式仅为 N × T × 1,024 × 4 × R 字节。示例参数不是容量预测；真实书籍的词元数、索引结构、磁盘放大、RAM、删除回收和更新峰值尚未完成物理 Milvus 实测。线上只在受限候选窗口读取矩阵，不能把全书词元常驻 API 内存。</p>
+</section>
+<section id="benchmarks">
+  <h2>10 · 已做的 Benchmark，分别证明什么</h2>
+  <div class="kpi-grid"><div class="kpi"><span class="value">0.6065</span><small>全文 Recall@10<br>5,183 篇／300 查询</small></div><div class="kpi"><span class="value">5.04 ms</span><small>全文 p50<br>单机顺序查询</small></div><div class="kpi"><span class="value">9,362</span><small>多向量行<br>24 篇标题＋摘要</small></div><div class="kpi"><span class="value">1/3</span><small>一次 deep 小样本运行的降级请求<br>证据判断 JSON 不完整</small></div></div>
+  <div class="table"><table><thead><tr><th>实验</th><th>样本／结果</th><th>只能支持的判断</th></tr></thead><tbody>
+    <tr><td>完整语料全文</td><td>BEIR SciFact 5,183 篇、300 查询：Recall@10 0.6065，NDCG@10 0.4687；p50/p95 5.04/9.65 ms。</td><td>当前 Elasticsearch 全文通道在该标题＋摘要语料上的基线；不含图、PG 与 Agent。</td></tr>
+    <tr><td>表示对照</td><td>正例必入的 24 篇／8 查询：Dense NDCG@10 0.9539；Dense＋Sparse RRF 0.9288；三路 RRF 0.9375。</td><td>小闭集数值对照；不同实验绝对分不能与全语料全文结果横比。融合未在这里提高 NDCG。</td></tr>
+    <tr><td>有界图成本</td><td>1,000 来源／5,000 合成节点：1／2／3 跳 p50 约 0.98／0.91／0.87 ms。</td><td>规则拓扑查询成本，不证明语义关系质量，也不证明三跳更快。</td></tr>
+    <tr><td>旧直连推理路径</td><td>同一短文章，fast 20／balanced 5／deep 3 次，p50 13.32／1,362.16／8,295.45 ms；模型调用共 0／5／6 次。</td><td>历史隔离实验，尚未经新的 DataCenter 网关；真实全文、图、BGE 与生成模型，向量是 Exact 数值参考，直接调用领域入口而非 HTTP，样本不足以定 SLA。</td></tr>
+  </tbody></table></div>
+  <div class="callout warn">实验暴露两件需要继续研究的事：多通道并不自动提高排序效果；deep 的结构化证据判断可能因模型返回未闭合 JSON 降级。一次初始环境还因单机磁盘水位和过大的 Elasticsearch 堆出现索引创建超时，最终数值在限制 512 MiB 堆的隔离配置下重测。<a href="benchmark.md">查看方法、原始 JSON 与复现命令</a>。</div>
+  <h3>下一轮应怎样做同集消融（以下尚未实测）</h3>
+  <div class="table"><table><thead><tr><th>查询切片／干预</th><th>固定条件</th><th>应记录的策略指标</th></tr></thead><tbody>
+    <tr><td>稀有名称、引号短语</td><td>同一原文和相关性标注，逐一开关全文精确、短语、图通道。</td><td>Recall@20、误召回、引用定位正确率、图通道独立增量。</td></tr>
+    <tr><td>同义改写／条件组合</td><td>固定候选预算，比较原问题、额外表达、Dense、Sparse 和融合。</td><td>Recall@100、NDCG@10、原问题漏召回率、每个表达的边际增量。</td></tr>
+    <tr><td>跨章节长书</td><td>按完整来源与重复簇隔离；记录根物品、语义对象及子向量数量。</td><td>按根书计的覆盖、书内定位准确率、Top-K 行挤占、每查询词元网络调用。</td></tr>
+    <tr><td>固定候选重排</td><td>冻结同一批候选，仅替换 RRF、表达内 ranker 与拟议的全局 ranker。</td><td>NDCG@10／MRR@10、训练来源切分、缺失特征占比与排序稳定性。</td></tr>
+    <tr><td>证据缺口、多来源冲突、无证据</td><td>相同问题与可回读语料，比较一轮与多轮；人工标注需要的证据单元。</td><td>证据覆盖率、引用支持率、轮次、生成模型调用、<code>insufficient_evidence</code>／<code>degraded</code> 混淆。</td></tr>
+    <tr><td>更新、删除与故障</td><td>固定写入速率和旧索引滞留量，注入单通道与证据模型故障。</td><td>可见性错误数、有效候选率、清理延迟、p99、最终状态正确率。</td></tr>
+  </tbody></table></div>
+  <p class="mini">所有切片应使用相同评测集、同一物品计数口径及配对的逐查询结果；报告均值之外，还需给出置信区间、长尾分布和明确的资源成本。当前仓库尚无完成这套同集三档实验的物理 Milvus 环境。</p>
+</section>
+<section id="limitations">
+  <h2>11 · 对策略研发最重要的未完成边界</h2>
+  <div class="table"><table><thead><tr><th>当前行为</th><th>不能据此声称</th><th>下一项可证伪实验</th></tr></thead><tbody>
+    <tr><td>图种子是精确标签，最多 8 个；语义对象有实际原文位置。</td><td>已具备实体链接、别名归一、跨书知识推理或真实图召回收益。</td><td>真实抽取关系的标注集上做图通道独立 Recall 与误连接审计。</td></tr>
+    <tr><td>每表达内部可用 LightGBM 排序，跨表达再按名次融合。</td><td>已有全局学习融合、跨表达特征聚合或多目标最优排序。</td><td>固定候选比较表达内 ranker、跨表达 RRF、全局候选 ranker 的 NDCG。</td></tr>
+    <tr><td>多向量每查询子向量独立检索；Top 20 命中窗口精确核查。</td><td>已对整本书做完整 MaxSim，或精确核查必然改变最终名次。</td><td>同一窗口的 ANN／Exact 数值差及长书物品级召回、网络调用数。</td></tr>
+    <tr><td>资料修订按 PostgreSQL 当前 serving 核对。</td><td>旧索引不会挤占 Top-K，或删除清理没有延迟窗口。</td><td>更新／删除占比递增时，测有效候选率和补召回需求。</td></tr>
+    <tr><td>全文高亮会重新回读原文，并在章节内找首个匹配片段。</td><td>重复语句一定定位到搜索命中的那一次出现。</td><td>构造同章重复短语，比较索引 offsets、保存原文位置与最终引用。</td></tr>
+    <tr><td>deep 最多 3 轮，判断只引用已经回读的保存正文。</td><td>复杂问题已经有独立证据条件结构，或深档模型输出稳定可靠。</td><td>构造首轮缺口、多源冲突与不可解问题，记录逐轮支持率与降级率。</td></tr>
+    <tr><td>物理 ES／Neo／PG 小样本已测；BGE 与生成模型实调。</td><td>物理 Milvus DISKANN、Kafka／S3／ClickHouse 联测、百万／亿级容量或并发 SLA 已通过。</td><td>同一完整语料的物理三档对照，记录索引／RAM／更新峰值和并发 p99。</td></tr>
+  </tbody></table></div>
+  <p>这些是当前能力的边界，不是把已测单路分数外推成整个系统的结果。搜索策略的下一轮评审应以同一语料、相同相关性标注和明确资源预算为基础。</p>
+</section>
+<section id="directories">
+  <h2>12 · 工程定位、调用与验证入口</h2>
+  <div class="table"><table><thead><tr><th>工程区域</th><th>责任</th><th>本页相关事实</th></tr></thead><tbody>
+    <tr><td><code>api/btw.api</code> → <code>service/btw/api</code></td><td>go-zero 契约、handler、logic、svc、config、types 和同进程装配。</td><td>统一 <code>/api/search</code>；handler 只接入，领域负责算法。</td></tr>
+    <tr><td><code>service/search/rpc/internal/search</code></td><td>三档规划与轮次、表达内和表达间融合、排序、原文与证据状态。</td><td>目录名保留领域历史，在线不经内部 RPC 转发。</td></tr>
+    <tr><td><code>service/common/retrieval/elastic</code>、<code>graph</code>、<code>items</code></td><td>全文、内容图、Milvus 技术适配及数值参考。</td><td>基础设施适配不拥有场景策略。</td></tr>
+    <tr><td><code>service/async/rpc/content</code>、<code>internal/catalog</code>、<code>internal/processing</code></td><td>来源接纳、自然结构、理解、物品关系、索引投影、任务恢复。</td><td>原文和当前可见修订的权威所有者。</td></tr>
+    <tr><td><code>service/common/datacenter</code>、<code>inference</code>、<code>ranking</code>、<code>agentx</code></td><td>DataCenter 当前合同／身份与推理协议客户端、特征定义、tRPC-Agent-Go Runner 接线；物理模型由 DataCenter 部署。</td><td>确定性评分和模型／工具运行分开承担。</td></tr>
+    <tr><td><code>service/async/rpc/cmd/capacity</code>、<code>docs/architecture/benchmark.md</code></td><td>BEIR、内容图、表示通道与三档实验程序及证据。</td><td>原始 JSON、样本限制和复现命令均可查。</td></tr>
+  </tbody></table></div>
+  <p><a href="benchmark.md">完整 Benchmark</a> · <a href="validation.md">验证边界</a> · <a href="operations.md">接口与部署</a> · <a href="recommendation.html">推荐架构</a> · <a href="engineering.html">架构入口</a></p>
+</section>
+<footer>依据当前 BTW 工作树撰写；数值为 2026-09-24 隔离实验，不代表生产部署。图内仅使用通用名词，具体中间件与实现定位放在图外。</footer>
+</main>
+<script>
+const tierButtons=[...document.querySelectorAll('[data-tier]')];
+for(const button of tierButtons){button.addEventListener('click',()=>{for(const item of tierButtons){const active=item===button;item.setAttribute('aria-pressed',String(active));document.getElementById('tier-'+item.dataset.tier).classList.toggle('active',active)}})}
+const items=document.getElementById('calc-items'),sub=document.getElementById('calc-sub'),replicas=document.getElementById('calc-replicas'),output=document.getElementById('calc-output');
+function updateCapacity(){const n=Math.max(0,Number(items.value)||0),t=Math.max(0,Number(sub.value)||0),r=Math.max(0,Number(replicas.value)||0);const rows=n*t;const bytes=rows*1024*4*r;const tib=bytes/Math.pow(1024,4);output.textContent='原始多向量：'+new Intl.NumberFormat('zh-CN').format(rows)+' 行；'+new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2}).format(tib)+' TiB（含 '+r+' 份副本，仅 float32 数据，不含索引与原文）'}
+for(const input of [items,sub,replicas])input.addEventListener('input',updateCapacity);updateCapacity();
+</script>
+</body>
+</html>

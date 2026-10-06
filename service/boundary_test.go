@@ -1,71 +1,58 @@
 package service
 
 import (
-	"bufio"
-	"os"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-var importRe = regexp.MustCompile(`"([^"]+)"`)
-
-type rule struct {
-	prefix    string
-	forbidden []*regexp.Regexp
-}
-
+// Check all matching rules. Paths are relative to this test's service directory.
 func TestServiceImportBoundaries(t *testing.T) {
-	legacyInternal := regexp.MustCompile(`^github\.com/Sea-Go/Sea-BreakTheWaves/internal/`)
-	rules := []rule{
-		{prefix: "", forbidden: []*regexp.Regexp{legacyInternal}},
-		{prefix: "service/common/", forbidden: []*regexp.Regexp{
-			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/(search|recommend|async)/`),
-		}},
-		{prefix: "service/search/", forbidden: []*regexp.Regexp{
-			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/`),
-		}},
-		{prefix: "service/recommend/", forbidden: []*regexp.Regexp{
-			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/search/.*/internal/`),
-			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/async/.*/internal/`),
-		}},
-		{prefix: "service/async/", forbidden: []*regexp.Regexp{
-			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/search/`),
-			regexp.MustCompile(`^github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/`),
-		}},
-	}
-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	const module = "github.com/Sea-Go/Sea-BreakTheWaves/"
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		source := filepath.ToSlash(path)
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		for _, r := range rules {
-			if !strings.HasPrefix(path, r.prefix) {
+		for _, imp := range file.Imports {
+			imported, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return err
+			}
+			if !strings.HasPrefix(imported, module) {
 				continue
 			}
-			f, openErr := os.Open(path)
-			if openErr != nil {
-				return openErr
+			target := strings.TrimPrefix(imported, module)
+			forbidden := strings.HasPrefix(target, "internal/")
+			if strings.HasPrefix(source, "common/") && strings.HasPrefix(target, "service/") && !strings.HasPrefix(target, "service/common/") {
+				forbidden = true
 			}
-			scanner := bufio.NewScanner(f)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				match := importRe.FindStringSubmatch(line)
-				if match == nil {
-					continue
-				}
-				for _, forbidden := range r.forbidden {
-					if forbidden.MatchString(match[1]) {
-						t.Fatalf("%s imports forbidden boundary %q", path, match[1])
-					}
-				}
+			if strings.HasPrefix(source, "search/") && (strings.HasPrefix(target, "service/recommend/") || strings.HasPrefix(target, "service/async/")) {
+				forbidden = true
 			}
-			closeErr := scanner.Err()
-			_ = f.Close()
-			return closeErr
+			if strings.HasPrefix(source, "async/") && (strings.HasPrefix(target, "service/search/") || strings.HasPrefix(target, "service/recommend/")) {
+				forbidden = true
+			}
+			if strings.HasPrefix(source, "recommend/") && strings.Contains(target, "/internal/") && !strings.HasPrefix(target, "service/recommend/") {
+				forbidden = true
+			}
+			if !strings.HasPrefix(source, "btw/") && strings.HasPrefix(target, "service/btw/") {
+				forbidden = true
+			}
+			if forbidden {
+				t.Errorf("%s imports forbidden boundary %q", source, imported)
+			}
 		}
 		return nil
 	})

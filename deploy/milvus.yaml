@@ -1,0 +1,9 @@
+queryNode:
+  enableDisk: true
+common:
+  DiskIndex:
+    MaxDegree: 56
+    SearchListSize: 100
+    PQCodeBudgetGBRatio: 0.125
+    SearchCacheBudgetGBRatio: 0.1
+    BeamWidthRatio: 4

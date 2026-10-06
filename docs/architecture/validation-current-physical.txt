@@ -1,0 +1,19 @@
+BTW isolated physical validation; generated 2026-09-24.
+Native Elasticsearch, Neo4j and PostgreSQL used private localhost ports and /tmp data.
+The vector adapter in the combined live-model test is Exact reference, not Milvus.
+
+Elasticsearch native:
+--- PASS: TestIsolatedElasticsearchPhysicalContract (0.78s)
+
+Neo4j native:
+--- PASS: TestIsolatedGraphPathAndDeletion (0.58s)
+
+Source ingestion to Elasticsearch, Neo4j, PostgreSQL:
+--- PASS: TestPhysicalFullTextGraphAndSourceRecovery (0.82s)
+
+Real model, native text/graph, exact vector reference:
+--- PASS: TestRealModelsContentSearchPlanAndCitation (41.31s)
+live_integration_test.go:141: fast physical search: status=ok hits=2 citations=2 path=level:fast,elastic,graph,round:1
+live_integration_test.go:141: balanced physical search: status=ok hits=2 citations=2 path=level:balanced,planned_queries,elastic,graph,sparse,dense,elastic,graph,sparse,dense,elastic,graph,sparse,dense,round:1
+live_integration_test.go:141: deep physical search: status=ok hits=2 citations=2 path=level:deep,planned_queries,elastic,graph,sparse,dense,multi,multi_exact_bounded,elastic,graph,sparse,dense,multi,multi_exact_bounded,elastic,graph,sparse,dense,multi,multi_exact_bounded,elastic,graph,sparse,dense,multi,multi_exact_bounded,elastic,graph,sparse,dense,multi,multi_exact_bounded,round:1
+live_integration_test.go:148: real BGE + configured LLM + PostgreSQL + Elasticsearch + Neo4j + saved original passed; item count=1, plan citations=2, answer citations=3; vector index was the explicit Exact numerical reference, not Milvus

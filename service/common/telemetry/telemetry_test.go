@@ -37,7 +37,7 @@ func (*spans) Shutdown(context.Context) error { return nil }
 
 func testBundle(t *testing.T, output io.Writer, exporter sdktrace.SpanExporter) *Bundle {
 	t.Helper()
-	b, err := New(context.Background(), Config{Service: "btw-worker", Environment: "test", Version: "revision-123",
+	b, err := New(context.Background(), Config{Service: "btw-worker", Environment: "test",
 		InstanceID: "worker-one", Output: output, Level: slog.LevelDebug, TraceExporter: exporter, SampleRatio: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -81,12 +81,12 @@ func TestRealJSONSpanAndMetricOutput(t *testing.T) {
 		t.Fatalf("stage start/end pairs=%d", len(records))
 	}
 	for _, r := range records {
-		for _, key := range []string{"timestamp", "level", "service", "environment", "service_version", "instance_id", "component", "log_source", "event", "message", "trace_id", "span_id"} {
+		for _, key := range []string{"timestamp", "level", "service", "environment", "instance_id", "component", "log_source", "event", "message", "trace_id", "span_id"} {
 			if r[key] == nil {
 				t.Fatalf("missing %s in actual output: %+v", key, r)
 			}
 		}
-		if r["service_version"] != "revision-123" || r["component"] != "runtime" || r["log_source"] != "application" {
+		if r["component"] != "runtime" || r["log_source"] != "application" {
 			t.Fatalf("wrong base attributes: %+v", r)
 		}
 		timestamp, ok := r["timestamp"].(string)

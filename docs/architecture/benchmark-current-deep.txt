@@ -1,0 +1,3 @@
+Follow-up isolated deep-only search benchmark; 10 sequential requests; same one-item fixture.
+live_integration_test.go:175: BENCHMARK level=deep samples=10 p50_ms=6671.81 p95_ms=7515.18 observed_max_ms=7515.18 statuses=map[ok:10] corpus_items=1
+--- PASS: TestRealModelsContentSearchPlanAndCitation (109.47s)

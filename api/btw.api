@@ -1,0 +1,263 @@
+syntax = "v1"
+
+type (
+	EmptyRequest  {}
+	StreamEvent {
+		Type      string  `json:"type"`
+		RequestId string  `json:"request_id"`
+		Delta     string  `json:"delta,optional"`
+		Result    *Result `json:"result,optional"`
+		Error     string  `json:"error,optional"`
+	}
+	BookUploadRequest {
+		RequestId string `form:"request_id"`
+		Filename  string `form:"filename"`
+		Title     string `form:"title,optional"`
+	}
+	Node {
+		Id         string                 `json:"id"`
+		Type       string                 `json:"type"`
+		Label      string                 `json:"label"`
+		Attributes map[string]interface{} `json:"attributes,optional"`
+	}
+	Edge {
+		From       string                 `json:"from"`
+		To         string                 `json:"to"`
+		Type       string                 `json:"type"`
+		Attributes map[string]interface{} `json:"attributes,optional"`
+	}
+	UserVector {
+		Space  string    `json:"space"`
+		Values []float32 `json:"values"`
+	}
+	Ontology {
+		UserId     string                 `json:"user_id"`
+		Nodes      []Node                 `json:"nodes"`
+		Relations  []Edge                 `json:"relations"`
+		Attributes map[string]interface{} `json:"attributes,optional"`
+		Vector     *UserVector            `json:"vector,optional"`
+	}
+	QueryRequest {
+		RequestId   string    `json:"request_id"`
+		Ontology    *Ontology `json:"ontology"`
+		Scenario    string    `json:"scenario"`
+		SearchLevel string    `json:"search_level,optional"`
+		Query       string    `json:"query,optional"`
+		Context     string    `json:"context,optional"`
+		Limit       int       `json:"limit,optional"`
+	}
+	Location {
+		RevisionId string `json:"revision_id"`
+		SectionId  string `json:"section_id"`
+		Start      int64  `json:"start"`
+		End        int64  `json:"end"`
+	}
+	Relation {
+		From     string   `json:"from"`
+		To       string   `json:"to"`
+		Type     string   `json:"type"`
+		Location Location `json:"location"`
+	}
+	Item {
+		Language    string             `json:"language,optional"`
+		Relations   []Relation         `json:"relations,optional"`
+		Id          string             `json:"id"`
+		RootId      string             `json:"root_id"`
+		Kind        string             `json:"kind"`
+		RootKind    string             `json:"root_kind"`
+		SourceId    string             `json:"source_id"`
+		RevisionId  string             `json:"revision_id"`
+		Title       string             `json:"title"`
+		Summary     string             `json:"summary"`
+		SourceUrl   string             `json:"source_url"`
+		DuplicateId string             `json:"duplicate_id"`
+		Features    map[string]float64 `json:"features"`
+		Topics      []string           `json:"topics"`
+		Location    Location           `json:"location"`
+	}
+	Hit {
+		Item   Item               `json:"item"`
+		Score  float64            `json:"score"`
+		Scores map[string]float64 `json:"scores"`
+		Lanes  []string           `json:"lanes"`
+	}
+	Citation {
+		Id       string   `json:"id"`
+		ItemId   string   `json:"item_id"`
+		Title    string   `json:"title"`
+		Location Location `json:"location"`
+		Quote    string   `json:"quote"`
+		Url      string   `json:"url"`
+	}
+	PlanStep {
+		Action      string   `json:"action"`
+		CitationIds []string `json:"citation_ids"`
+	}
+	Plan {
+		Name  string     `json:"name"`
+		Goal  string     `json:"goal"`
+		Steps []PlanStep `json:"steps"`
+	}
+	Result {
+		RequestId string     `json:"request_id"`
+		Status    string     `json:"status"`
+		Path      []string   `json:"path"`
+		Hits      []Hit      `json:"hits"`
+		Answer    string     `json:"answer,optional"`
+		Plan      *Plan      `json:"plan,optional"`
+		Citations []Citation `json:"citations"`
+		Warnings  []string   `json:"warnings,optional"`
+	}
+	ItemRequest {
+		Id string `path:"id"`
+	}
+	StructureRequest {
+		NavAfter int    `form:"nav_after,default=0"`
+		Id       string `path:"id"`
+		After    int    `form:"after,default=0"`
+		Limit    int    `form:"limit,default=100"`
+	}
+	Section {
+		Id       string `json:"id"`
+		ParentId string `json:"parent_id,optional"`
+		Order    int    `json:"order"`
+		Title    string `json:"title"`
+		Path     string `json:"path"`
+		Bytes    int64  `json:"bytes"`
+		Runes    int64  `json:"runes"`
+	}
+	Navigation {
+		Id        string `json:"id"`
+		ParentId  string `json:"parent_id"`
+		Title     string `json:"title"`
+		Href      string `json:"href"`
+		SectionId string `json:"section_id"`
+		Start     int64  `json:"start"`
+	}
+	Structure {
+		Navigation     []Navigation `json:"navigation"`
+		NavigationNext int          `json:"navigation_next"`
+		RevisionId     string       `json:"revision_id"`
+		Sections       []Section    `json:"sections"`
+		Next           int          `json:"next"`
+	}
+	SourceRequest {
+		Revision string `path:"revision"`
+		Section  string `form:"section,optional"`
+		Start    int64  `form:"start,default=0"`
+		End      int64  `form:"end,default=0"`
+	}
+	SourceFileRequest {
+		Revision string `path:"revision"`
+	}
+	SourceContent {
+		Text     string   `json:"text"`
+		Location Location `json:"location"`
+	}
+	JobRequest {
+		Id string `path:"id"`
+	}
+	Job {
+		ParsedSections     int    `json:"parsed_sections"`
+		UnderstoodSections int    `json:"understood_sections"`
+		NextRun            string `json:"next_run,optional"`
+		Id                 string `json:"id"`
+		RevisionId         string `json:"revision_id"`
+		Kind               string `json:"kind"`
+		Stage              string `json:"stage"`
+		State              string `json:"state"`
+		Attempt            int    `json:"attempt"`
+		Error              string `json:"error,optional"`
+	}
+	Admission {
+		SourceId   string `json:"source_id"`
+		ItemId     string `json:"item_id"`
+		RevisionId string `json:"revision_id"`
+		JobId      string `json:"job_id"`
+		Duplicate  bool   `json:"duplicate"`
+		Obsolete   bool   `json:"obsolete"`
+	}
+	Behavior {
+		EventId    string `json:"event_id"`
+		RequestId  string `json:"request_id"`
+		UserId     string `json:"user_id"`
+		ItemId     string `json:"item_id"`
+		Scenario   string `json:"scenario"`
+		Type       string `json:"type"`
+		Position   int    `json:"position"`
+		OccurredAt string `json:"occurred_at"`
+	}
+	EventsRequest {
+		Events []Behavior `json:"events"`
+	}
+	EventsResponse {
+		Accepted int `json:"accepted"`
+	}
+	Health {
+		Status string `json:"status"`
+	}
+)
+
+@server (
+	prefix: /api
+	group:  query
+)
+service btw-api {
+	@handler Search
+	post /search (QueryRequest) returns (Result)
+
+	@handler Recommend
+	post /recommend (QueryRequest) returns (Result)
+
+	@handler Answer
+	post /answer (QueryRequest) returns (Result)
+}
+
+@server (
+	prefix:  /api
+	group:   stream
+	sse:     true
+	timeout: 120s
+)
+service btw-api {
+	@handler AnswerStream
+	post /answer/stream (QueryRequest) returns (StreamEvent)
+
+	@handler RecommendStream
+	post /recommend/stream (QueryRequest) returns (StreamEvent)
+}
+
+@server (
+	prefix:  /api
+	group:   content
+	timeout: 300s
+)
+service btw-api {
+	@handler UploadBook
+	post /books (BookUploadRequest) returns (Admission)
+
+	@handler GetItem
+	get /items/:id (ItemRequest) returns (Item)
+
+	@handler GetStructure
+	get /items/:id/structure (StructureRequest) returns (Structure)
+
+	@handler ReadSource
+	get /sources/:revision/content (SourceRequest) returns (SourceContent)
+
+	@handler DownloadSource
+	get /sources/:revision/file (SourceFileRequest)
+
+	@handler GetJob
+	get /jobs/:id (JobRequest) returns (Job)
+
+	@handler RecordEvents
+	post /events (EventsRequest) returns (EventsResponse)
+
+	@handler Metrics
+	get /metrics
+
+	@handler Health
+	get /health (EmptyRequest) returns (Health)
+}
+

@@ -21,3 +21,9 @@ breakthewaves
 /.idea
 .gocache/
 .runtime_pprof/
+
+# BTW v3 local artifacts
+var/
+.venv/
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,34 @@
+ok  	github.com/Sea-Go/Sea-BreakTheWaves	2.018s
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service	1.595s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/cmd/capacity	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/cmd/worker	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/content	4.786s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/catalog	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/processing	2.250s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/training	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/config	2.533s
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/handler	2.412s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/handler/content	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/handler/query	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/handler/stream	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/logic/content	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/logic/query	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/logic/stream	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/mapping	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/svc	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/types	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/common/agentx	6.174s
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/common/analytics	2.447s
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/common/blob	5.383s
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/common/database	3.278s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/common/inference	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/common/item	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/common/ranking	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/common/retrieval/items	7.144s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/common/settings	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/common/telemetry	7.951s
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/engine	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/recommendation	[no test files]
+?   	github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/engine	[no test files]
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/search	4.751s

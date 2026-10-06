@@ -1,0 +1,35 @@
+=== RUN   TestRealModelsContentSearchPlanAndCitation
+
+2026/09/23 18:41:51 service/async/rpc/internal/catalog/releases.go:15 record not found
+[34.266ms] [rows:0] SELECT * FROM "btw3_model_releases" WHERE id='live' ORDER BY "btw3_model_releases"."id" LIMIT 1
+
+2026/09/23 18:41:51 service/async/rpc/internal/catalog/store.go:219 record not found
+[1.073ms] [rows:0] SELECT * FROM "btw3_content_events" WHERE key = 'live-test:e1' ORDER BY "btw3_content_events"."key" LIMIT 1
+
+2026/09/23 18:41:51 service/async/rpc/internal/catalog/store.go:247 record not found
+[2.399ms] [rows:0] SELECT * FROM "btw3_revisions" WHERE source_id = '24fef77e-4ee5-532c-bb14-b41bd3766a1c' AND number = 1 ORDER BY "btw3_revisions"."id" LIMIT 1
+
+2026/09/23 18:41:51 service/async/rpc/internal/catalog/computation.go:21 record not found
+[3.554ms] [rows:0] SELECT * FROM "btw3_computations" WHERE id='9bf73a95-8204-503c-b045-426a150efd33' ORDER BY "btw3_computations"."id" LIMIT 1
+
+2026/09/23 18:41:59 service/async/rpc/internal/catalog/navigation.go:63 record not found
+[4.097ms] [rows:0] SELECT "id" FROM "btw3_items" WHERE root_id='24fef77e-4ee5-532c-bb14-b41bd3766a1c' AND revision_id='b0f5c897-0ae0-43ae-88a4-f212cc571d8f' AND title_key='昆虫纲' ORDER BY id,"btw3_items"."id" LIMIT 1
+
+2026/09/23 18:41:59 service/async/rpc/internal/catalog/navigation.go:63 record not found
+[1.267ms] [rows:0] SELECT "id" FROM "btw3_items" WHERE root_id='24fef77e-4ee5-532c-bb14-b41bd3766a1c' AND revision_id='b0f5c897-0ae0-43ae-88a4-f212cc571d8f' AND title_key='前翅' ORDER BY id,"btw3_items"."id" LIMIT 1
+
+2026/09/23 18:41:59 service/async/rpc/internal/catalog/navigation.go:63 record not found
+[0.262ms] [rows:0] SELECT "id" FROM "btw3_items" WHERE root_id='24fef77e-4ee5-532c-bb14-b41bd3766a1c' AND revision_id='b0f5c897-0ae0-43ae-88a4-f212cc571d8f' AND title_key='后翅和腹部' ORDER BY id,"btw3_items"."id" LIMIT 1
+
+2026/09/23 18:41:59 service/async/rpc/internal/catalog/computation.go:21 record not found
+[0.474ms] [rows:0] SELECT * FROM "btw3_computations" WHERE id='45d05496-7de1-5f9a-8a9d-0212aec54deb' ORDER BY "btw3_computations"."id" LIMIT 1
+
+2026/09/23 18:42:03 service/async/rpc/internal/catalog/computation.go:21 record not found
+[0.148ms] [rows:0] SELECT * FROM "btw3_computations" WHERE id='8b166a80-dc34-58ef-86e1-20cdd5176fb2' ORDER BY "btw3_computations"."id" LIMIT 1
+
+2026/09/23 18:42:03 service/async/rpc/internal/catalog/computation.go:21 record not found
+[0.121ms] [rows:0] SELECT * FROM "btw3_computations" WHERE id='7935de38-0bb1-52cc-b747-e67fef4e22f2' ORDER BY "btw3_computations"."id" LIMIT 1
+    live_integration_test.go:113: real BGE + configured LLM + PostgreSQL + saved original passed; item count=1, plan citations=2, answer citations=2; index was the explicit exact numerical reference, not Milvus
+--- PASS: TestRealModelsContentSearchPlanAndCitation (51.09s)
+PASS
+ok  	github.com/Sea-Go/Sea-BreakTheWaves/service/btw/api/internal/handler	53.127s

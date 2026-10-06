@@ -1,0 +1,82 @@
+Name: btw-api
+Host: 127.0.0.1
+Port: 20731
+Timeout: 120000
+MaxBytes: 536870912
+DataCenterURL: "${BTW_DATACENTER_URL}"
+Storage:
+  DSN: "${BTW_POSTGRES_DSN}"
+  Schema: btw
+  ItemPartitions: 32
+  ObjectMode: s3
+  Directory: ./var/btw/objects
+  S3Endpoint: ${BTW_S3_ENDPOINT}
+  S3Bucket: btw
+  S3AccessKey: ${BTW_S3_ACCESS_KEY}
+  S3SecretKey: ${BTW_S3_SECRET_KEY}
+  S3Secure: false
+  S3Prefix: btw
+Limits:
+  LexicalSectionBytes: 67108864
+  UploadBytes: 536870912
+  UncompressedBytes: 1073741824
+  WindowRunes: 2048
+  LeaseSeconds: 120
+  MaxAttempts: 8
+  ReadBytes: 262144
+Milvus:
+  Address: "${BTW_MILVUS_ADDRESS}"
+  Token: "${BTW_MILVUS_TOKEN}"
+  BatchSize: 256
+  QueryTokenLimit: 1024
+Elasticsearch:
+  URL: "${BTW_ELASTICSEARCH_URL}"
+  Index: btw_content
+  Username: "${BTW_ELASTICSEARCH_USER}"
+  Password: "${BTW_ELASTICSEARCH_PASSWORD}"
+Neo4j:
+  URI: "${BTW_NEO4J_URI}"
+  Database: neo4j
+  Username: "${BTW_NEO4J_USER}"
+  Password: "${BTW_NEO4J_PASSWORD}"
+Kafka:
+  Brokers: [127.0.0.1:9092]
+  ContentTopic: btw.content
+  BehaviorTopic: btw.behavior
+  Group: btw
+Analytics:
+  URL: http://127.0.0.1:8123
+  Database: btw
+  User: "${BTW_CLICKHOUSE_USER}"
+  Password: "${BTW_CLICKHOUSE_PASSWORD}"
+Scenarios:
+  search:
+    kinds: [article, book]
+    delivery: search
+    candidate_limit: 100
+    limit: 20
+    rrf: 60
+    timeout_seconds: 30
+    max_evidence_bytes: 48000
+    prompt: "使用允许范围内的原文回答，证据不足时明确说明。"
+  website:
+    kinds: [article]
+    delivery: list
+    candidate_limit: 100
+    limit: 20
+    rrf: 60
+    timeout_seconds: 30
+    max_evidence_bytes: 0
+    prompt: ""
+  plan:
+    kinds: [article, book]
+    delivery: plan
+    candidate_limit: 100
+    limit: 10
+    rrf: 60
+    timeout_seconds: 90
+    max_evidence_bytes: 48000
+    prompt: "根据本次 Ontology 和场景生成有原文依据的可行计划，不执行任务。"
+Observability:
+  Endpoint: "${BTW_OTLP_ENDPOINT}"
+  Environment: development
