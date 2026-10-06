@@ -21,3 +21,6 @@ breakthewaves
 /.idea
 .gocache/
 .runtime_pprof/
+
+# 检索评测入口的本地编译产物（勿入库）
+/retr_eval
