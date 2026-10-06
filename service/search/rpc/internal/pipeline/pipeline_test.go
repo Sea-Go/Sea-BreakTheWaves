@@ -166,6 +166,17 @@ func TestExecuteRequestValidation(t *testing.T) {
 	if _, err := p.Execute(cancelled, PipelineRequest{Query: matrixQuery, Tier: retrieval.TierFast, Delivery: DeliveryTools}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("取消的 ctx 应返回 Canceled: %v", err)
 	}
+
+	// 注入缺位：Planner/Searcher 未注入、summary 交付缺 Summarizer 均报错。
+	if _, err := (&Pipeline{Searcher: p.Searcher}).Execute(ctx, PipelineRequest{Query: matrixQuery, Tier: retrieval.TierFast, Delivery: DeliveryTools}); err == nil {
+		t.Fatal("缺 Planner 应报错")
+	}
+	if _, err := (&Pipeline{Planner: planner.Rule{}}).Execute(ctx, PipelineRequest{Query: matrixQuery, Tier: retrieval.TierFast, Delivery: DeliveryTools}); err == nil {
+		t.Fatal("缺 Searcher 应报错")
+	}
+	if _, err := NewDefaultPipeline(nil); err == nil {
+		t.Fatal("nil store 应报错")
+	}
 }
 
 // recordingSummarizer 记录是否被调用（tools 交付不得调 Summarizer）。
