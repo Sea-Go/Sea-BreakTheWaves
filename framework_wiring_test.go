@@ -19,32 +19,41 @@ const frameworkImportPrefix = "trpc.group/trpc-go/trpc-agent-go"
 // frameworkWiredPackages 列出 C17 要求必须经框架的包、装配文件，以及该
 // 装配类型对应的**框架真实路径**（测试必须走这条路径才算有效验证）。
 // 新增此类包时同步登记，使约束随代码演进保持有效。
-var frameworkWiredPackages = map[string]struct {
+type assemblySpec struct {
 	File string
 	// TestPath 是测试必须导入的框架子包之一（装配类型决定走哪条路径）：
-	// Graph 类装配 → runner/graphagent；Tool 类 → tool/function；模型类 → model。
+	// Graph 类装配 → runner/graphagent；Tool 类 → tool/function；模型类 → model；
+	// 接口适配类 → knowledge/retriever 或 knowledge/embedder。
 	TestPath []string
-}{
+}
+
+var frameworkWiredPackages = map[string][]assemblySpec{
 	// C4/C5 编制编排：四阶段状态机必须落框架 Graph。
-	"service/async/rpc/internal/compile": {
+	"service/async/rpc/internal/compile": {{
 		File:     "graph.go",
 		TestPath: []string{frameworkImportPrefix + "/runner", frameworkImportPrefix + "/agent/graphagent"},
-	},
+	}},
 	// B2 查询规划：规划能力必须作为框架 Tool 暴露给 Agent。
-	"service/search/rpc/internal/planner": {
+	"service/search/rpc/internal/planner": {{
 		File:     "tool.go",
 		TestPath: []string{frameworkImportPrefix + "/tool", frameworkImportPrefix + "/tool/function"},
-	},
+	}},
 	// B6 摘要交付：模型调用必须经框架 model.Model（C31 再由 DC 注入）。
-	"service/search/rpc/internal/summary": {
+	"service/search/rpc/internal/summary": {{
 		File:     "model.go",
 		TestPath: []string{frameworkImportPrefix + "/model"},
-	},
+	}},
 	// 检索装配：C17 原文点名"检索装配以框架公开 API 为基础"。
-	"service/search/rpc/internal/pipeline": {
+	"service/search/rpc/internal/pipeline": {{
 		File:     "graph.go",
 		TestPath: []string{frameworkImportPrefix + "/runner", frameworkImportPrefix + "/agent/graphagent"},
-	},
+	}, {
+		File:     "retriever.go", // 框架 Retriever 接口实现（2026-10-08 补齐空白）
+		TestPath: []string{frameworkImportPrefix + "/knowledge/retriever"},
+	}, {
+		File:     "embedder.go", // 框架 Embedder 接口实现（2026-10-08 补齐空白）
+		TestPath: []string{frameworkImportPrefix + "/knowledge/embedder"},
+	}},
 }
 
 // pureKernelPackages 列出允许不依赖框架的纯算法内核包。
@@ -63,22 +72,24 @@ var pureKernelPackages = []string{
 // TestFrameworkWiredPackagesCarryFrameworkImports 装配文件必须真实引用框架。
 // 仅存在文件而内容不接框架（假装配）会被此测试拦下。
 func TestFrameworkWiredPackagesCarryFrameworkImports(t *testing.T) {
-	for pkg, spec := range frameworkWiredPackages {
-		path := filepath.Join(pkg, spec.File)
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("C17 assembly file missing: %s (%v)", path, err)
-		}
-		imports := goImports(t, path)
-		found := false
-		for _, imp := range imports {
-			if strings.HasPrefix(imp, frameworkImportPrefix) {
-				found = true
-				break
+	for pkg, specs := range frameworkWiredPackages {
+		for _, spec := range specs {
+			path := filepath.Join(pkg, spec.File)
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("C17 assembly file missing: %s (%v)", path, err)
 			}
-		}
-		if !found {
-			t.Fatalf("%s must import %s (C17 assembly), got imports: %v",
-				path, frameworkImportPrefix, imports)
+			imports := goImports(t, path)
+			found := false
+			for _, imp := range imports {
+				if strings.HasPrefix(imp, frameworkImportPrefix) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("%s must import %s (C17 assembly), got imports: %v",
+					path, frameworkImportPrefix, imports)
+			}
 		}
 	}
 }
@@ -108,23 +119,25 @@ func TestPureKernelPackagesStayFrameworkFree(t *testing.T) {
 // TestFrameworkWiredAssemblyFilesAreTested 装配文件必须配套测试，
 // 且测试需经框架真实路径（至少引用框架的 runner/agent/graph 之一）。
 func TestFrameworkWiredAssemblyFilesAreTested(t *testing.T) {
-	for pkg, spec := range frameworkWiredPackages {
-		testPath := filepath.Join(pkg, strings.TrimSuffix(spec.File, ".go")+"_test.go")
-		if _, err := os.Stat(testPath); err != nil {
-			t.Fatalf("assembly %s has no companion test %s (%v)", spec.File, testPath, err)
-		}
-		imports := goImports(t, testPath)
-		runsFramework := false
-		for _, imp := range imports {
-			for _, required := range spec.TestPath {
-				if imp == required {
-					runsFramework = true
+	for pkg, specs := range frameworkWiredPackages {
+		for _, spec := range specs {
+			testPath := filepath.Join(pkg, strings.TrimSuffix(spec.File, ".go")+"_test.go")
+			if _, err := os.Stat(testPath); err != nil {
+				t.Fatalf("assembly %s has no companion test %s (%v)", spec.File, testPath, err)
+			}
+			imports := goImports(t, testPath)
+			runsFramework := false
+			for _, imp := range imports {
+				for _, required := range spec.TestPath {
+					if imp == required {
+						runsFramework = true
+					}
 				}
 			}
-		}
-		if !runsFramework {
-			t.Fatalf("%s must exercise a real framework path %v, imports: %v",
-				testPath, spec.TestPath, imports)
+			if !runsFramework {
+				t.Fatalf("%s must exercise a real framework path %v, imports: %v",
+					testPath, spec.TestPath, imports)
+			}
 		}
 	}
 }
