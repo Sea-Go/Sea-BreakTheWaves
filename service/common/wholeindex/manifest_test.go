@@ -1,4 +1,4 @@
-package artifact
+package wholeindex
 
 import (
 	"encoding/json"

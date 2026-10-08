@@ -1,4 +1,4 @@
-package artifact
+package wholeindex
 
 import (
 	"encoding/binary"
@@ -10,15 +10,15 @@ import (
 func TestQuantizeF32LayoutAndKnownValues(t *testing.T) {
 	v := []float32{1, -0.5, 0.25}
 	q := QuantizeF32(v)
-	if len(q) != scaleHeaderBytes+len(v) {
-		t.Fatalf("payload length = %d, want %d", len(q), scaleHeaderBytes+len(v))
+	if len(q) != ScaleHeaderBytes+len(v) {
+		t.Fatalf("payload length = %d, want %d", len(q), ScaleHeaderBytes+len(v))
 	}
 	if got := binary.LittleEndian.Uint32(q[:4]); got != math.Float32bits(127) {
 		t.Fatalf("scale header = %08x, want float32(127) = %08x", got, math.Float32bits(127))
 	}
 	want := []int8{127, -64, 32} // round(x*127): 63.5 rounds away from zero
 	for i, w := range want {
-		if got := int8(q[scaleHeaderBytes+i]); got != w {
+		if got := int8(q[ScaleHeaderBytes+i]); got != w {
 			t.Fatalf("payload[%d] = %d, want %d", i, got, w)
 		}
 	}
@@ -26,7 +26,7 @@ func TestQuantizeF32LayoutAndKnownValues(t *testing.T) {
 
 func TestQuantizeF32Empty(t *testing.T) {
 	q := QuantizeF32(nil)
-	if len(q) != scaleHeaderBytes {
+	if len(q) != ScaleHeaderBytes {
 		t.Fatalf("empty vector must encode to the bare scale header, got %d bytes", len(q))
 	}
 	if r := DequantizeI8(q, 0); len(r) != 0 {

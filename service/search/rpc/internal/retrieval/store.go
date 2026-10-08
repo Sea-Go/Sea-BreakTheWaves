@@ -15,6 +15,7 @@ package retrieval
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"sort"
 	"sync"
 
@@ -152,15 +153,15 @@ func (sn Snapshot) Doc(docKey string) (LoadedDoc, bool) {
 //   - manifestID 从 sink 中唯一的 "<manifestID>/manifest.v1.json" 对象
 //     发现（与 indexer.ManifestKey 一致），并与其 JSON 内容的
 //     manifest_id 交叉校验；
-//   - dense：DequantizeI8（dim = 载荷长度-4）；
-//   - sparse：DecodeImpact → map[TermID]权重；
-//   - multi：DequantizeMulti（rows = entry.MultiTokens，dim 由载荷长度
+//   - dense：wholeindex.DequantizeI8（dim = 载荷长度-4）；
+//   - sparse：wholeindex.DecodeImpact → map[TermID]权重；
+//   - multi：wholeindex.DequantizeMulti（rows = entry.MultiTokens，dim 由载荷长度
 //     整除得出）→ 按行切分；
 //   - Tree/Source 不在工件集合内，装载后为空，调用方按需 AttachSource。
 //
 // entries 是权威文档清单（通常来自 manifest.docs）；任一对象缺失或形状
 // 不符即整体失败。
-func Load(sink map[string][]byte, entries []DocEntry) (*Store, error) {
+func Load(sink map[string][]byte, entries []wholeindex.DocEntry) (*Store, error) {
 	if len(sink) == 0 {
 		return nil, fmt.Errorf("retrieval: sink 为空")
 	}
@@ -191,7 +192,7 @@ func Load(sink map[string][]byte, entries []DocEntry) (*Store, error) {
 // discoverManifestID 按 indexer.ManifestKey 约定发现唯一的 manifest 对象，
 // 解析并校验其自报 manifest_id 与键前缀一致，返回该前缀。
 func discoverManifestID(sink map[string][]byte) (string, error) {
-	suffix := "/" + manifestObject
+	suffix := "/" + wholeindex.ManifestObject
 	var found []string
 	for key := range sink {
 		if len(key) > len(suffix) && key[len(key)-len(suffix):] == suffix {
@@ -204,61 +205,61 @@ func discoverManifestID(sink map[string][]byte) (string, error) {
 	}
 	key := found[0]
 	manifestID := key[:len(key)-len(suffix)]
-	var m WholeDocIndexManifest
+	var m wholeindex.WholeDocIndexManifest
 	if err := json.Unmarshal(sink[key], &m); err != nil {
 		return "", fmt.Errorf("retrieval: 解析 manifest 对象 %s: %w", key, err)
 	}
 	if m.ManifestID != manifestID {
 		return "", fmt.Errorf("retrieval: manifest 对象 %s 的 manifest_id %q 与键前缀不一致", key, m.ManifestID)
 	}
-	if m.ManifestID != ManifestID(m) {
+	if m.ManifestID != wholeindex.ManifestID(m) {
 		return "", fmt.Errorf("retrieval: manifest 对象 %s 的 manifest_id 与内容重算不一致", key)
 	}
 	return manifestID, nil
 }
 
 // loadDoc 解码单文档的三路载荷。
-func loadDoc(sink map[string][]byte, manifestID string, e DocEntry) (LoadedDoc, error) {
-	denseBytes, ok := sink[ObjectKey(manifestID, e.DenseRef)]
+func loadDoc(sink map[string][]byte, manifestID string, e wholeindex.DocEntry) (LoadedDoc, error) {
+	denseBytes, ok := sink[wholeindex.ObjectKey(manifestID, e.DenseRef)]
 	if !ok {
-		return LoadedDoc{}, fmt.Errorf("缺少 dense 对象 %s", ObjectKey(manifestID, e.DenseRef))
+		return LoadedDoc{}, fmt.Errorf("缺少 dense 对象 %s", wholeindex.ObjectKey(manifestID, e.DenseRef))
 	}
-	dim := len(denseBytes) - mirrorScaleHeaderBytes
-	dense := DequantizeI8(denseBytes, dim)
+	dim := len(denseBytes) - wholeindex.ScaleHeaderBytes
+	dense := wholeindex.DequantizeI8(denseBytes, dim)
 	if dense == nil || dim <= 0 {
-		return LoadedDoc{}, fmt.Errorf("dense 对象 %s 形状非法（dim=%d）", ObjectKey(manifestID, e.DenseRef), dim)
+		return LoadedDoc{}, fmt.Errorf("dense 对象 %s 形状非法（dim=%d）", wholeindex.ObjectKey(manifestID, e.DenseRef), dim)
 	}
 
 	sparse := map[uint32]float32{}
-	if sparseBytes, ok := sink[ObjectKey(manifestID, e.SparseRef)]; ok {
-		terms, err := DecodeImpact(sparseBytes)
+	if sparseBytes, ok := sink[wholeindex.ObjectKey(manifestID, e.SparseRef)]; ok {
+		terms, err := wholeindex.DecodeImpact(sparseBytes)
 		if err != nil {
-			return LoadedDoc{}, fmt.Errorf("sparse 对象 %s: %w", ObjectKey(manifestID, e.SparseRef), err)
+			return LoadedDoc{}, fmt.Errorf("sparse 对象 %s: %w", wholeindex.ObjectKey(manifestID, e.SparseRef), err)
 		}
 		for _, t := range terms {
 			sparse[t.TermID] = float32(t.Weight)
 		}
 	} else {
-		return LoadedDoc{}, fmt.Errorf("缺少 sparse 对象 %s", ObjectKey(manifestID, e.SparseRef))
+		return LoadedDoc{}, fmt.Errorf("缺少 sparse 对象 %s", wholeindex.ObjectKey(manifestID, e.SparseRef))
 	}
 
 	var multi [][]float32
 	if e.MultiTokens < 1 {
 		return LoadedDoc{}, fmt.Errorf("multi_tokens=%d 非法（manifest 契约要求 [1,2048]）", e.MultiTokens)
 	}
-	multiBytes, ok := sink[ObjectKey(manifestID, e.MultiRef)]
+	multiBytes, ok := sink[wholeindex.ObjectKey(manifestID, e.MultiRef)]
 	if !ok {
-		return LoadedDoc{}, fmt.Errorf("缺少 multi 对象 %s", ObjectKey(manifestID, e.MultiRef))
+		return LoadedDoc{}, fmt.Errorf("缺少 multi 对象 %s", wholeindex.ObjectKey(manifestID, e.MultiRef))
 	}
-	payload := len(multiBytes) - mirrorScaleHeaderBytes
+	payload := len(multiBytes) - wholeindex.ScaleHeaderBytes
 	if payload <= 0 || payload%e.MultiTokens != 0 {
 		return LoadedDoc{}, fmt.Errorf("multi 对象 %s 形状非法（payload=%d tokens=%d）",
-			ObjectKey(manifestID, e.MultiRef), payload, e.MultiTokens)
+			wholeindex.ObjectKey(manifestID, e.MultiRef), payload, e.MultiTokens)
 	}
 	mDim := payload / e.MultiTokens
-	mat := DequantizeMulti(multiBytes, e.MultiTokens, mDim)
+	mat := wholeindex.DequantizeMulti(multiBytes, e.MultiTokens, mDim)
 	if mat == nil {
-		return LoadedDoc{}, fmt.Errorf("multi 对象 %s 反量化失败", ObjectKey(manifestID, e.MultiRef))
+		return LoadedDoc{}, fmt.Errorf("multi 对象 %s 反量化失败", wholeindex.ObjectKey(manifestID, e.MultiRef))
 	}
 	multi = make([][]float32, e.MultiTokens)
 	for r := range multi {

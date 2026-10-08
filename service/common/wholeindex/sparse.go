@@ -1,4 +1,4 @@
-package artifact
+package wholeindex
 
 import (
 	"encoding/binary"
@@ -6,9 +6,10 @@ import (
 	"math"
 )
 
-// impactRecordBytes is the fixed on-wire size of one term: a 4-byte
+// ImpactRecordBytes is the fixed on-wire size of one term: a 4-byte
 // little-endian TermID followed by a 1-byte weight.
-const impactRecordBytes = 5
+// ImpactRecordBytes 是单条 impact 记录的线格式字节数（TermID 4B + 权重 1B）。
+const ImpactRecordBytes = 5
 
 // Term is the sparse-lane impact representation: a term ID with a linear
 // 0-255 weight.
@@ -37,8 +38,8 @@ func ImpactWeight(w, maxW float32) uint8 {
 // little-endian, then Weight), preserving order. An empty list encodes to an
 // empty (non-nil) byte slice.
 func EncodeImpact(terms []Term) []byte {
-	out := make([]byte, 0, impactRecordBytes*len(terms))
-	var rec [impactRecordBytes]byte
+	out := make([]byte, 0, ImpactRecordBytes*len(terms))
+	var rec [ImpactRecordBytes]byte
 	for _, t := range terms {
 		binary.LittleEndian.PutUint32(rec[:4], t.TermID)
 		rec[4] = t.Weight
@@ -50,11 +51,11 @@ func EncodeImpact(terms []Term) []byte {
 // DecodeImpact decodes an EncodeImpact payload, preserving order. It fails
 // when the payload length is not a multiple of 5.
 func DecodeImpact(b []byte) ([]Term, error) {
-	if len(b)%impactRecordBytes != 0 {
-		return nil, fmt.Errorf("impact payload length %d is not a multiple of %d", len(b), impactRecordBytes)
+	if len(b)%ImpactRecordBytes != 0 {
+		return nil, fmt.Errorf("impact payload length %d is not a multiple of %d", len(b), ImpactRecordBytes)
 	}
-	terms := make([]Term, 0, len(b)/impactRecordBytes)
-	for i := 0; i < len(b); i += impactRecordBytes {
+	terms := make([]Term, 0, len(b)/ImpactRecordBytes)
+	for i := 0; i < len(b); i += ImpactRecordBytes {
 		terms = append(terms, Term{
 			TermID: binary.LittleEndian.Uint32(b[i : i+4]),
 			Weight: b[i+4],

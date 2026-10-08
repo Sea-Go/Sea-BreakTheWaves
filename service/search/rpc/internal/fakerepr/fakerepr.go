@@ -18,11 +18,10 @@ package fakerepr
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"sort"
 	"strings"
 	"unicode"
-
-	"github.com/Sea-Go/Sea-BreakTheWaves/service/search/rpc/internal/retrieval"
 )
 
 // 假编码器参数：与 service/async/rpc/cmd/indexer/fake.go 完全一致。
@@ -42,7 +41,7 @@ type Repr struct {
 	// Dense 稠密向量（DenseDim 维）。
 	Dense []float32
 	// Terms 稀疏词频 hash 项（按 TermID 升序；TermID 冲突时后键覆盖）。
-	Terms []retrieval.Term
+	Terms []wholeindex.Term
 	// Multi 多向量矩阵（平铺行优先；每行 MultiDim 维）。
 	Multi []float32
 	// MultiRows 实际行数（len(Multi)/MultiDim）。
@@ -126,7 +125,7 @@ func SparseMapOfText(text string) map[uint32]float32 {
 	}
 	sort.Strings(keys)
 	for _, t := range keys {
-		m[fnv32a(t)] = float32(retrieval.ImpactWeight(float32(counts[t]), float32(maxCount)))
+		m[fnv32a(t)] = float32(wholeindex.ImpactWeight(float32(counts[t]), float32(maxCount)))
 	}
 	return m
 }
@@ -172,9 +171,9 @@ func expandHash(seed []byte, dim int) []float32 {
 // sparseTerms 词频 hash：token 计数 → TermID=fnv32a(token)、权重 =
 // ImpactWeight(count, maxCount)，按 TermID 升序输出（TermID 冲突时
 // 后键覆盖——与 indexer 侧 byID 映射同口径）。
-func sparseTerms(toks []string) []retrieval.Term {
+func sparseTerms(toks []string) []wholeindex.Term {
 	if len(toks) == 0 {
-		return []retrieval.Term{}
+		return []wholeindex.Term{}
 	}
 	counts := make(map[string]int, len(toks))
 	for _, t := range toks {
@@ -193,11 +192,11 @@ func sparseTerms(toks []string) []retrieval.Term {
 	sort.Strings(keys)
 	byID := make(map[uint32]uint8, len(keys))
 	for _, t := range keys {
-		byID[fnv32a(t)] = retrieval.ImpactWeight(float32(counts[t]), float32(maxCount))
+		byID[fnv32a(t)] = wholeindex.ImpactWeight(float32(counts[t]), float32(maxCount))
 	}
-	terms := make([]retrieval.Term, 0, len(byID))
+	terms := make([]wholeindex.Term, 0, len(byID))
 	for id, w := range byID {
-		terms = append(terms, retrieval.Term{TermID: id, Weight: w})
+		terms = append(terms, wholeindex.Term{TermID: id, Weight: w})
 	}
 	sort.Slice(terms, func(i, j int) bool { return terms[i].TermID < terms[j].TermID })
 	return terms

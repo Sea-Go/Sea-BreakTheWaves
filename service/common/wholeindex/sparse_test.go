@@ -1,4 +1,4 @@
-package artifact
+package wholeindex
 
 import (
 	"math"
@@ -15,8 +15,8 @@ func TestImpactRoundTrip(t *testing.T) {
 		{TermID: 42, Weight: 77},
 	}
 	b := EncodeImpact(terms)
-	if len(b) != impactRecordBytes*len(terms) {
-		t.Fatalf("encoded length = %d, want %d", len(b), impactRecordBytes*len(terms))
+	if len(b) != ImpactRecordBytes*len(terms) {
+		t.Fatalf("encoded length = %d, want %d", len(b), ImpactRecordBytes*len(terms))
 	}
 	back, err := DecodeImpact(b)
 	if err != nil {

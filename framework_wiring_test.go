@@ -50,6 +50,7 @@ var frameworkWiredPackages = map[string]struct {
 // pureKernelPackages 列出允许不依赖框架的纯算法内核包。
 // 约束其"确实是纯内核"——一旦出现框架引用，说明边界被判据要求之外地打破。
 var pureKernelPackages = []string{
+	"service/common/wholeindex",
 	"service/search/rpc/internal/retrieval",
 	"service/search/rpc/internal/evidence",
 	"service/search/rpc/internal/evalseed",

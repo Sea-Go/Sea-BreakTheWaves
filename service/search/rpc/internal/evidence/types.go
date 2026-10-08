@@ -18,6 +18,7 @@ package evidence
 
 import (
 	"fmt"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"unicode/utf8"
 )
 
@@ -27,9 +28,9 @@ const (
 	// structure.MaxQuoteRunes 一致。
 	MaxQuoteRunes = 200
 
-	// LevelParagraph 段落节点层级：标题为 ATX 1..6 级，段落固定为 7，
-	// 与 RTW structure.LevelParagraph 一致。只有段落节点可承载证据。
-	LevelParagraph = 7
+	// LevelParagraph 段落节点层级：标题为 ATX 1..6 级，段落固定为 7。
+	// 唯一定义在 common/wholeindex，此处转发。
+	LevelParagraph = wholeindex.LevelParagraph
 
 	// HeadingParaIndex 标题节点的 para_index 哨兵值（标题不占全局段落序），
 	// 与 RTW structure.HeadingAbsent 一致。
@@ -46,30 +47,14 @@ const (
 // RTW structure 契约的镜像类型（JSON snake_case，字段级一致，双边同步）。
 // ============================================================================
 
-// TreeJSON 是 RTW structure.Tree 的镜像：一次冻结修订的结构树。节点按
-// 文档序排列，CharStart/CharEnd 为源文本字节偏移（区间 [start, end)）。
-type TreeJSON struct {
-	// RevisionID 冻结修订 ID（结构树的派生键）。
-	RevisionID string `json:"revision_id"`
-	// Nodes 结构节点列表（标题 + 段落），按文档序。
-	Nodes []NodeJSON `json:"nodes"`
-}
-
-// NodeJSON 是 RTW structure.Node 的镜像：一个标题或段落节点。
-type NodeJSON struct {
-	// NodeID 节点 ID（RTW 派生：hex(sha256(revisionID‖0‖seq))[:16]，本包视为不透明）。
-	NodeID string `json:"node_id"`
-	// Level 层级：标题 1..6，段落为 LevelParagraph(7)。
-	Level int `json:"level"`
-	// Title 标题文本（已 trim）；段落节点为空字符串。
-	Title string `json:"title"`
-	// ParaIndex 全局段落序号；标题节点为 HeadingParaIndex(-1)。
-	ParaIndex int `json:"para_index"`
-	// CharStart 节点覆盖源文本的起始字节偏移（含）。
-	CharStart int `json:"char_start"`
-	// CharEnd 节点覆盖源文本的结束字节偏移（不含）。
-	CharEnd int `json:"char_end"`
-}
+// TreeJSON / NodeJSON 的唯一实现已上提至 service/common/wholeindex
+// （structuretree.go）。此处保留类型别名以维持本包导出面稳定。
+type (
+	// TreeJSON 是一次冻结修订的结构树。
+	TreeJSON = wholeindex.TreeJSON
+	// NodeJSON 是一个标题或段落节点。
+	NodeJSON = wholeindex.NodeJSON
+)
 
 // Locator 是 RTW structure.Locator 的镜像（增补 revision_id 字段以支持
 // 跨文档的 EvidencePack）：文档内一处可验证的证据地址。

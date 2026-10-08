@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"io"
 	"reflect"
 	"sort"
@@ -138,9 +139,9 @@ func (s mapStructures) Structure(_ context.Context, ref string) ([]byte, error) 
 }
 
 func structureJSON(revision string) []byte {
-	b, _ := json.Marshal(StructureTree{
+	b, _ := json.Marshal(wholeindex.TreeJSON{
 		RevisionID: revision,
-		Nodes: []StructureNode{{
+		Nodes: []wholeindex.NodeJSON{{
 			NodeID: "n1", Level: 1, Title: "标题", ParaIndex: -1, CharStart: 0, CharEnd: 10,
 		}},
 	})
@@ -204,8 +205,8 @@ func TestRunThreeDocsArtifactsAndKeys(t *testing.T) {
 	mid := ids[0]
 
 	var m artifact.WholeDocIndexManifest
-	if b := sink.get(ManifestKey(mid)); b == nil {
-		t.Fatalf("manifest object %s missing", ManifestKey(mid))
+	if b := sink.get(wholeindex.ManifestKey(mid)); b == nil {
+		t.Fatalf("manifest object %s missing", wholeindex.ManifestKey(mid))
 	} else if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("unmarshal manifest: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestRunThreeDocsArtifactsAndKeys(t *testing.T) {
 	}
 
 	// 工件键集合：3 文档 × 3 路 + manifest + tree = 11，键全部带 manifest_id 前缀。
-	want := map[string]bool{ManifestKey(mid): true, TreeKey(mid): true}
+	want := map[string]bool{wholeindex.ManifestKey(mid): true, wholeindex.TreeKey(mid): true}
 	for i, d := range m.Docs {
 		if d.DocKey != ev.Docs[i].DocKey {
 			t.Fatalf("docs[%d].doc_key = %q, want %q（docs 保序）", i, d.DocKey, ev.Docs[i].DocKey)
@@ -237,13 +238,13 @@ func TestRunThreeDocsArtifactsAndKeys(t *testing.T) {
 		if d.EncoderID != "stub-encoder.v1" {
 			t.Fatalf("docs[%d].encoder_id = %q", i, d.EncoderID)
 		}
-		want[ObjectKey(mid, d.DenseRef)] = true
-		want[ObjectKey(mid, d.SparseRef)] = true
-		want[ObjectKey(mid, d.MultiRef)] = true
+		want[wholeindex.ObjectKey(mid, d.DenseRef)] = true
+		want[wholeindex.ObjectKey(mid, d.SparseRef)] = true
+		want[wholeindex.ObjectKey(mid, d.MultiRef)] = true
 
-		dense := sink.get(ObjectKey(mid, d.DenseRef))
-		sparse := sink.get(ObjectKey(mid, d.SparseRef))
-		multi := sink.get(ObjectKey(mid, d.MultiRef))
+		dense := sink.get(wholeindex.ObjectKey(mid, d.DenseRef))
+		sparse := sink.get(wholeindex.ObjectKey(mid, d.SparseRef))
+		multi := sink.get(wholeindex.ObjectKey(mid, d.MultiRef))
 		if artifact.DequantizeI8(dense, 8) == nil {
 			t.Fatalf("dense payload of %s failed to decode", d.DocKey)
 		}
@@ -266,8 +267,8 @@ func TestRunThreeDocsArtifactsAndKeys(t *testing.T) {
 	}
 
 	var tr tree.RetrievalTree
-	if b := sink.get(TreeKey(mid)); b == nil {
-		t.Fatalf("tree object %s missing", TreeKey(mid))
+	if b := sink.get(wholeindex.TreeKey(mid)); b == nil {
+		t.Fatalf("tree object %s missing", wholeindex.TreeKey(mid))
 	} else if err := json.Unmarshal(b, &tr); err != nil {
 		t.Fatalf("unmarshal tree: %v", err)
 	}

@@ -1,13 +1,13 @@
-package artifact
+package wholeindex
 
 import (
 	"encoding/binary"
 	"math"
 )
 
-// scaleHeaderBytes is the size of the little-endian float32 scale prefix that
+// ScaleHeaderBytes is the size of the little-endian float32 scale prefix that
 // precedes the int8 payload of every quantized block.
-const scaleHeaderBytes = 4
+const ScaleHeaderBytes = 4
 
 // QuantizeF32 symmetrically quantizes a dense float32 vector to int8 bytes.
 //
@@ -18,8 +18,8 @@ const scaleHeaderBytes = 4
 // encodes to just the 4-byte scale header.
 func QuantizeF32(v []float32) []byte {
 	scale := quantScale(v)
-	out := make([]byte, scaleHeaderBytes+len(v))
-	binary.LittleEndian.PutUint32(out[:scaleHeaderBytes], math.Float32bits(scale))
+	out := make([]byte, ScaleHeaderBytes+len(v))
+	binary.LittleEndian.PutUint32(out[:ScaleHeaderBytes], math.Float32bits(scale))
 	fs := float64(scale)
 	for i, x := range v {
 		if !finite32(x) {
@@ -31,7 +31,7 @@ func QuantizeF32(v []float32) []byte {
 		} else if q < -127 {
 			q = -127
 		}
-		out[scaleHeaderBytes+i] = byte(int8(q))
+		out[ScaleHeaderBytes+i] = byte(int8(q))
 	}
 	return out
 }
@@ -40,16 +40,16 @@ func QuantizeF32(v []float32) []byte {
 // QuantizeF32 payload. It returns nil when the payload length does not match
 // 4+dim. A zero scale (all-zero input) reconstructs an all-zero vector.
 func DequantizeI8(q []byte, dim int) []float32 {
-	if dim < 0 || len(q) != scaleHeaderBytes+dim {
+	if dim < 0 || len(q) != ScaleHeaderBytes+dim {
 		return nil
 	}
-	scale := math.Float32frombits(binary.LittleEndian.Uint32(q[:scaleHeaderBytes]))
+	scale := math.Float32frombits(binary.LittleEndian.Uint32(q[:ScaleHeaderBytes]))
 	out := make([]float32, dim)
 	if scale == 0 {
 		return out
 	}
 	for i := range out {
-		out[i] = float32(int8(q[scaleHeaderBytes+i])) / scale
+		out[i] = float32(int8(q[ScaleHeaderBytes+i])) / scale
 	}
 	return out
 }
@@ -69,10 +69,10 @@ func QuantizeMulti(mat []float32, dim int) []byte {
 // QuantizeMulti block. It returns nil when the payload length does not match
 // 4+rows*dim.
 func DequantizeMulti(q []byte, rows, dim int) []float32 {
-	if rows < 0 || dim <= 0 || len(q) < scaleHeaderBytes {
+	if rows < 0 || dim <= 0 || len(q) < ScaleHeaderBytes {
 		return nil
 	}
-	payload := len(q) - scaleHeaderBytes
+	payload := len(q) - ScaleHeaderBytes
 	if payload%dim != 0 || payload/dim != rows {
 		return nil
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"math"
 	"testing"
 
@@ -19,42 +20,42 @@ import (
 
 func TestMirrorMatchesArtifactGoldens(t *testing.T) {
 	v := []float32{1, -0.5, 0.25}
-	if got := hex.EncodeToString(QuantizeF32(v)); got != "0000fe427fc020" {
-		t.Fatalf("QuantizeF32 黄金向量不符: %s", got)
+	if got := hex.EncodeToString(wholeindex.QuantizeF32(v)); got != "0000fe427fc020" {
+		t.Fatalf("wholeindex.QuantizeF32 黄金向量不符: %s", got)
 	}
-	back := DequantizeI8(QuantizeF32(v), len(v))
+	back := wholeindex.DequantizeI8(wholeindex.QuantizeF32(v), len(v))
 	want := []float32{1, -0.503937, 0.2519685}
 	for i := range want {
 		if math.Abs(float64(back[i]-want[i])) > 1e-6 {
-			t.Fatalf("DequantizeI8[%d]=%v want %v", i, back[i], want[i])
+			t.Fatalf("wholeindex.DequantizeI8[%d]=%v want %v", i, back[i], want[i])
 		}
 	}
 
-	terms := []Term{{TermID: 7, Weight: 255}, {TermID: 3, Weight: 128}}
-	if got := hex.EncodeToString(EncodeImpact(terms)); got != "07000000ff0300000080" {
-		t.Fatalf("EncodeImpact 黄金向量不符: %s", got)
+	terms := []wholeindex.Term{{TermID: 7, Weight: 255}, {TermID: 3, Weight: 128}}
+	if got := hex.EncodeToString(wholeindex.EncodeImpact(terms)); got != "07000000ff0300000080" {
+		t.Fatalf("wholeindex.EncodeImpact 黄金向量不符: %s", got)
 	}
-	decoded, err := DecodeImpact(EncodeImpact(terms))
+	decoded, err := wholeindex.DecodeImpact(wholeindex.EncodeImpact(terms))
 	if err != nil || len(decoded) != 2 || decoded[0] != terms[0] || decoded[1] != terms[1] {
-		t.Fatalf("DecodeImpact 往返不符: %v err=%v", decoded, err)
+		t.Fatalf("wholeindex.DecodeImpact 往返不符: %v err=%v", decoded, err)
 	}
 
 	mat := []float32{1, -0.5, 0.25, -0.125}
-	if got := hex.EncodeToString(QuantizeMulti(mat, 2)); got != "0000fe427fc020f0" {
-		t.Fatalf("QuantizeMulti 黄金向量不符: %s", got)
+	if got := hex.EncodeToString(wholeindex.QuantizeMulti(mat, 2)); got != "0000fe427fc020f0" {
+		t.Fatalf("wholeindex.QuantizeMulti 黄金向量不符: %s", got)
 	}
-	mback := DequantizeMulti(QuantizeMulti(mat, 2), 2, 2)
+	mback := wholeindex.DequantizeMulti(wholeindex.QuantizeMulti(mat, 2), 2, 2)
 	wantM := []float32{1, -0.503937, 0.2519685, -0.12598425}
 	for i := range wantM {
 		if math.Abs(float64(mback[i]-wantM[i])) > 1e-6 {
-			t.Fatalf("DequantizeMulti[%d]=%v want %v", i, mback[i], wantM[i])
+			t.Fatalf("wholeindex.DequantizeMulti[%d]=%v want %v", i, mback[i], wantM[i])
 		}
 	}
 
-	m := WholeDocIndexManifest{
+	m := wholeindex.WholeDocIndexManifest{
 		ModuleID:  "sea-search-dev",
 		ReleaseID: "retr-eval-v1",
-		Docs: []DocEntry{{
+		Docs: []wholeindex.DocEntry{{
 			DocKey:       "doc-00",
 			StructureRef: "structure/doc-00",
 			DenseRef:     "dense.v1:aa",
@@ -67,17 +68,17 @@ func TestMirrorMatchesArtifactGoldens(t *testing.T) {
 		}},
 	}
 	const canonicalGolden = `{"module_id":"sea-search-dev","release_id":"retr-eval-v1","docs":[{"doc_key":"doc-00","structure_ref":"structure/doc-00","dense_ref":"dense.v1:aa","sparse_ref":"sparse.v1:bb","multi_ref":"multi.v1:cc","multi_tokens":2,"encoder_id":"fake-encoder.v1","source_chars":100,"budget_bytes":42}]}`
-	if string(CanonicalJSON(m)) != canonicalGolden {
-		t.Fatalf("CanonicalJSON 黄金向量不符:\n%s", CanonicalJSON(m))
+	if string(wholeindex.CanonicalJSON(m)) != canonicalGolden {
+		t.Fatalf("wholeindex.CanonicalJSON 黄金向量不符:\n%s", wholeindex.CanonicalJSON(m))
 	}
-	if ManifestID(m) != "5565980775f4a3520954756913496733" {
-		t.Fatalf("ManifestID 黄金值不符: %s", ManifestID(m))
+	if wholeindex.ManifestID(m) != "5565980775f4a3520954756913496733" {
+		t.Fatalf("wholeindex.ManifestID 黄金值不符: %s", wholeindex.ManifestID(m))
 	}
 
-	if ObjectKey("mid", "dense.v1:aa") != "mid/dense.v1:aa" {
-		t.Fatal("ObjectKey 镜像不符")
+	if wholeindex.ObjectKey("mid", "dense.v1:aa") != "mid/dense.v1:aa" {
+		t.Fatal("wholeindex.ObjectKey 镜像不符")
 	}
-	if ManifestKey("mid") != "mid/manifest.v1.json" || TreeKey("mid") != "mid/tree.v1.json" {
+	if wholeindex.ManifestKey("mid") != "mid/manifest.v1.json" || wholeindex.TreeKey("mid") != "mid/tree.v1.json" {
 		t.Fatal("固定名对象键镜像不符")
 	}
 }
@@ -91,25 +92,25 @@ func TestMirrorMatchesArtifactGoldens(t *testing.T) {
 func buildSink(t *testing.T, docs []struct {
 	key   string
 	dense []float32
-	terms []Term
+	terms []wholeindex.Term
 	multi []float32
 	dim   int
-}) (map[string][]byte, WholeDocIndexManifest) {
+}) (map[string][]byte, wholeindex.WholeDocIndexManifest) {
 	t.Helper()
 	type laneBytes struct {
 		dense, sparse, multi []byte
 	}
 	payloads := make([]laneBytes, len(docs))
-	entries := make([]DocEntry, len(docs))
+	entries := make([]wholeindex.DocEntry, len(docs))
 	for i, d := range docs {
-		dense := QuantizeF32(d.dense)
-		sparse := EncodeImpact(d.terms)
-		multi := QuantizeMulti(d.multi, d.dim)
+		dense := wholeindex.QuantizeF32(d.dense)
+		sparse := wholeindex.EncodeImpact(d.terms)
+		multi := wholeindex.QuantizeMulti(d.multi, d.dim)
 		if multi == nil {
 			t.Fatalf("doc %s multi 量化失败", d.key)
 		}
 		payloads[i] = laneBytes{dense: dense, sparse: sparse, multi: multi}
-		entries[i] = DocEntry{
+		entries[i] = wholeindex.DocEntry{
 			DocKey:       d.key,
 			StructureRef: "structure/" + d.key,
 			DenseRef:     payloadRef("dense", dense),
@@ -121,19 +122,19 @@ func buildSink(t *testing.T, docs []struct {
 			BudgetBytes:  len(dense) + len(sparse) + len(multi),
 		}
 	}
-	m := WholeDocIndexManifest{ModuleID: "sea-search-dev", ReleaseID: "retr-eval-v1", Docs: entries}
-	AssignID(&m)
+	m := wholeindex.WholeDocIndexManifest{ModuleID: "sea-search-dev", ReleaseID: "retr-eval-v1", Docs: entries}
+	wholeindex.AssignID(&m)
 	sink := map[string][]byte{}
 	for i := range entries {
-		sink[ObjectKey(m.ManifestID, entries[i].DenseRef)] = payloads[i].dense
-		sink[ObjectKey(m.ManifestID, entries[i].SparseRef)] = payloads[i].sparse
-		sink[ObjectKey(m.ManifestID, entries[i].MultiRef)] = payloads[i].multi
+		sink[wholeindex.ObjectKey(m.ManifestID, entries[i].DenseRef)] = payloads[i].dense
+		sink[wholeindex.ObjectKey(m.ManifestID, entries[i].SparseRef)] = payloads[i].sparse
+		sink[wholeindex.ObjectKey(m.ManifestID, entries[i].MultiRef)] = payloads[i].multi
 	}
 	mj, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink[ManifestKey(m.ManifestID)] = mj
+	sink[wholeindex.ManifestKey(m.ManifestID)] = mj
 	return sink, m
 }
 
@@ -141,21 +142,21 @@ func TestLoadRoundTrip(t *testing.T) {
 	docs := []struct {
 		key   string
 		dense []float32
-		terms []Term
+		terms []wholeindex.Term
 		multi []float32
 		dim   int
 	}{
 		{
 			key:   "doc-a",
 			dense: []float32{0.5, -1.25, 3.0},
-			terms: []Term{{TermID: 7, Weight: 255}, {TermID: 9, Weight: 128}},
+			terms: []wholeindex.Term{{TermID: 7, Weight: 255}, {TermID: 9, Weight: 128}},
 			multi: []float32{1, -0.5, 0.25, -0.125, 0, 2},
 			dim:   2,
 		},
 		{
 			key:   "doc-b",
 			dense: []float32{-0.1, 0.2, 0.3},
-			terms: []Term{},
+			terms: []wholeindex.Term{},
 			multi: []float32{0.75, -0.75},
 			dim:   2,
 		},
@@ -233,11 +234,11 @@ func TestLoadErrors(t *testing.T) {
 	docs := []struct {
 		key   string
 		dense []float32
-		terms []Term
+		terms []wholeindex.Term
 		multi []float32
 		dim   int
 	}{
-		{key: "doc-a", dense: []float32{1, 2}, terms: []Term{{TermID: 1, Weight: 10}}, multi: []float32{1, 1}, dim: 2},
+		{key: "doc-a", dense: []float32{1, 2}, terms: []wholeindex.Term{{TermID: 1, Weight: 10}}, multi: []float32{1, 1}, dim: 2},
 	}
 	sink, m := buildSink(t, docs)
 
@@ -249,7 +250,7 @@ func TestLoadErrors(t *testing.T) {
 	}
 
 	// 删除 dense 对象 → 报错并指明缺失键。
-	drop := ObjectKey(m.ManifestID, m.Docs[0].DenseRef)
+	drop := wholeindex.ObjectKey(m.ManifestID, m.Docs[0].DenseRef)
 	deleted := sink[drop]
 	delete(sink, drop)
 	if _, err := Load(sink, m.Docs); err == nil {
@@ -258,29 +259,29 @@ func TestLoadErrors(t *testing.T) {
 	sink[drop] = deleted
 
 	// 两个 manifest 对象 → 报错（dev 形态一次只装一个 manifest）。
-	sink["another-manifest/"+manifestObject] = []byte(`{"manifest_id":"x"}`)
+	sink["another-manifest/"+wholeindex.ManifestObject] = []byte(`{"manifest_id":"x"}`)
 	if _, err := Load(sink, m.Docs); err == nil {
 		t.Fatal("多 manifest 对象应报错")
 	}
-	delete(sink, "another-manifest/"+manifestObject)
+	delete(sink, "another-manifest/"+wholeindex.ManifestObject)
 
 	// manifest_id 与键前缀不一致 → 报错。
 	bad := `{"manifest_id":"deadbeef"}`
-	good := sink[ManifestKey(m.ManifestID)]
-	sink["other-id/"+manifestObject] = []byte(bad)
-	delete(sink, ManifestKey(m.ManifestID))
+	good := sink[wholeindex.ManifestKey(m.ManifestID)]
+	sink["other-id/"+wholeindex.ManifestObject] = []byte(bad)
+	delete(sink, wholeindex.ManifestKey(m.ManifestID))
 	if _, err := Load(sink, m.Docs); err == nil {
 		t.Fatal("manifest_id 与前缀不一致应报错")
 	}
-	sink[ManifestKey(m.ManifestID)] = good
+	sink[wholeindex.ManifestKey(m.ManifestID)] = good
 
 	// 重复 docKey → 报错。
-	if _, err := Load(sink, []DocEntry{m.Docs[0], m.Docs[0]}); err == nil {
+	if _, err := Load(sink, []wholeindex.DocEntry{m.Docs[0], m.Docs[0]}); err == nil {
 		t.Fatal("重复 docKey 应报错")
 	}
 
 	// MultiTokens=0 → 报错（manifest 契约 [1,2048]）。
-	badEntries := []DocEntry{m.Docs[0]}
+	badEntries := []wholeindex.DocEntry{m.Docs[0]}
 	badEntries[0].MultiTokens = 0
 	if _, err := Load(sink, badEntries); err == nil {
 		t.Fatal("multi_tokens=0 应报错")

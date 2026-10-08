@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"os"
 	"path/filepath"
 	"sort"
@@ -256,23 +257,23 @@ func classifyBlock(first string) (kind blockKind, level int, title string) {
 
 // buildSink 把语料按 M2 工件约定编码落位：三路量化载荷（内容寻址 ref）
 // + manifest 对象。返回 sink 与 manifest（docs 顺序即语料字典序）。
-func buildSink(docs []Doc) (map[string][]byte, retrieval.WholeDocIndexManifest, error) {
+func buildSink(docs []Doc) (map[string][]byte, wholeindex.WholeDocIndexManifest, error) {
 	type payloads struct{ dense, sparse, multi []byte }
 	lanes := make([]payloads, len(docs))
-	entries := make([]retrieval.DocEntry, len(docs))
+	entries := make([]wholeindex.DocEntry, len(docs))
 	for i, d := range docs {
 		// 文档侧编码种子：doc_key‖structure_ref‖revision_id（C-1 事件只含
 		// 内容引用，正文编码归真实实现；与 cmd/indexer 同口径）。
 		text := d.DocKey + "\x1f" + d.StructureRef + "\x1f" + d.RevisionID
 		repr := fakerepr.Encode(text)
-		dense := retrieval.QuantizeF32(repr.Dense)
-		sparse := retrieval.EncodeImpact(repr.Terms)
-		multi := retrieval.QuantizeMulti(repr.Multi, repr.MultiRows)
+		dense := wholeindex.QuantizeF32(repr.Dense)
+		sparse := wholeindex.EncodeImpact(repr.Terms)
+		multi := wholeindex.QuantizeMulti(repr.Multi, repr.MultiRows)
 		if multi == nil {
-			return nil, retrieval.WholeDocIndexManifest{}, fmt.Errorf("devseed: 文档 %s multi 量化失败", d.DocKey)
+			return nil, wholeindex.WholeDocIndexManifest{}, fmt.Errorf("devseed: 文档 %s multi 量化失败", d.DocKey)
 		}
 		lanes[i] = payloads{dense: dense, sparse: sparse, multi: multi}
-		entries[i] = retrieval.DocEntry{
+		entries[i] = wholeindex.DocEntry{
 			DocKey:       d.DocKey,
 			StructureRef: d.StructureRef,
 			DenseRef:     payloadRef("dense", dense),
@@ -284,7 +285,7 @@ func buildSink(docs []Doc) (map[string][]byte, retrieval.WholeDocIndexManifest, 
 			BudgetBytes:  len(dense) + len(sparse) + len(multi),
 		}
 	}
-	m := retrieval.WholeDocIndexManifest{
+	m := wholeindex.WholeDocIndexManifest{
 		ModuleID: "sea-search-dev",
 		// ReleaseID 冻结为 retr_eval 历史口径：manifest_id 是内容寻址
 		// （含 release_id），改动会改变 manifest_id 并使已记录的评测
@@ -292,18 +293,18 @@ func buildSink(docs []Doc) (map[string][]byte, retrieval.WholeDocIndexManifest, 
 		ReleaseID: "retr-eval-v1",
 		Docs:      entries,
 	}
-	retrieval.AssignID(&m)
+	wholeindex.AssignID(&m)
 	sink := map[string][]byte{}
 	for i := range entries {
-		sink[retrieval.ObjectKey(m.ManifestID, entries[i].DenseRef)] = lanes[i].dense
-		sink[retrieval.ObjectKey(m.ManifestID, entries[i].SparseRef)] = lanes[i].sparse
-		sink[retrieval.ObjectKey(m.ManifestID, entries[i].MultiRef)] = lanes[i].multi
+		sink[wholeindex.ObjectKey(m.ManifestID, entries[i].DenseRef)] = lanes[i].dense
+		sink[wholeindex.ObjectKey(m.ManifestID, entries[i].SparseRef)] = lanes[i].sparse
+		sink[wholeindex.ObjectKey(m.ManifestID, entries[i].MultiRef)] = lanes[i].multi
 	}
 	mj, err := json.Marshal(m)
 	if err != nil {
-		return nil, retrieval.WholeDocIndexManifest{}, fmt.Errorf("devseed: 序列化 manifest: %w", err)
+		return nil, wholeindex.WholeDocIndexManifest{}, fmt.Errorf("devseed: 序列化 manifest: %w", err)
 	}
-	sink[retrieval.ManifestKey(m.ManifestID)] = mj
+	sink[wholeindex.ManifestKey(m.ManifestID)] = mj
 	return sink, m, nil
 }
 

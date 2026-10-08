@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"io"
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/artifact"
@@ -250,15 +251,15 @@ func (p *Pipeline) process(ctx context.Context, ev ReleaseEvent) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		key := ObjectKey(m.ManifestID, entries[i].DenseRef)
+		key := wholeindex.ObjectKey(m.ManifestID, entries[i].DenseRef)
 		if err := p.Sink.Put(ctx, key, payloads[i].dense); err != nil {
 			return fmt.Errorf("put %s: %w", key, err)
 		}
-		key = ObjectKey(m.ManifestID, entries[i].SparseRef)
+		key = wholeindex.ObjectKey(m.ManifestID, entries[i].SparseRef)
 		if err := p.Sink.Put(ctx, key, payloads[i].sparse); err != nil {
 			return fmt.Errorf("put %s: %w", key, err)
 		}
-		key = ObjectKey(m.ManifestID, entries[i].MultiRef)
+		key = wholeindex.ObjectKey(m.ManifestID, entries[i].MultiRef)
 		if err := p.Sink.Put(ctx, key, payloads[i].multi); err != nil {
 			return fmt.Errorf("put %s: %w", key, err)
 		}
@@ -267,7 +268,7 @@ func (p *Pipeline) process(ctx context.Context, ev ReleaseEvent) error {
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
-	if err := p.put(ctx, ManifestKey(m.ManifestID), manifestJSON); err != nil {
+	if err := p.put(ctx, wholeindex.ManifestKey(m.ManifestID), manifestJSON); err != nil {
 		return err
 	}
 
@@ -285,7 +286,7 @@ func (p *Pipeline) process(ctx context.Context, ev ReleaseEvent) error {
 	if err != nil {
 		return fmt.Errorf("marshal tree: %w", err)
 	}
-	if err := p.put(ctx, TreeKey(m.ManifestID), treeJSON); err != nil {
+	if err := p.put(ctx, wholeindex.TreeKey(m.ManifestID), treeJSON); err != nil {
 		return err
 	}
 
@@ -317,7 +318,7 @@ func (p *Pipeline) checkStructure(ctx context.Context, doc ReleaseDoc) error {
 	if err != nil {
 		return fmt.Errorf("fetch structure %s: %w", doc.StructureRef, err)
 	}
-	st, err := ParseStructureTree(b)
+	st, err := wholeindex.ParseStructureTree(b)
 	if err != nil {
 		return fmt.Errorf("parse structure %s: %w", doc.StructureRef, err)
 	}
@@ -386,18 +387,5 @@ func payloadRef(lane string, b []byte) string {
 	return lane + ".v1:" + hex.EncodeToString(sum[:16])
 }
 
-// ObjectKey 返回单文档载荷的对象键：manifestID 前缀 + 内容寻址 ref。
-// 给定 manifest_id 与 ref，键是纯函数，重试必然重写同一键。
-func ObjectKey(manifestID, ref string) string {
-	return manifestID + "/" + ref
-}
-
-// ManifestKey 返回 manifest 对象键。
-func ManifestKey(manifestID string) string {
-	return manifestID + "/" + manifestObject
-}
-
-// TreeKey 返回检索树对象键。
-func TreeKey(manifestID string) string {
-	return manifestID + "/" + treeObject
-}
+// 工件对象键（ObjectKey/ManifestKey/TreeKey）的唯一实现：
+// service/common/wholeindex/objectkey.go。

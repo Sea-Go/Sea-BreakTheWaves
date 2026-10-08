@@ -5,7 +5,7 @@
 //
 // The package performs no object-storage IO and invokes no encoder; fetching
 // and producing the referenced bytes is the caller's responsibility.
-package artifact
+package wholeindex
 
 import (
 	"crypto/sha256"

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -54,11 +55,11 @@ func TestRunExampleEvents(t *testing.T) {
 		seen[k] = true
 	}
 	for _, id := range ids {
-		if !seen[indexer.ManifestKey(id)] {
-			t.Errorf("manifest object %s missing", indexer.ManifestKey(id))
+		if !seen[wholeindex.ManifestKey(id)] {
+			t.Errorf("manifest object %s missing", wholeindex.ManifestKey(id))
 		}
-		if !seen[indexer.TreeKey(id)] {
-			t.Errorf("tree object %s missing", indexer.TreeKey(id))
+		if !seen[wholeindex.TreeKey(id)] {
+			t.Errorf("tree object %s missing", wholeindex.TreeKey(id))
 		}
 	}
 	if !strings.Contains(out, "indexer dev: done") {
