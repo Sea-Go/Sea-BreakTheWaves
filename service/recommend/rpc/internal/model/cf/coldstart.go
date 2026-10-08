@@ -157,7 +157,12 @@ func (cs *ColdStart) ColdStartArticle(ctx context.Context, articleID string) ([]
 
 	// 按迁移后的 CF 分数倒序排序。
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].Score > result[j].Score
+		if result[i].Score != result[j].Score {
+			return result[i].Score > result[j].Score
+		}
+		// 同分按 ArticleID 升序：map 构建的候选集顺序随机，缺 tie-breaker
+		// 会让同输入产出不同结果（推荐不可复现）。
+		return result[i].ArticleID < result[j].ArticleID
 	})
 
 	// 截断到 topK。
