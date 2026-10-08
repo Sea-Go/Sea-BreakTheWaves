@@ -316,6 +316,23 @@ type Executor struct {
 	Polish StageFunc
 }
 
+// StageFunc 按阶段返回对应执行器（未配置的阶段返回 nil）。装配层（含
+// GraphAgent 节点）用它按阶段取执行器，无需各自维护一份 switch。
+func (e Executor) StageFunc(stage Stage) StageFunc {
+	switch stage {
+	case StageCurate:
+		return e.Curate
+	case StageOutline:
+		return e.Outline
+	case StageArticle:
+		return e.Article
+	case StagePolish:
+		return e.Polish
+	default:
+		return nil
+	}
+}
+
 // Run 按序执行四阶段（do_* 断点续跑的编排入口）：逐阶段 Advance，
 // 任一阶段失败即返回当次 job 与错误——已完成阶段已记账，重入 Run
 // （或逐阶段 Advance）自动从断点续跑；SkipPolish=true 时以 nil 执行

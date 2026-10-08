@@ -76,3 +76,12 @@ GOCACHE=/tmp/gocache-m4 go test -race -count=1 ./service/search/rpc/internal/pla
 
 接线（B1 网关按 `MaxTier(请求档, Route建议档)` 选规划器、B3 执行器
 消费 `Plan`/`SubPlans` 逐轮检索）在后续装配里程碑完成，本包不依赖它们。
+
+## 框架装配（C17）
+
+按 C17「云端搜广推必须基于 tRPC-Agent-Go 框架实现」，本包区分两层：
+
+- **算法内核**（本包其余文件）：纯函数、无 IO、无框架依赖，承担量化/聚类/排序/校验/文本处理等确定性算法；
+- **框架装配**（`graph.go` / `tool.go` / `model.go`）：以框架公开 API 承载编排与运行。
+
+边界判据：框架管**运行时装配**（Agent / Graph / Tool / 会话 / 模型调用），不介入纯算法内核。装配文件的存在使本包满足 C17；内核文件保持可独立测试与复用。
