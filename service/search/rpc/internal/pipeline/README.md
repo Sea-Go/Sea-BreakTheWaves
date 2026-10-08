@@ -159,3 +159,12 @@ GOCACHE=/tmp/gocache-e2e go run ./service/search/rpc/cmd/search_demo --tier fast
 有）；同输入多次 `Execute` 深相等（确定性）；空查询/未知档位/未知
 交付拒绝；tools 交付不调 Summarizer（录制探针）且允许 Summarizer
 缺席；判档升档（deep 触发词把用户 fast 档升到 deep，候选放宽可观察）。
+
+## 框架装配（C17）
+
+C17 明确"Agent、工作流、工具、会话及**检索装配**以框架公开 API 为基础"。本包对应两层：
+
+- **算法内核**（`pipeline.go` / `encoder.go`）：编排语义与查询编码，纯函数、无框架依赖；
+- **框架装配**（`graph.go`）：三阶段（plan → retrieve → deliver）编译为框架 Graph，经 GraphAgent/Runner 运行，完成事件提取有界回执。
+
+回执只报事实（档位/交付/候选数/引用数），证据正文留在域层结果对象中。
