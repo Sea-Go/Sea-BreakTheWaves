@@ -26,8 +26,8 @@ type Fused struct {
 // RRF 把多路候选列表融合为单一列表：每路贡献 1/(k+rank)，rank 为该文档
 // 在此路的位次（1 起，未出现不贡献；未排序的路先按分数降序定名次）。
 // k<=0 时取 KDefault。输出按总分降序、平局按 doc_key 字典序升序（确定性）。
-// 空输入返回空。
-func RRF(rankLists [][]Scored, k int) []Fused {
+// 空输入返回空。（var 转发形态：共享实现的类型适配层，非独立算法实现。）
+var RRF = func(rankLists [][]Scored, k int) []Fused {
 	lists := make([][]rrf.Entry, len(rankLists))
 	for i, list := range rankLists {
 		entries := make([]rrf.Entry, len(list))
