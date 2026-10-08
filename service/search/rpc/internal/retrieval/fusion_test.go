@@ -1,0 +1,75 @@
+package retrieval
+
+import (
+	"math"
+	"testing"
+)
+
+// RRF 手算例（k=60，rank 从 1 起）：
+//
+//	list1 = [A, B, C]，list2 = [B, A]
+//	A = 1/(60+1) + 1/(60+2) = 1/61 + 1/62
+//	B = 1/(60+2) + 1/(60+1) = 1/61 + 1/62（与 A 平局 → doc_key 字典序 A 前）
+//	C = 1/(60+3)
+func TestRRFHandComputed(t *testing.T) {
+	list1 := []Scored{{"doc-a", 9}, {"doc-b", 8}, {"doc-c", 7}}
+	list2 := []Scored{{"doc-b", 5}, {"doc-a", 4}}
+	got := RRF([][]Scored{list1, list2}, 60)
+
+	ab := float32(1.0/61 + 1.0/62)
+	c := float32(1.0 / 63)
+	want := []Fused{
+		{"doc-a", ab},
+		{"doc-b", ab},
+		{"doc-c", c},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("融合候选数 %d want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].DocKey != want[i].DocKey || math.Abs(float64(got[i].Score-want[i].Score)) > 1e-9 {
+			t.Fatalf("RRF[%d]=%v want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// 单列表退化为 1/(k+rank)；k<=0 回退 KDefault=60。
+func TestRRFDefaultsAndEmpty(t *testing.T) {
+	got := RRF([][]Scored{{{"x", 1}, {"y", 1}}}, 0) // k=0 → KDefault
+	if len(got) != 2 {
+		t.Fatalf("候选数 %d want 2", len(got))
+	}
+	if s := float64(got[0].Score) - 1.0/61; math.Abs(s) > 1e-9 {
+		t.Fatalf("got[0]=%v want %v", got[0].Score, 1.0/61)
+	}
+	if s := float64(got[1].Score) - 1.0/62; math.Abs(s) > 1e-9 {
+		t.Fatalf("got[1]=%v want %v", got[1].Score, 1.0/62)
+	}
+	if got := RRF(nil, KDefault); len(got) != 0 {
+		t.Fatalf("空输入应返回空: %v", got)
+	}
+	if got := RRF([][]Scored{nil, {}}, KDefault); len(got) != 0 {
+		t.Fatalf("空列表应返回空: %v", got)
+	}
+}
+
+// 同输入两次融合结果逐元素相等（确定性）。
+func TestRRFDeterministic(t *testing.T) {
+	lists := [][]Scored{
+		{{"a", 3}, {"b", 2}, {"c", 1}},
+		{{"c", 3}, {"a", 2}},
+		{{"b", 3}},
+	}
+	first := RRF(lists, KDefault)
+	for i := 0; i < 10; i++ {
+		again := RRF(lists, KDefault)
+		if len(first) != len(again) {
+			t.Fatalf("第 %d 次结果长度漂移", i)
+		}
+		for j := range first {
+			if first[j] != again[j] {
+				t.Fatalf("第 %d 次结果漂移: [%d] %v vs %v", i, j, first[j], again[j])
+			}
+		}
+	}
+}
