@@ -15,6 +15,7 @@ package retrieval
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/representation"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/wholeindex"
 	"sort"
 	"sync"
@@ -42,6 +43,12 @@ type LoadedDoc struct {
 type Store struct {
 	mu   sync.RWMutex
 	docs map[string]LoadedDoc
+	// sparseSV / multiTV 是装载时预转换的参考实现表示（common/retrieval
+	// 的 SortedSparse / TokenValues 口径），召回路径直接消费，免每查询
+	// 重复转换。multiW 记录各文档矩阵行宽（不同宽度按旧语义不互相参与）。
+	sparseSV map[string]representation.SparseValues
+	multiTV  map[string]representation.TokenValues
+	multiW   map[string]int
 }
 
 // NewStore 从已构造好的 LoadedDoc 集合建 Store。校验：docs 非空、docKey
@@ -64,10 +71,18 @@ func NewStore(docs map[string]LoadedDoc) (*Store, error) {
 		}
 	}
 	cp := make(map[string]LoadedDoc, len(docs))
+	sparseSV := make(map[string]representation.SparseValues, len(docs))
+	multiTV := make(map[string]representation.TokenValues, len(docs))
+	multiW := make(map[string]int, len(docs))
 	for k, v := range docs {
 		cp[k] = v
+		sparseSV[k] = docSparseValues(v.Sparse)
+		if len(v.Multi) > 0 {
+			multiTV[k] = docTokenValues(v.Multi)
+			multiW[k] = len(v.Multi[0])
+		}
 	}
-	return &Store{docs: cp}, nil
+	return &Store{docs: cp, sparseSV: sparseSV, multiTV: multiTV, multiW: multiW}, nil
 }
 
 // multiRowWidth 返回 multi 矩阵的行宽（0 行返回 0）；各行不等宽返回 -1。
@@ -114,7 +129,10 @@ func (s *Store) AttachSource(docKey string, tree evidence.TreeJSON, source []byt
 // 调用方不得修改（Store 本身在无 Attach 并发时全域只读）。并发检索
 // 的入口统一走 Snapshot，避免直接触碰 Store 的锁。
 type Snapshot struct {
-	docs map[string]LoadedDoc
+	docs     map[string]LoadedDoc
+	sparseSV map[string]representation.SparseValues
+	multiTV  map[string]representation.TokenValues
+	multiW   map[string]int
 }
 
 // Snapshot 生成当前文档集的只读视图。
@@ -125,7 +143,7 @@ func (s *Store) Snapshot() Snapshot {
 	for k, v := range s.docs {
 		cp[k] = v
 	}
-	return Snapshot{docs: cp}
+	return Snapshot{docs: cp, sparseSV: s.sparseSV, multiTV: s.multiTV, multiW: s.multiW}
 }
 
 // Len 返回视图内文档数。

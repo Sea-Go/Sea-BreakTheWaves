@@ -1,6 +1,10 @@
 // ============================================================================
 // recall.go —— 三路整篇召回（dev 形态为全量精确扫描，无 ANN 索引）。
 //
+// sparse 与 multi 两路的打分委托 common/retrieval 的参考实现
+// （sparse.Dot / multivector.MaxSim，2026-10-08 复用整改）；dense 路的
+// 余弦为本包实现（common/retrieval/dense 无独立打分函数）。
+//
 // 每一路都是独立的候选来源：输入查询表示，输出按分数降序（平局按
 // doc_key 字典序升序，保证同输入同输出）的候选列表。只保留 score > 0
 // 的文档（零/负分数不构成候选，避免给 RRF 注入尾部噪声）。
@@ -13,6 +17,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	cmulti "github.com/Sea-Go/Sea-BreakTheWaves/service/common/retrieval/multivector"
+	csparse "github.com/Sea-Go/Sea-BreakTheWaves/service/common/retrieval/sparse"
 )
 
 // Scored 是单路召回的一个候选：doc_key + 该路分数。
@@ -44,84 +51,93 @@ func (sn Snapshot) Dense(query []float32) []Scored {
 }
 
 // Sparse 执行 sparse 路整篇召回：查询 impact 向量与每文档稀疏表示的
-// 内积（只累加共同 TermID 的权重乘积）。空查询返回空。
+// 内积。打分委托 common/retrieval/sparse.Dot（参考实现；装载时已把文档
+// 表示预转换为 SortedSparse 形态）。空查询返回空。
 func (sn Snapshot) Sparse(query map[uint32]float32) []Scored {
 	if len(query) == 0 {
 		return nil
 	}
-	var out []Scored
-	// Sort query term IDs for deterministic float32 summation (Go map
-	// iteration order is randomized; FP addition is not associative).
-	terms := make([]uint32, 0, len(query))
-	for term := range query {
-		terms = append(terms, term)
+	qsv := querySparseValues(query)
+	if len(qsv.Indices) == 0 {
+		return nil
 	}
-	sort.Slice(terms, func(i, j int) bool { return terms[i] < terms[j] })
+	type cand struct {
+		key   string
+		score float64
+	}
+	var cands []cand
 	for _, key := range sn.DocKeys() {
-		d, _ := sn.Doc(key)
-		var score float32
-		for _, term := range terms {
-			if dw, ok := d.Sparse[term]; ok {
-				score += query[term] * dw
-			}
+		dsv, ok := sn.sparseSV[key]
+		if !ok || len(dsv.Indices) == 0 {
+			continue
 		}
-		if score > 0 {
-			out = append(out, Scored{DocKey: key, Score: score})
+		v, err := csparse.Dot(qsv, dsv)
+		if err != nil {
+			continue // 契约不匹配（如非正权重）→ 该文档不参与此路
+		}
+		if v > 0 {
+			cands = append(cands, cand{key: key, score: v})
 		}
 	}
-	sortScored(out)
+	// 按参考实现的 float64 权威值排序后再窄化，保持排序确定性。
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].score != cands[j].score {
+			return cands[i].score > cands[j].score
+		}
+		return cands[i].key < cands[j].key
+	})
+	out := make([]Scored, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, Scored{DocKey: c.key, Score: float32(c.score)})
+	}
 	return out
 }
 
 // Multi 执行 multi 路整篇召回：exact MaxSim——每文档分数 =
-// Σ_{i∈query tokens} max_{j∈doc tokens} dot(q_i, d_j)。查询各行需等宽；
-// 文档行宽与查询不一致的行跳过（不参与该 query token 的 max）。空查询
-// 或查询各行零范数返回空。
+// Σ_{i∈query tokens} max_{j∈doc tokens} dot(q_i, d_j)。打分委托
+// common/retrieval/multivector.MaxSim（参考实现；零范数行经掩码不参与
+// max，行宽与查询不一致的文档不参与此路）。空查询、行宽不一致或查询
+// 各行零范数返回空。
 func (sn Snapshot) Multi(query [][]float32) []Scored {
-	if len(query) == 0 {
+	qtv, qWidth, ok := queryTokenValues(query)
+	if !ok {
 		return nil
 	}
-	qWidth := multiRowWidth(query)
-	if qWidth <= 0 {
-		return nil
+	contract := multiContractForWidth(qWidth)
+	if qtv.Shape[0] > contract.MaxTokens {
+		return nil // 超出契约容量（见 repr.go maxTokensCap）
 	}
-	usable := false
-	for _, q := range query {
-		if hasNorm32(q) {
-			usable = true
-			break
-		}
+	type cand struct {
+		key   string
+		score float64
 	}
-	if !usable {
-		return nil
-	}
-	var out []Scored
+	var cands []cand
 	for _, key := range sn.DocKeys() {
-		d, _ := sn.Doc(key)
-		var score float32
-		for _, q := range query {
-			if len(q) != qWidth || !hasNorm32(q) {
-				continue
-			}
-			best := float32(math.Inf(-1))
-			for _, row := range d.Multi {
-				if len(row) != qWidth {
-					continue
-				}
-				if s := dot32(q, row); s > best {
-					best = s
-				}
-			}
-			if best == float32(math.Inf(-1)) {
-				continue // 该 query token 无可比对行，不计入
-			}
-			score += best
+		if sn.multiW[key] != qWidth {
+			continue // 不同编码器/宽度的表示不互相参与（旧语义）
 		}
-		if score > 0 {
-			out = append(out, Scored{DocKey: key, Score: score})
+		dtv, ok := sn.multiTV[key]
+		if !ok {
+			continue
+		}
+		v, err := cmulti.MaxSim(qtv, dtv, contract)
+		if err != nil {
+			continue // 矩阵校验失败（如全零矩阵）→ 该文档不参与此路
+		}
+		if v > 0 {
+			cands = append(cands, cand{key: key, score: v})
 		}
 	}
-	sortScored(out)
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].score != cands[j].score {
+			return cands[i].score > cands[j].score
+		}
+		return cands[i].key < cands[j].key
+	})
+	out := make([]Scored, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, Scored{DocKey: c.key, Score: float32(c.score)})
+	}
 	return out
 }
 
