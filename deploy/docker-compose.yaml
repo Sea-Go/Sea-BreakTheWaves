@@ -67,7 +67,7 @@ services:
       - "37687:7687"   # Bolt
       - "32004:2004"   # Prometheus metrics（需要启用配置，见下方 volumes/conf）
     environment:
-      - NEO4J_AUTH=neo4j/Sea-TryGo
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
       - NEO4J_dbms_logs_debug_level=INFO
     volumes:
       - ./data/neo4j/data:/data
