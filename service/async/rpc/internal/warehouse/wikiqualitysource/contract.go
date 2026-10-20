@@ -53,10 +53,6 @@ func futureFactCatalog(eventType string) bool {
 
 func factSetEvent(eventType string) bool { return eventType == FactSetFrozenV1 }
 
-func validateBatch(batch eventing.Batch) error {
-	return validateBatchWithFactSet(batch, false)
-}
-
 // Opening the v1 path is an explicit, separately configured consumer mode.
 // All other future FactCatalog versions remain fail-closed on this cursor.
 func validateBatchWithFactSet(batch eventing.Batch, enabled bool) error {
