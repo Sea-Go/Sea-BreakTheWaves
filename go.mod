@@ -204,3 +204,7 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 	trpc.group/trpc-go/trpc-agent-go/storage/postgres v0.8.0 // indirect
 )
+
+require github.com/Sea-Go/sea-guards v0.0.0
+
+replace github.com/Sea-Go/sea-guards => ./sea-guards

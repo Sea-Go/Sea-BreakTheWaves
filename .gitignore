@@ -24,3 +24,4 @@ breakthewaves
 
 # 检索评测入口的本地编译产物（勿入库）
 /retr_eval
+sea-guards/
