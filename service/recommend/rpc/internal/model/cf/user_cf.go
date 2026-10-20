@@ -103,7 +103,10 @@ func (ucf *UserCF) FindSimilarUsers(target UserBehavior, candidates []UserBehavi
 		}
 	}
 	sort.Slice(sims, func(i, j int) bool {
-		return sims[i].Similarity > sims[j].Similarity
+		if sims[i].Similarity != sims[j].Similarity {
+			return sims[i].Similarity > sims[j].Similarity
+		}
+		return sims[i].UserID < sims[j].UserID
 	})
 	if topN > 0 && len(sims) > topN {
 		sims = sims[:topN]

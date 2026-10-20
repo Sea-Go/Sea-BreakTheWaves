@@ -264,11 +264,20 @@ func TestPinnedReaderRejectsMissingPrefixOldHeadAndOriginalTampering(t *testing.
 			r.RTW = rtw
 		}},
 		{"worker_original_bytes_substituted", func(r *AuthorityReader, _ *PinnedRequest) {
-			rtw := r.RTW.(fixtureRTW)
-			for id := range rtw.events {
-				rtw.events[id] = []byte(`{"forged":true}`)
-				break
+			// Forge the RTW copy of a *selected* event deterministically.
+			// Map iteration order is random; picking an arbitrary key made
+			// this trial flaky whenever the forged event was outside the
+			// reader's verification scope (selected rows + committed prefix).
+			ods := r.ODS.(fixtureODS)
+			var selected eventing.Event
+			if json.Unmarshal(ods.snapshot.Rows[1].AuthorityRaw, &selected) != nil {
+				panic("fixed selected fixture cannot decode")
 			}
+			rtw := r.RTW.(fixtureRTW)
+			if _, ok := rtw.events[selected.EventID]; !ok {
+				panic("fixture RTW must hold the selected event")
+			}
+			rtw.events[selected.EventID] = []byte(`{"forged":true}`)
 			r.RTW = rtw
 		}},
 		{"judgment_source_byte_span_differs_from_catalog", func(r *AuthorityReader, _ *PinnedRequest) {

@@ -1,0 +1,10 @@
+{
+  "entries": [
+    {
+      "path": "service/recommend/rpc/internal/trpcagent/core",
+      "package": "recommendationv2",
+      "reason": "C45 存量违例：新旧推荐实现并存于同一工作树",
+      "converge_event": "legacy recommendation 归档后，随 Phase 2 命名迁移改回 recommendation"
+    }
+  ]
+}

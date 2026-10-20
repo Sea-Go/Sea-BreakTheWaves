@@ -162,7 +162,10 @@ func (m *CoOccurrenceMatrix) GetSimilar(articleID string, topN int) []SimilarIte
 	}
 	m.mu.RUnlock()
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].Similarity > items[j].Similarity
+		if items[i].Similarity != items[j].Similarity {
+			return items[i].Similarity > items[j].Similarity
+		}
+		return items[i].ArticleID < items[j].ArticleID
 	})
 	if topN > 0 && len(items) > topN {
 		items = items[:topN]
@@ -216,7 +219,10 @@ func (icf *ItemCF) FindSimilarArticles(articleID string, matrix *CoOccurrenceMat
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].Similarity > items[j].Similarity
+		if items[i].Similarity != items[j].Similarity {
+			return items[i].Similarity > items[j].Similarity
+		}
+		return items[i].ArticleID < items[j].ArticleID
 	})
 	if topN > 0 && len(items) > topN {
 		items = items[:topN]
@@ -250,7 +256,11 @@ func (icf *ItemCF) Recommend(articleIDs []string, matrix *CoOccurrenceMatrix, to
 		})
 	}
 	sort.Slice(cands, func(i, j int) bool {
-		return cands[i].Score > cands[j].Score
+		if cands[i].Score != cands[j].Score {
+			return cands[i].Score > cands[j].Score
+		}
+		// 同分按 ArticleID 升序保证确定性（见 coldstart.go 同处注释）。
+		return cands[i].ArticleID < cands[j].ArticleID
 	})
 	if topK > 0 && len(cands) > topK {
 		cands = cands[:topK]

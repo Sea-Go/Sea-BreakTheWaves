@@ -135,7 +135,10 @@ func (mf *MF) Recommend(userID string, candidateArticleIDs []string, topK int) [
 		})
 	}
 	sort.Slice(cands, func(i, j int) bool {
-		return cands[i].Score > cands[j].Score
+		if cands[i].Score != cands[j].Score {
+			return cands[i].Score > cands[j].Score
+		}
+		return cands[i].ArticleID < cands[j].ArticleID
 	})
 	if topK > 0 && len(cands) > topK {
 		cands = cands[:topK]
