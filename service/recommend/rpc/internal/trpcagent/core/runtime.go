@@ -130,9 +130,9 @@ func (defaultRecallProvider) Recall(_ context.Context, rctx RecommendationContex
 			Score:     1 - float64(i)*0.01,
 			Source:    source,
 			Features: map[string]any{
+				// 伪造条目只携带最小诚实元数据；scenario/path 等假上下文细节不注入
+				"fabricated":    true,
 				"recall_source": source,
-				"scenario":      req.Scenario,
-				"path":          rctx.Path,
 			},
 		})
 	}
