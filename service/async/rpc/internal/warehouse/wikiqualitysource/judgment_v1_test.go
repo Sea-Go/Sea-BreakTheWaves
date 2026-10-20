@@ -152,7 +152,7 @@ func TestCompleteFactCatalogFutureEventCannotBecomeTechnicalSkip(t *testing.T) {
 		}
 		batch.Events[0].InputHash = digest(encoded)
 		resetBatchHash(t, &batch)
-		if !errors.Is(validateBatch(batch), ErrContract) {
+		if !errors.Is(validateBatchWithFactSet(batch, false), ErrContract) {
 			t.Fatalf("future complete FactCatalog source %s became a skip before its contract froze", family)
 		}
 	}

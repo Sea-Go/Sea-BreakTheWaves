@@ -13,6 +13,8 @@ func NewRecommendationService(runtime *RecommendationRuntime) *RecommendationSer
 	return &RecommendationService{runtime: runtime}
 }
 
+// 门面转发有理由：对外只暴露窄 API 面，客户端不得触达 runtime 的
+// Option 装配与内部方法（C46 §3.8 判据 2）。
 func (s *RecommendationService) Recommend(ctx context.Context, req RecommendRequest) (RecommendResponse, error) {
 	return s.runtime.Recommend(ctx, req)
 }

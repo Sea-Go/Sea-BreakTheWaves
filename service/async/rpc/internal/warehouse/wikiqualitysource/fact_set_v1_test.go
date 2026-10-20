@@ -127,7 +127,7 @@ func TestFactSetConsumerModeOnlyAdmitsThePinnedV1Event(t *testing.T) {
 	}
 	batch.Events[0].InputHash = digest(canonicalEvent)
 	resetBatchHash(t, &batch)
-	if !errors.Is(validateBatch(batch), ErrContract) ||
+	if !errors.Is(validateBatchWithFactSet(batch, false), ErrContract) ||
 		validateBatchWithFactSet(batch, true) != nil {
 		t.Fatal("FactSet v1 bypassed default-off or was rejected under configured mode")
 	}

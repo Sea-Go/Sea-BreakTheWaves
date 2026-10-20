@@ -134,7 +134,7 @@ func resetBatchHash(t *testing.T, batch *eventing.Batch) {
 
 func TestQualityProofRejectsForgedHashAndUnknownVersion(t *testing.T) {
 	batch, _, authority := testBatch(t)
-	if err := validateBatch(batch); err != nil {
+	if err := validateBatchWithFactSet(batch, false); err != nil {
 		t.Fatalf("valid shared Knowledge prefix rejected: %v", err)
 	}
 	if err := proveOriginalEvent(batch.Events[1].Event, authority.raw, authority.sha,
@@ -156,11 +156,11 @@ func TestQualityProofRejectsForgedHashAndUnknownVersion(t *testing.T) {
 	encoded, _ := canonical(raw)
 	batch.Events[1].InputHash = digest(encoded)
 	resetBatchHash(t, &batch)
-	if !errors.Is(validateBatch(batch), ErrContract) {
+	if !errors.Is(validateBatchWithFactSet(batch, false), ErrContract) {
 		t.Fatal("unknown Wiki quality version became a technical skip")
 	}
 	batch.Events[1].Offset = 4
-	if !errors.Is(validateBatch(batch), ErrContract) {
+	if !errors.Is(validateBatchWithFactSet(batch, false), ErrContract) {
 		t.Fatal("shared producer offset gap was accepted")
 	}
 }

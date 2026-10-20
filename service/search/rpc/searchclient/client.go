@@ -64,6 +64,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// 转发有理由：包边界——将 logic 层接口收敛为对外的稳定 Client API（C46 §3.8）。
 func (c *Client) Search(ctx context.Context, req ContentSearchRequest) (ContentSearchResponse, error) {
 	return c.deps.ContentSearch.Search(ctx, req)
 }
