@@ -130,6 +130,9 @@ func (defaultRecallProvider) Recall(_ context.Context, rctx RecommendationContex
 			Score:     1 - float64(i)*0.01,
 			Source:    source,
 			Features: map[string]any{
+				// dev/test 专用 provider 的产物必须可编程识别，
+				// 防止伪造结果混入任何评估或线上口径。
+				"fabricated":    true,
 				"recall_source": source,
 				"scenario":      req.Scenario,
 				"path":          rctx.Path,

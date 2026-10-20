@@ -37,8 +37,11 @@ func WithProductionProviders(articleRepo *storage.ArticleRepo, poolRepo *storage
 		}
 		switch len(recallers) {
 		case 0:
-			// Keep the in-memory fallback only when no production dependency is
-			// available. This keeps local tests usable without hiding startup wiring.
+			// 装配不变量：生产路径必须提供至少一个真实召回依赖。
+			// 旧行为在此保留内存伪造 provider（凭空候选+假分数）继续对外
+			// 服务，属于"静默隐藏启动装配失败"；现在启动即失败。
+			// 不注入 WithProductionProviders 的测试/开发路径不受影响。
+			panic("core: WithProductionProviders 需要至少一个非 nil 仓储（articleRepo/poolRepo 均为 nil）——拒绝以伪造召回启动生产运行时")
 		case 1:
 			rt.recall = NewDomainRecallProvider(recallers[0])
 		default:
