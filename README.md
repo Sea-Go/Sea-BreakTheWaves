@@ -16,13 +16,13 @@
 
 | 目录 | 当前职责 | 说明 |
 | --- | --- | --- |
-| `service/common` | 共享客户端、运行时、检索算子、遥测和 tRPC-Agent 适配 | 见各包文档 |
 | `service/search` | go-zero API/zrpc、tRPC-Agent-Go 搜索运行时 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
 | `service/recommend` | go-zero API/zrpc、tRPC-Agent-Go 推荐运行时 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
 | `service/async` | go-zero API/zrpc、Worker、用户模型与异步投影 | [架构总览](docs/ARCHITECTURE_SEARCH_RECOMMEND_ASYNC.md) |
+| `service/common` | 共享检索算子（wholeindex/retrieval）、trpcagent 适配、遥测 | 各包内 README |
 | `deploy` | 本地依赖编排和 Docker 配置 | [部署](deploy/README.md) |
 
-这是持续实施中的工程：真实三路数值索引、Wiki编制Agent、完整搜索/推荐、worker发布恢复及生产部署尚未全部完成。根模块目前提供可集成组件与验收脚本；
+这是持续实施中的工程：三路数值索引的真实模型编码与物理向量库接入、Wiki 编制 Agent 产品化、完整推荐闭环与生产部署尚未全部完成；当前交付以可集成组件、评测脚本与 CI 验收为准。
 
 ```sh
 go test ./...
@@ -30,219 +30,78 @@ bash service/async/rpc/internal/content/test-postgres.sh
 ```
 
 ## 前言
+
 由于一些原因，在原先开源的仓库中发生了诸如审核不严格导致的垃圾 PR、以及部分敏感信息泄露等问题。为了更好地控制项目质量和安全，我们决定将仓库迁移到一个新的地址，并重新整理了项目结构和文档说明。
 
-之后这个项目会在一段时间内进入持续维护的阶段，并大概在今年的暑假之前开启新的征程，届时欢迎大家继续关注和支持，也希望您通过进入下面的群聊加入我们。
-
-项目资料与访问入口汇总
-
-- 📄 项目文档：见 Sea-Docs 仓库
-- 🧩 [前端仓库](https://github.com/Sea-Go/Sea-RideTheWind-Fronted) / [后端仓库](https://github.com/Sea-Go/Sea-RideTheWind)
-- 🚀 [在线体验](https://sea-ridethewindbreakthewaves.xyz)
-
-## 项目简介
-
-Sea-BreakTheWaves 是 Sea 系列中的推荐与智能决策核心模块，聚焦于把“生成式推荐能力”真正落地为一个可维护、可扩展、可观测的工程化系统。
-
-它并不只关注“给出推荐结果”这一件事，而是把推荐系统拆解为一条完整链路：
-
-- 文档/内容接入与切分
-- 向量化与索引构建
-- 粗召回与候选池维护
-- 精排与结果生成
-- 用户历史与长期/短期记忆管理
-- 日志、指标、Trace 全链路观测
-
-从项目代码结构看，Sea-BreakTheWaves 以 **RecoAgent** 和 **ContentSearchAgent** 为核心，对推荐、检索、记忆、入库、重排等能力进行模块化封装，并通过统一的 Skill Registry 将多个能力组件组织成一个可编排、可演进的推荐服务系统。
-
----
-
-## 设计目标
-
-Sea-BreakTheWaves 主要解决以下几类问题：
-
-1. **推荐链路工程化**  
-   将“召回、排序、推荐解释、曝光副作用、用户记忆维护”组织为稳定清晰的服务流程，而不是零散脚本或单点算法逻辑。
-
-2. **生成式推荐落地**  
-   在传统召回/排序链路之上，引入模型意图分析、语义理解和工具调用机制，使推荐结果具备更强的上下文理解能力。
-
-3. **内容搜索与推荐分层**  
-   同时提供推荐接口与内容搜索接口，分别服务于“主动分发”和“按需检索”两类场景。
-
-4. **用户状态持续沉淀**  
-   通过短期记忆、长期记忆、周期记忆与用户历史行为管理，增强推荐系统对用户偏好与上下文的感知能力。
-
-5. **可观测与可运维**  
-   接入 Prometheus、Jaeger、Grafana 等组件，帮助研发快速定位问题、评估链路质量并持续优化。
+项目资料与访问入口汇总见 Sea-Docs 仓库；前端与社区后端见 [Sea-RideTheWind](https://github.com/Sea-Go/Sea-RideTheWind) / [Sea-RideTheWind-Fronted](https://github.com/Sea-Go/Sea-RideTheWind-Fronted)。
 
 ---
 
 ## 核心能力
 
-### 1. 文档入库
+### 1. 搜索（service/search）
 
-系统提供文档入库能力，支持将内容进行切分、向量化并写入检索系统与关系型存储：
+- **三路整篇召回**：Dense（余弦）/ Sparse（impact 内积）/ Multi-vector（token 矩阵 MaxSim）三条独立候选分支，RRF(k=60) 融合，互不替代
+- **三档执行**：`fast`（dense+sparse 跳 multi）/ `balanced`（三路+RRF）/ `deep`（放宽预算），档位语义见 Sea 搜索方案
+- **证据与交付**：命中 → EvidencePack（revision+locator 定位），summary（先搜后总结、引用角标）与 tools（结构化证据交调用方）两种交付
+- **查询规划**：恒等规划器（fast）/ 规则规划器（balanced）/ 子查询分解器（deep），规则判档路由只升不降
 
-- 文本切分（chunk）
-- Embedding 生成
-- 写入 Milvus 向量库
-- 写入 Postgres 元数据存储
-- 可选写入 Neo4j，用于 GraphRAG / 图谱检索增强
+### 2. 推荐（service/recommend）
 
-对应接口：
+- tRPC-Agent-Go 运行时承载的推荐 v2：候选池（长期/短期/周期）、召回、rerank、事件上报
+- 用户记忆分层（长期/短期/周期/历史）与行为上下文读取
+- 推荐完整闭环（真实曝光归因、双塔训练）在建设中，当前为规则/池化基线
 
-```http
-POST /api/v1/docs/ingest
-```
+### 3. 异步与用户模型（service/async）
 
----
+- **indexer**：六接缝管线（EventSource/Encoder/Sink/ReceiptSink/SeenStore/StructureSource），内容寻址工件 + READY 最终提交点，失败零工件零回执可重试
+- **worker**：领域事实接纳与异步投影
+- **usermodel 工具**：schema 迁移与 SubjectRef 预检命令行
 
-### 2. 推荐引擎
+### 4. 可运行入口
 
-推荐主流程由 `RecoAgent` 负责统筹，典型链路包括：
+| 入口 | 用途 |
+| --- | --- |
+| `service/search/rpc/cmd/search_api` | 最小 HTTP 服务：`POST /api/v1/search`（tier×delivery），C-3 契约 JSON |
+| `service/search/rpc/cmd/search_demo` | 命令行演示：三档×双交付端到端（规划→检索→证据→总结） |
+| `service/search/rpc/cmd/retr_eval` | 种子集评测：nDCG/R_cap/MRR，`testdata/index/seeds/` |
+| `service/async/rpc/cmd/indexer` | JSONL 事件 → 工件 → READY 的 dev 构建入口 |
+| `service/async/rpc/cmd/worker` | 异步事实 worker |
+| `service/async/rpc/cmd/usermodel-schema` / `usermodel-subjectref-preflight` | 用户模型 schema 与迁移预检 |
 
-- 用户请求解析
-- 意图识别（intent.parse）
-- 推荐策略路由（policy.route）
-- 用户记忆与行为上下文读取
-- 候选池补充与召回
-- LLM / rerank 精排
-- 结果校验与输出
-- 曝光/副作用处理
+### 5. 可观测性
 
-对应接口：
-
-```http
-POST /api/v1/reco/recommend
-```
-
-推荐链路适合用于：
-
-- 首页 Feed 推荐
-- 热点内容推荐
-- 个性化内容分发
-- 周期性主题推荐
-- 基于用户兴趣与历史行为的智能推荐
-
----
-
-### 3. 内容搜索
-
-除了推荐能力，系统还实现了独立的内容搜索 Agent，用于完成“问题 → 检索意图 → 向量召回 → rerank → 返回内容结果”的流程。
-
-对应接口：
-
-```http
-POST /api/v1/search
-```
-
-典型特点：
-
-- 不依赖用户记忆
-- 支持 query 意图分析
-- 支持 embedding 召回
-- 支持 rerank 精排
-- 返回文章、片段、标题、标签等结构化结果
-
-这使 Sea-BreakTheWaves 不只是推荐系统，也是一套可直接承载智能内容检索的服务底座。
-
----
-
-### 4. 技能化架构
-
-系统使用 `skillsys` 管理可调用能力，将业务能力按 skill 拆分并统一注册。
-
-当前已注册的核心 skills 包括：
-
-- `doc_ingest`：文档入库
-- `milvus_search`：向量搜索
-- `pool_manage`：候选池维护
-- `user_history`：用户历史行为管理
-- `memory_manage`：用户记忆读写与维护
-- `rerank`：重排序能力
-
-这种结构有几个好处：
-
-- 能力边界清晰
-- 易于扩展和替换
-- 方便 Agent 编排调用
-- 适合持续演进为更复杂的多工具推荐系统
-
----
-
-### 5. 用户记忆与行为管理
-
-项目将用户状态建模为多层次结构：
-
-- **长期记忆（long term）**：稳定偏好、长期兴趣
-- **短期记忆（short term）**：近期上下文与即时兴趣
-- **周期记忆（periodic）**：按时间桶维护的周期性偏好
-- **用户历史（history）**：曝光、行为与交互轨迹
-
-系统还会将记忆内容拆分为 Memory Chunks，并支持基于向量检索的相关片段召回，以避免把整段记忆直接塞进 Prompt，提升效率与质量。
-
----
-
-### 6. 可观测性
-
-Sea-BreakTheWaves 在工程层面内置了完整的可观测能力：
-
-- **日志**：Zap + Lumberjack
-- **指标**：Prometheus
-- **链路追踪**：OpenTelemetry + Jaeger
-- **可视化**：Grafana
-
-默认暴露：
-
-```http
-GET /metrics
-GET /health
-```
-
-可用于：
-
-- 推荐链路耗时分析
-- Agent 调用质量观察
-- 异常排查
-- 服务健康状态检查
-- 线上性能监控与容量评估
+- 结构化日志 + OTel Trace（含 tRPC-Agent-Go 原生 Root/Graph/Tool Span）
+- Prometheus 指标（`/metrics`）、健康检查（`/health`）
+- Grafana / Jaeger / Kafka UI 等本地栈见 `deploy/`
 
 ---
 
 ## 系统架构
 
 ```text
-                ┌──────────────────────────────┐
-                │         Client / App         │
-                └──────────────┬───────────────┘
-                               │
-                               ▼
-                    ┌────────────────────┐
-                    │   Gin HTTP Server   │
-                    └─────────┬──────────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
- ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
- │   RecoAgent    │  │ ContentSearch  │  │ Skill Registry │
- │ recommendation │  │     Agent      │  │   + Tools      │
- └───────┬────────┘  └────────┬───────┘  └───────┬────────┘
-         │                    │                  │
-         ├────────────┬───────┴───────┬──────────┤
-         ▼            ▼               ▼          ▼
-   ┌──────────┐ ┌──────────┐   ┌──────────┐ ┌──────────┐
-   │ Postgres │ │  Milvus  │   │  Neo4j   │ │  Kafka   │
-   └──────────┘ └──────────┘   └──────────┘ └──────────┘
-         │                                         │
-         ▼                                         ▼
-   ┌──────────┐                             ┌──────────┐
-   │  Memory  │                             │Article In│
-   │ History  │                             │  Gest    │
-   └──────────┘                             └──────────┘
+              ┌──────────────────────────┐
+              │   Web / BFF / 桌宠客户端   │
+              └────────────┬─────────────┘
+                             │ HTTP (go-zero API)
+        ┌────────────────────┼────────────────────┐
+        ▼                    ▼                    ▼
+ ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+ │ search 服务  │     │ recommend 服务 │     │  async 服务  │
+ │ API + zrpc  │     │  API + zrpc   │     │ API + worker │
+ └──────┬──────┘     └──────┬───────┘     └──────┬──────┘
+        │    tRPC-Agent-Go（Graph/Tool/Model）     │
+        ├────────────────────┴────────────────────┤
+        ▼                                         ▼
+ ┌──────────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
+ │ DataCenter    │  │Postgres │  │ Milvus  │  │  Kafka  │
+ │ 模型网关(C31) │  │ (GORM)  │  │(+Neo4j) │  │         │
+ └──────────────┘  └─────────┘  └─────────┘  └─────────┘
 
-         Observability: Prometheus / Jaeger / Grafana / Logs
+   观测：OTel → Prometheus / Grafana / Jaeger
 ```
+
+模型调用统一经 Sea-DataCenter 网关接入（DashScope/Ollama 等由 DC 控制面管理），本服务不直连供应商。
 
 ---
 
@@ -250,70 +109,40 @@ GET /health
 
 ```text
 Sea-BreakTheWaves/
-├── agent/               # 推荐 Agent / 内容搜索 Agent
-├── ChatTest/            # 命令行对话式测试
-├── chunk/               # 文档切分与 chunk 相关逻辑
-├── config/              # 配置加载
-├── embedding/           # 向量 schema 与 embedding 服务
-├── infra/               # Postgres / Milvus / Neo4j / OTel 等基础设施初始化
-├── kafka/               # Kafka 消费与重试相关机制
-├── log/                 # 服务运行日志存放目录
-├── metrics/             # Prometheus 指标定义
-├── middleware/          # Trace / 错误处理中间件
-├── poolrefill/          # 推荐候选池的异步填充机制
-├── prometheus/          # Prometheus 配置文件目录
-├── router/              # HTTP 路由与响应结构
-├── service/             # 核心服务逻辑 (精排 / 问卷 / 搜索等)
-├── skills/              # 各类推荐技能实现
-├── skillsys/            # Skill 注册与调用框架
-├── storage/             # 各存储媒介的 Repository 层
-├── type/                # 接口与内部业务实体的类型定义
-├── zlog/                # 业务自定义日志与 Agent Trace 封装
-├── config.yaml          # 实际使用的配置文件
-├── config.yaml.example  # 配置示例
-├── deploy/              # Docker Compose、Prometheus、OTel Collector 配置
-├── dockerfile           # 镜像构建
-├── go.mod               # Go Modules 依赖管理
-├── go.sum               # 依赖校验文件
-├── kafka_handler.go     # 全局 Kafka 处理入口
-├── logo.png             # 项目 Logo 图片
-├── main.go              # 服务启动入口
-└── service.sh           # Docker 部署启动脚本
+├── api/                          # go-zero .api 契约（search / recommend / async / admin）
+├── proto/                        # RPC 协议定义
+├── service/
+│   ├── search/                   # 搜索域
+│   │   ├── api/                  # go-zero HTTP API（etc/ 配置、internal/handler|logic|svc）
+│   │   └── rpc/                  # zrpc + cmd/{search_api,search_demo,retr_eval}
+│   │       └── internal/         # planner / retrieval / evidence / summary / pipeline 等
+│   ├── recommend/                # 推荐域（api + rpc，trpcagent 运行时、rerank、skills）
+│   ├── async/                    # 异步域（api + rpc，indexer / worker / usermodel / artifact / tree）
+│   ├── common/                   # 共享库：wholeindex / retrieval / trpcagent / 遥测
+│   └── boundary_test.go          # 守护测试：禁跨域 import
+├── framework_wiring_test.go      # 守护测试：C17 框架装配边界（tRPC-Agent-Go）
+├── schema_ownership_test.go      # 守护测试：schema 归域内 GORM owner
+├── shared_symbol_test.go         # 守护测试：共享符号唯一实现、镜像不回潮
+├── naming_test.go                # 守护测试：C45 唯一正名（目录/包名无代次后缀）
+├── naming_allowlist.json         # 命名豁免白名单（path/reason/converge_event）
+├── testdata/                     # 评测种子集与夹具（index/seeds/）
+├── docs/                         # 架构总览、运行时、内容契约、遗留推荐说明
+├── deploy/                       # docker-compose、Prometheus、OTel Collector
+├── go.mod                        # module github.com/Sea-Go/Sea-BreakTheWaves
+└── README.md
 ```
+
+仓库根的四个守护测试把工程约束固化为可执行断言：框架装配必须真实 import tRPC-Agent-Go、跨域依赖禁止、共享算法符号唯一、目录与包名不带 v2/v3 代次后缀。
 
 ---
 
 ## 技术栈
 
-### 后端框架
-
-- Go 1.25+
-- Gin
-
-### 存储与检索
-
-- PostgreSQL
-- Milvus
-- Neo4j
-- Redis
-
-### 消息与数据流
-
-- Kafka
-
-### 智能能力
-
-- OpenAI Go SDK
-- DashScope / Qwen Embedding
-- Qwen Rerank
-
-### 可观测组件
-
-- Prometheus
-- Grafana
-- Jaeger
-- OpenTelemetry
-- Elasticsearch / Kibana
+- **语言与框架**：Go 1.25+，go-zero（API/RPC），tRPC-Agent-Go v1.10.0（Agent/Graph/Tool/Session）
+- **存储与检索**：PostgreSQL（GORM）、Milvus（向量/混合检索）、Neo4j（可选投影）、Redis
+- **消息与数据流**：Kafka
+- **模型接入**：经 Sea-DataCenter 模型网关（OpenAI-compatible；本仓不内置供应商 key）
+- **可观测**：OpenTelemetry、Prometheus、Grafana、Jaeger
 
 ---
 
@@ -327,7 +156,7 @@ Sea-BreakTheWaves/
 - Milvus
 - Kafka
 - Neo4j（可选，失败时主链路可降级）
-- DashScope / 模型服务可用 API Key
+- 模型网关可达（Sea-DataCenter，或本地 Ollama）
 
 ---
 
@@ -363,15 +192,7 @@ cd Sea-BreakTheWaves
 
 ### 2. 准备配置
 
-业务通用配置位于各 RPC 目录：
-
-```text
-service/search/rpc/etc/config.yaml
-service/recommend/rpc/etc/config.yaml
-service/async/rpc/etc/config.yaml
-```
-
-go-zero API/RPC 配置位于同一 `etc/` 目录。至少确认 PostgreSQL、Milvus、Kafka、Neo4j、模型网关，以及 RPC `ListenOn` 与 API `Endpoints`。
+各服务配置位于对应 `etc/` 目录；入库的示例是 `sea.search.v1.yaml` / `sea.recommend.v1.yaml` / `sea.async.v1.yaml`，本地私有配置 `config.yaml` 已被 .gitignore 排除，按需从示例复制并填写 PostgreSQL、Milvus、Kafka、模型网关地址等。
 
 ### 3. 启动基础依赖
 
@@ -381,7 +202,11 @@ docker compose -f deploy/docker-compose.yaml up -d
 
 ### 4. 启动服务
 
-按本文开头的顺序启动各域 RPC 和 API。
+按上节顺序启动各域 RPC 和 API；或先用命令行入口体验端到端检索：
+
+```bash
+echo "海洋观测" | go run ./service/search/rpc/cmd/search_demo --tier fast --delivery summary
+```
 
 ### 5. 健康检查
 
@@ -407,204 +232,85 @@ curl http://localhost:20741/health
 sh service.sh
 ```
 
-该脚本会完成：
-
-- 构建镜像
-- 删除旧容器
-- 以 `breakthewaves` 名称启动服务
-- 暴露 `20721` 端口
-
 ---
 
 ## API 说明
 
-### 1. 健康检查
+路由以 `api/*.api` 为唯一来源；以下为当前契约摘要。
 
-```http
-GET /health
-```
+### Search（prefix `/api/v1`，service/search/api）
 
----
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/v1/search` | 主搜索：query + tier（fast/balanced/deep）+ delivery（summary/tools） |
+| POST | `/api/v1/search/title` | 按文章标题结构化检索（不依赖模型） |
+| POST | `/api/v1/search/authors` | 按作者名结构化检索（不依赖模型） |
+| GET | `/api/v1/search/tools` | 已注册搜索工具清单 |
 
-### 2. 指标采集
+### Recommend（prefix `/api/v2`，service/recommend/api）
 
-```http
-GET /metrics
-```
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/v2/recommend` | 推荐主入口 |
+| POST | `/api/v2/recommend/stream` | 流式推荐 |
+| POST | `/api/v2/events` | 行为/曝光事件批量上报 |
+| GET | `/api/v2/admin/skills` | 技能清单（管理） |
 
----
+### Async（prefix `/api/v1/async`，service/async/api）
 
-### 3. 文档入库
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/v1/async/events` | 领域事件批量摄取 |
+| GET | `/api/v1/async/processing/state` | 处理水位 |
+| GET | `/api/v1/async/projections/state` | 投影水位 |
 
-```http
-POST /api/v1/docs/ingest
-Content-Type: application/json
-```
+### Admin（prefix `/api/v1/admin`，service/recommend/api）
 
-示例：
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/admin/reco/evaluation/summary` | 推荐评测摘要 |
 
-```json
-{
-  "title": "海边旅行攻略",
-  "content": "这是一篇关于海边旅行的内容……"
-}
-```
-
-> 具体字段以 skill 的实际入参定义为准；如果你后续要，我可以继续帮你把每个接口的精确 JSON 入参补齐成 OpenAPI 风格。
-
----
-
-### 4. 推荐接口
-
-```http
-POST /api/v1/reco/recommend
-Content-Type: application/json
-```
-
-示例：
-
-```json
-{
-  "user_id": "u_10001",
-  "session_id": "s_abc123",
-  "query": "我最近想看一些和海边、风景、治愈感有关的内容",
-  "surface": "home_feed",
-  "period_bucket": "d1",
-  "explain": true
-}
-```
-
----
-
-### 5. 内容搜索接口
+示例——主搜索：
 
 ```http
 POST /api/v1/search
 Content-Type: application/json
+
+{"query": "海边旅行", "tier": "balanced", "delivery": "summary"}
 ```
 
-示例：
-
-```json
-{
-  "query": "适合夏天海边旅行的内容",
-  "topk": 10,
-  "recall_k": 30,
-  "explain": true
-}
-```
-
----
-
-### 6. 文章标题检索
-
-提供根据部分或完整文章标题进行匹配的能力，不依赖大模型，基于元数据查询。
+示例——标题检索（元数据匹配，无模型依赖）：
 
 ```http
 POST /api/v1/search/title
 Content-Type: application/json
-```
 
-示例：
-
-```json
-{
-  "query": "海边旅行"
-}
-```
-
----
-
-### 7. 作者名检索
-
-提供根据部分或完整作者名称匹配并返回对应内容的能力，不依赖大模型，基于元数据查询。
-
-```http
-POST /api/v1/search/authors
-Content-Type: application/json
-```
-
-示例：
-
-```json
-{
-  "query": "安东尼"
-}
-```
-
----
-
-### 8. 新用户问卷提交
-
-用于获取新用户的冷启动初始偏好，并作为初始偏好沉淀进用户的长期记忆中。
-
-```http
-POST /api/v1/onboarding/questionnaire
-Content-Type: application/json
-```
-
-示例：
-
-```json
-{
-  "user_id": "u_new",
-  "answers": [
-    {
-      "question_id": "q1",
-      "selected_options": ["科技", "旅游"]
-    }
-  ]
-}
-```
-
----
-
-### 9. 查看已注册工具
-
-```http
-GET /api/v1/tools
+{"query": "海边旅行"}
 ```
 
 ---
 
 ## 配置说明
 
-项目采用统一 YAML 配置，不依赖 `.env` 或 `getenv`。配置集中在 `config.yaml` 中。
+配置按 go-zero 惯例集中在各服务 `etc/` 目录：
 
-主要配置模块包括：
+- `sea.*.v1.yaml`：入库示例（连接、端口、模型网关地址）
+- `config.yaml`：本地私有配置（已 gitignore，密钥类字段只在此填写）
 
-- `log`：日志路径、日志级别、服务名
-- `otel`：OpenTelemetry 配置
-- `postgres`：数据库连接
-- `milvus`：向量库配置
-- `ali`：大模型、Embedding、Rerank 配置
-- `Kafka`：消息队列配置
-- `neo4j`：图数据库配置
-- `services`：HTTP 服务端口配置
-- `pools`：候选池策略配置
-- `agent`：模型、温度、最大工具调用次数
-- `split`：文档切分参数
-- `ranking`：召回/排序参数
+主要模块：日志、OTel、PostgreSQL（GORM DSN）、Milvus、Kafka、Neo4j（可选）、候选池策略、rerank 参数。
 
 ---
 
-## 候选池策略
+## 测试方式
 
-系统内置长期、短期、周期三类候选池策略：
+```bash
+go test ./...          # 全仓测试（CI 同口径，含 -race）
+go vet ./...
+```
 
-- `long_term`
-- `short_term`
-- `periodic`
-- `recommend`
-
-相关参数包括：
-
-- `min_size`
-- `refill_size`
-- `take_size`
-- `remove_after_recommend`
-
-这意味着推荐系统可以在“池化候选 + 动态补充 + 出池控制”的模式下运行，更适合实际推荐场景中的吞吐与稳定性要求。
+- 检索链路手验：`go run ./service/search/rpc/cmd/search_demo --tier <档位> --delivery <交付>`
+- 评测：`go run ./service/search/rpc/cmd/retr_eval`（种子集 `testdata/index/seeds/`）
+- 仓库根守护测试：`go test -run 'Naming|Framework|Schema|SharedSymbol' .`
 
 ---
 
@@ -615,113 +321,55 @@ GET /api/v1/tools
 - Prometheus: `http://localhost:39090`
 - Grafana: `http://localhost:33000`
 - Jaeger: `http://localhost:16686`
-- Kibana: `http://localhost:35601`
 - Kafka UI: `http://localhost:38080`
 - Neo4j Browser: `http://localhost:37474`
-- NeoDash: `http://localhost:35005`
-- Redis Insight: `http://localhost:35540`
-
----
-
-## 测试方式
-
-项目提供了命令行对话式测试：
-
-```bash
-go run ./ChatTest/chat_cli.go
-```
-
-你可以在测试过程中观察：
-
-- 工具调用顺序
-- 工具调用入参/出参
-- 最终回答结果
-- 配合 Jaeger 查看 trace_id 对应链路
-
-这对于调试推荐 Agent、理解工具编排过程非常有帮助。
 
 ---
 
 ## 典型应用场景
 
-Sea-BreakTheWaves 适合以下方向：
-
-- 内容社区推荐
-- 新闻/资讯分发
-- 智能内容搜索
-- 用户兴趣驱动的 Feed 流系统
-- 带记忆能力的个性化推荐系统
-- 基于向量检索与 Rerank 的推荐中台
+- 内容社区推荐与智能内容搜索
+- 新闻/资讯分发与个性化 Feed
+- 基于三路检索（稠密/稀疏/多向量）的知识问答底座
+- 带用户记忆的个性化推荐系统
 
 ---
 
 ## 项目亮点
 
-- **推荐与搜索双能力并存**：不仅能做推荐，也能做内容检索
-- **技能化结构清晰**：能力拆分明确，便于维护与扩展
-- **记忆系统完整**：长期、短期、周期记忆协同工作
-- **可观测能力成熟**：从日志到 Trace 再到指标全覆盖
-- **基础设施齐全**：Milvus、Kafka、Neo4j、Postgres 一体化支持
-- **适合继续演进**：便于扩展为更复杂的 Agentic Recommendation System
+- **三路独立召回 + RRF 融合**：dense/sparse/multi-vector 各自可独立验收，不以单向量近似冒充
+- **守护测试文化**：框架装配、跨域依赖、共享符号、命名代次四类工程约束全部固化为"删掉就变红"的测试
+- **可运行端到端**：从命令行 demo 到 HTTP API，规划→检索→证据→总结全链可本地复现，跨平台确定性验证
+- **模型调用收敛**：所有模型请求经统一网关，本仓零供应商凭据
 
 ---
 
 ## Roadmap
 
-- [ ] 补充完整 OpenAPI / Swagger 文档
-- [ ] 增加更细粒度的推荐解释能力
-- [ ] 支持多模型路由与 A/B 实验
-- [ ] 增强 GraphRAG 与图谱检索能力
-- [ ] 完善推荐结果评估体系
-- [ ] 增加更多场景化推荐策略模板
-- [ ] 支持在线特征与实时流式召回
-
----
-
-## Logo 使用说明
-
-当前 README 已预留 logo 引用：
-
-```html
-<img src="./assets/logo.png" alt="Sea-BreakTheWaves Logo" width="160" />
-```
-
-你只需要在项目根目录下新增：
-
-```text
-assets/logo.png
-```
-
-即可直接显示。
-
-如果你的 logo 文件名不是 `logo.png`，把 README 顶部的路径替换掉就行，例如：
-
-```html
-<img src="./static/logo.jpg" alt="Sea-BreakTheWaves Logo" width="160" />
-```
+- [ ] 真实 BGE-M3 三路编码接入与 Milvus 物理索引（native-milvus）
+- [ ] 三档策略/预算/默认档冻结（D12）
+- [ ] 真实曝光归因与训练样本资格（先于任何双塔训练）
+- [ ] Ontology 用户模型持久化与用户塔刷新
+- [ ] 检索/推荐评测接入置信区间与基线对照
 
 ---
 
 ## 注意事项
 
-1. 当前压缩包中未发现现成的 logo 图片资源，因此 README 中使用了预留路径。
-2. `service/recommend/api/etc/config.yaml.example` 中的部分默认配置与 `deploy/docker-compose.yaml` 中的默认账号/库名可能需要你按实际环境对齐后再运行。
-3. Neo4j 初始化失败时主链路会降级，不阻断基础推荐流程。
-4. 若模型服务不可用，推荐与检索中的语义能力将受影响。
+1. Neo4j 初始化失败时主链路会降级，不阻断基础推荐流程。
+2. 若模型网关不可用，推荐与检索中的语义能力将受影响；结构化检索（title/authors）不受影响。
+3. 本仓不内置任何供应商 API Key；本地 `config.yaml` 由部署者自行填写且不入库。
 
 ---
 
 ## 未来规划
-Sea-BreakTheWaves 未来将持续围绕“让 AI 在权限范围内具备一定自进化能力”这一方向展开探索。我们希望系统不仅能够完成基础的推荐与决策任务，还能够在可控、可追踪、可审计的前提下，根据环境反馈、用户行为和任务结果不断优化自身策略与执行效果，逐步提升模型在真实业务场景中的适应能力。
 
-在产品落地方向上，项目后续计划尝试接入更多实际使用场景，例如飞书机器人、QQ 机器人等，让 AI 能够以更自然的方式服务于团队协作、信息分发、内容推荐和日常辅助决策。通过与消息平台、协作工具的结合，Sea-BreakTheWaves 将进一步从“推荐系统能力模块”走向“可交互的智能应用底座”。
-
-与此同时，项目也将持续探索更多 AI 应用场景，包括但不限于智能推荐、内容理解、任务协同、知识辅助、个性化服务等方向。我们希望通过不断扩展能力边界，验证 AI 在更多真实场景中的可用性与价值，逐步形成一套兼具工程可落地性与业务扩展性的智能系统实践方案。
+Sea-BreakTheWaves 未来将持续围绕"让 AI 在权限范围内具备一定自进化能力"这一方向展开探索：在可控、可追踪、可审计的前提下，根据环境反馈、用户行为和任务结果不断优化策略与执行效果。与此同时，项目也将持续探索智能推荐、内容理解、任务协同与知识辅助等方向，逐步形成一套兼具工程可落地性与业务扩展性的智能系统实践方案。
 
 ---
 
 ## 致谢
 
-Sea-BreakTheWaves 面向生成式推荐场景，尝试把向量检索、用户记忆、推荐策略、模型重排与可观测体系整合成一个清晰、可落地、可迭代的工程框架。
+Sea-BreakTheWaves 面向生成式推荐场景，尝试把三路检索、用户记忆、推荐策略、模型重排与可观测体系整合成一个清晰、可落地、可迭代的工程框架。
 
 如果你正在构建下一代内容推荐系统，希望这套工程结构能为你提供一个良好的起点。
