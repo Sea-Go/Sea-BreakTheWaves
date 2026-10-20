@@ -1,0 +1,11 @@
+{
+  "limit": 800,
+  "files": {
+    "service/recommend/rpc/internal/trpcagent/agent/legacy/orchestrator.go": 882,
+    "service/recommend/rpc/internal/trpcagent/core/runtime.go": 1357,
+    "service/recommend/rpc/internal/trpcagent/skill/memory_manage/memory_manage.tool.go": 997,
+    "service/recommend/rpc/internal/trpcagent/skill/rerank/ai_rerank.tool.go": 805,
+    "service/search/rpc/internal/trpcagent/agent/llm/legacyagent/content_search_agent.go": 966
+  },
+  "note": "G6 存量建档：只减不增，拆分后请收紧记录值；新增超限文件必须先拆分或修订规范"
+}
