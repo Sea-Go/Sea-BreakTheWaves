@@ -112,7 +112,7 @@ services:
     ports:
       - "38080:8080"
     environment:
-      - KAFKA_CLUSTERS_0_NAME=Sea-TryGo-Cluster
+      - KAFKA_CLUSTERS_0_NAME=sea-cluster
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
       - DYNAMIC_CONFIG_ENABLED=true
     depends_on:
@@ -329,4 +329,4 @@ volumes:
   redisinsight_data:
 networks:
   default:
-    name: Sea-TryGo
+    name: sea
