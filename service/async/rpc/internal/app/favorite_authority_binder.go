@@ -3,8 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,20 +126,10 @@ func (b *FavoriteAuthorityBinder) BindFactWithEvidence(ctx context.Context, sour
 }
 
 func bindFavoriteAuthority(source FactSourceEvidence, authority favoriteAuthorityResponse) (usermodel.Event, error) {
-	sourceCanonical, err := jsoncanonicalizer.Transform(authority.Event)
+	hash, err := canonicalEventHash(authority.Event, source.Event)
 	if err != nil {
-		return usermodel.Event{}, fmt.Errorf("RTW source EventSpec JCS: %w", ErrFactDeliveryContract)
-	}
-	dcRaw, err := json.Marshal(source.Event)
-	if err != nil {
-		return usermodel.Event{}, fmt.Errorf("DC EventSpec: %w", ErrFactDeliveryContract)
-	}
-	dcCanonical, err := jsoncanonicalizer.Transform(dcRaw)
-	if err != nil || !bytes.Equal(sourceCanonical, dcCanonical) {
 		return usermodel.Event{}, fmt.Errorf("RTW source and DC EventSpec differ: %w", ErrFactDeliveryContract)
 	}
-	sum := sha256.Sum256(sourceCanonical)
-	hash := hex.EncodeToString(sum[:])
 	if hash != authority.SourceEventHash || hash != source.InputHash ||
 		authority.TechnicalReceipt.InputHash != hash ||
 		authority.TechnicalReceipt.EventID != source.Event.EventID ||

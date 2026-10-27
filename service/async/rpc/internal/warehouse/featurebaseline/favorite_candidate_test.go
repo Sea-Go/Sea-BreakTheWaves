@@ -130,7 +130,7 @@ func TestRealFavoriteCandidateFromDWD(t *testing.T) {
 	}
 	worker, err := app.NewFactWorker(app.FactWorkerConfig{Consumer: "btw-favorite-authority", Producer: favoriteProducer, BatchLimit: 1,
 		Bindings: []app.FactEventBinding{{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: binder},
-			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: binder}}}, client, nil, graph, r.Source, observed)
+			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: binder}}}, client, nil, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}

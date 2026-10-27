@@ -83,6 +83,14 @@ type Receipt struct {
 	Status         string `json:"status"`
 	StateVersion   int64  `json:"state_version"`
 	Replay         bool   `json:"replay"`
+	// OutboxCommitted proves the same transaction wrote (or the replayed
+	// original commit still holds) the accepted Outbox row for this event.
+	// CurrentStatus and CurrentAcceptedVersion carry the authoritative
+	// current state; on replay Status/StateVersion retain the original
+	// receipt, which can stay pending after a late predecessor promotion.
+	OutboxCommitted        bool   `json:"outbox_committed"`
+	CurrentStatus          string `json:"current_status,omitempty"`
+	CurrentAcceptedVersion int64  `json:"current_accepted_version,omitempty"`
 }
 
 type UnmappedRef struct {
@@ -305,7 +313,26 @@ func appendTx(ctx context.Context, tx pgx.Tx, e Event, hash string, body []byte)
 		if oldHash != hash {
 			return Receipt{}, fmt.Errorf("%w: same event key with different normalized payload", ErrConflict)
 		}
-		return Receipt{Subject: s, EventKey: e.EventKey, NormalizedHash: hash, Status: oldStatus, StateVersion: oldVersion, Replay: true}, nil
+		var currentStatus string
+		var currentAccepted *int64
+		var outboxPresent bool
+		if err := tx.QueryRow(ctx, `SELECT e.status,e.accepted_version,
+			EXISTS(SELECT 1 FROM usermodel_outbox o
+				WHERE o.authority_id=e.authority_id AND o.tenant_id=e.tenant_id AND o.subject_id=e.subject_id
+				AND o.producer=e.producer AND o.event_id=e.event_id
+				AND o.state_version=e.accepted_version AND o.event_type='usermodel.fact.accepted')
+			FROM usermodel_events e
+			WHERE e.authority_id=$1 AND e.tenant_id=$2 AND e.subject_id=$3 AND e.producer=$4 AND e.event_id=$5`,
+			s.AuthorityID, s.TenantID, s.SubjectID, e.Producer, e.EventID).
+			Scan(&currentStatus, &currentAccepted, &outboxPresent); err != nil {
+			return Receipt{}, err
+		}
+		replay := Receipt{Subject: s, EventKey: e.EventKey, NormalizedHash: hash, Status: oldStatus,
+			StateVersion: oldVersion, Replay: true, OutboxCommitted: outboxPresent, CurrentStatus: currentStatus}
+		if currentAccepted != nil {
+			replay.CurrentAcceptedVersion = *currentAccepted
+		}
+		return replay, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Receipt{}, err
@@ -355,7 +382,13 @@ func appendTx(ctx context.Context, tx pgx.Tx, e Event, hash string, body []byte)
 	} else if err := recordPosition(ctx, tx, e); err != nil {
 		return Receipt{}, err
 	}
-	return Receipt{Subject: s, EventKey: e.EventKey, NormalizedHash: hash, Status: status, StateVersion: initialVersion}, nil
+	currentAccepted := int64(0)
+	if status == "accepted" {
+		currentAccepted = initialVersion
+	}
+	return Receipt{Subject: s, EventKey: e.EventKey, NormalizedHash: hash, Status: status,
+		StateVersion: initialVersion, OutboxCommitted: status == "accepted",
+		CurrentStatus: status, CurrentAcceptedVersion: currentAccepted}, nil
 }
 
 // A newly arriving predecessor can close a previously parked chain. UNION

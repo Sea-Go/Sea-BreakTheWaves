@@ -3,8 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +15,6 @@ import (
 
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/async/rpc/internal/usermodel"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/clients/datacenter/wire/eventing"
-	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -140,24 +137,10 @@ func (b *CommunityAuthorityBinder) BindFactWithEvidence(ctx context.Context, sou
 }
 
 func bindCommunityAuthority(source FactSourceEvidence, authority communityAuthorityResponse) (usermodel.Event, error) {
-	sourceRaw, err := json.Marshal(source.Event)
+	hash, err := canonicalEventHash(authority.Event, source.Event)
 	if err != nil {
-		return usermodel.Event{}, fmt.Errorf("DC community EventSpec: %w", ErrFactDeliveryContract)
-	}
-	authorityRaw, err := json.Marshal(authority.Event)
-	if err != nil {
-		return usermodel.Event{}, fmt.Errorf("RTW community EventSpec: %w", ErrFactDeliveryContract)
-	}
-	sourceCanonical, err := jsoncanonicalizer.Transform(sourceRaw)
-	if err != nil {
-		return usermodel.Event{}, fmt.Errorf("DC community EventSpec JCS: %w", ErrFactDeliveryContract)
-	}
-	authorityCanonical, err := jsoncanonicalizer.Transform(authorityRaw)
-	if err != nil || !bytes.Equal(sourceCanonical, authorityCanonical) {
 		return usermodel.Event{}, fmt.Errorf("RTW source and DC EventSpec differ: %w", ErrFactDeliveryContract)
 	}
-	sum := sha256.Sum256(authorityCanonical)
-	hash := hex.EncodeToString(sum[:])
 	if hash != authority.SourceEventHash || hash != source.InputHash || authority.TechnicalReceipt.InputHash != hash ||
 		authority.TechnicalReceipt.EventID != source.Event.EventID ||
 		authority.TechnicalReceipt.Producer != source.Event.Producer ||

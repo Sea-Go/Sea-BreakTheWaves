@@ -47,7 +47,7 @@ func TestFactWorkerFavoriteAuthorityReal(t *testing.T) {
 }
 
 func favoriteAuthorityWorker(t *testing.T, source FactEventSource, binder TrustedFactEvidenceBinder,
-	graph FactGraphCommitter, store CurrentFactReceiptReader, observed *telemetry.Bundle) *FactWorker {
+	graph FactGraphCommitter, observed *telemetry.Bundle) *FactWorker {
 	t.Helper()
 	worker, err := NewFactWorker(FactWorkerConfig{Consumer: "btw-favorite-authority", Producer: favoriteFactProducer, BatchLimit: 10,
 		Bindings: []FactEventBinding{
@@ -55,7 +55,7 @@ func favoriteAuthorityWorker(t *testing.T, source FactEventSource, binder Truste
 			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: binder},
 			{EventType: "rtw.favorite.assert", SchemaVersion: 2, Action: usermodel.Assert, EvidenceBinder: binder},
 			{EventType: "rtw.favorite.retract", SchemaVersion: 2, Action: usermodel.Retract, EvidenceBinder: binder},
-		}}, source, nil, graph, store, observed)
+		}}, source, nil, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,13 +164,13 @@ func assertFactWorkerFavoriteAuthorityReal(t *testing.T) {
 	}
 	authorityURL, authorityToken := os.Getenv("SEA_FACT_AUTHORITY_URL"), os.Getenv("SEA_FACT_AUTHORITY_TOKEN")
 	wrongToken := strings.Repeat("x", len(authorityToken))
-	noAuthority := favoriteAuthorityWorker(t, client, newBinder(authorityURL, wrongToken), graph, store, observed)
+	noAuthority := favoriteAuthorityWorker(t, client, newBinder(authorityURL, wrongToken), graph, observed)
 	if result, err := noAuthority.RunOnce(ctx); !errors.Is(err, ErrFactAuthorityUnavailable) || result.AckedOffset != 0 || result.Count != 0 {
 		t.Fatalf("unauthorized authority escaped ACK: %+v %v", result, err)
 	}
 	for _, mode := range []string{"missing", "hash", "subject"} {
 		proxy := favoriteAuthorityTamperProxy(t, authorityURL, mode)
-		worker := favoriteAuthorityWorker(t, client, newBinder(proxy.URL, authorityToken), graph, store, observed)
+		worker := favoriteAuthorityWorker(t, client, newBinder(proxy.URL, authorityToken), graph, observed)
 		expected := ErrFactDeliveryContract
 		if mode == "missing" {
 			expected = ErrFactAuthorityUnavailable
@@ -184,7 +184,7 @@ func assertFactWorkerFavoriteAuthorityReal(t *testing.T) {
 		t.Fatalf("failed binds moved DC cursor: %+v %v", before, err)
 	}
 	real := favoriteAuthorityWorker(t, &failFirstFactACK{Client: client, fail: true},
-		newBinder(authorityURL, authorityToken), graph, store, observed)
+		newBinder(authorityURL, authorityToken), graph, observed)
 	first, err := real.RunOnce(ctx)
 	if err == nil || first.Count != 2 || first.NewFacts != 2 || first.AckedOffset != 0 {
 		t.Fatalf("real authority facts committed before uncertain ACK: %+v %v", first, err)

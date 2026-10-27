@@ -272,7 +272,7 @@ func assertFactWorkerPostgresDCAndRTWFixture(t *testing.T) {
 	}
 	worker, err := NewFactWorker(FactWorkerConfig{Consumer: "btw-facts", Producer: "rtw.product",
 		EventType: "rtw.product.fact.v1", SchemaVersion: 1, BatchLimit: 10}, source,
-		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client()}, graph, store, observed)
+		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client()}, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func assertFactWorkerPostgresDCAndRTWFixture(t *testing.T) {
 			ReceivedAt: now.Add(2 * time.Second).Format(time.RFC3339Nano)}}
 	pendingWorker, err := NewFactWorker(FactWorkerConfig{Consumer: "btw-facts", Producer: "rtw.product",
 		EventType: "rtw.product.fact.v1", SchemaVersion: 1, BatchLimit: 10}, pendingSource,
-		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client(), pending: true}, graph, store, observed)
+		fixtureRTWFactBinder{url: rtw.URL, client: rtw.Client(), pending: true}, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}

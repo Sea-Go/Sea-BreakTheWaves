@@ -89,6 +89,12 @@ type FactGraphReceipt struct {
 	Status          string `json:"status"`
 	AcceptedVersion int64  `json:"accepted_version,omitempty"`
 	Replay          bool   `json:"replay"`
+	// OutboxCommitted with CurrentStatus/CurrentAcceptedVersion proves the
+	// committed Outbox row in the Append receipt itself, so consumers ACK
+	// without re-reading the store.
+	OutboxCommitted        bool   `json:"outbox_committed"`
+	CurrentStatus          string `json:"current_status,omitempty"`
+	CurrentAcceptedVersion int64  `json:"current_accepted_version,omitempty"`
 }
 
 // FactGraphRunOption copies a trusted, producer-bound event into this Run's
@@ -142,7 +148,9 @@ func NewFactGraphAgent(writer FactAppender) (*graphagent.GraphAgent, error) {
 				return graph.State{factGraphFailureKey: factGraphFailure(ErrConflict)}, nil
 			}
 			receipt := FactGraphReceipt{Subject: committed.Subject, EventKey: committed.EventKey,
-				NormalizedHash: committed.NormalizedHash, Status: committed.Status, Replay: committed.Replay}
+				NormalizedHash: committed.NormalizedHash, Status: committed.Status, Replay: committed.Replay,
+				OutboxCommitted: committed.OutboxCommitted, CurrentStatus: committed.CurrentStatus,
+				CurrentAcceptedVersion: committed.CurrentAcceptedVersion}
 			switch committed.Status {
 			case "accepted":
 				if committed.StateVersion <= 0 {

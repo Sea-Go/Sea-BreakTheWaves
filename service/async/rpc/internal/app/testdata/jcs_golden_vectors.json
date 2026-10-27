@@ -1,0 +1,46 @@
+{
+ "schema": "sea.jcs-golden-vectors.v1",
+ "note": "Shared byte-identical across Sea-RideTheWind, Sea-DataCenter and Sea-BreakTheWaves. Every repo's canonicalization must reproduce expected_hash for every case; a mismatch in any repo means implementation drift. Keep the three copies byte-identical when adding cases (regenerate expected_hash with the reference implementation).",
+ "cases": [
+  {
+   "name": "flat-key-shuffle",
+   "input": "{\"b\":1,\"a\":2,\"c\":3}",
+   "expected_hash": "e145110e712e3ed0a6b233551b27a90aa39b4c93ed67e111ba2002d16e5ed1fa"
+  },
+  {
+   "name": "nested-objects-arrays",
+   "input": "{\"z\":{\"y\":[3,1,2],\"x\":null},\"a\":true}",
+   "expected_hash": "7890a8c7f09bdf0446c66585f175aff66fc2f159baf8333e8ec9ea7298610a67"
+  },
+  {
+   "name": "cjk-emoji-composed",
+   "input": "{\"名字\":\"鲸落\",\"emoji\":\"🌊\",\"text\":\"café\"}",
+   "expected_hash": "3d0b3332a7d3337da8188fc0358bbca9d268fc73a434acc9b7373d7f1933b1e4"
+  },
+  {
+   "name": "string-escapes",
+   "input": "{\"quote\":\"a\\\"b\",\"backslash\":\"a\\\\b\",\"control\":\"a\\u0001b\",\"del\":\"a\\u007fb\"}",
+   "expected_hash": "46b83b1306c3be04fbe41460d27ff269324e770f8e87a964063581757883e2d2"
+  },
+  {
+   "name": "number-forms",
+   "input": "{\"int\":0,\"neg\":-1,\"big\":9007199254740991,\"float\":1.5,\"exp\":1e10}",
+   "expected_hash": "5d2aa5e7d3a4be31cfab7f7d2268f240de55c3470f208ed1a6060964ef414d58"
+  },
+  {
+   "name": "empty-containers",
+   "input": "{\"obj\":{},\"arr\":[],\"nil\":null}",
+   "expected_hash": "0c693634e0e1e8e7d6720a75f0c4ee59d35fb51c2352b2c9259b28757ffe97d5"
+  },
+  {
+   "name": "top-level-array",
+   "input": "[1,{\"b\":2,\"a\":1},\"三\"]",
+   "expected_hash": "e840c8b2b1e49fbf6aa6fd527d81032d1f3456e9603dd4df7ad50c5aa0360a51"
+  },
+  {
+   "name": "event-envelope-shape",
+   "input": "{\"event_id\":\"favorite.2114913324245729280.v1\",\"payload\":{\"target_id\":\"art-loop-002\",\"numbers\":[1,2,3]},\"producer\":\"rtw.community.favorite\",\"schema_version\":1}",
+   "expected_hash": "88ee231da9ab782470e3d4df009d5d2d5af05e555bb094a4cb4023c0273912df"
+  }
+ ]
+}
