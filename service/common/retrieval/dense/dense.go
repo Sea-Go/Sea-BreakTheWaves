@@ -362,7 +362,9 @@ func (s *Service) open(ctx context.Context, ref corpus.Ref, index corpus.LaneInd
 		return nil, err
 	}
 	if index.SchemaVersion != 1 || index.BuildID == "" || index.Generation <= 0 || index.InputManifestHash != m.InputManifestHash || !s.config.profileMatches(index.Profile) || len(index.Shards) == 0 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: index 元数据校验失败(schema=%d build=%q generation=%d manifest_hash 匹配=%v profile 匹配=%v shards=%d)",
+			ErrInvalid, index.SchemaVersion, index.BuildID, index.Generation,
+			index.InputManifestHash == m.InputManifestHash, s.config.profileMatches(index.Profile), len(index.Shards))
 	}
 	snapshot := &Snapshot{service: s, index: index, ref: ref, manifest: m, rows: map[string]row{}}
 	expected := map[string]corpus.Chunk{}
@@ -375,7 +377,7 @@ func (s *Service) open(ctx context.Context, ref corpus.Ref, index corpus.LaneInd
 			return nil, err
 		}
 		if seen[declared.Artifact.SHA256] || len(declared.ChunkIDs) == 0 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: shard %d 一致性校验失败", ErrInvalid, len(snapshot.rows))
 		}
 		seen[declared.Artifact.SHA256] = true
 		part, err := load[shard](ctx, s.objects, declared.Artifact)
@@ -383,13 +385,13 @@ func (s *Service) open(ctx context.Context, ref corpus.Ref, index corpus.LaneInd
 			return nil, err
 		}
 		if part.SchemaVersion != 1 || part.BuildID != index.BuildID || part.Generation != index.Generation || part.ModuleID != m.ModuleID || part.ReleaseID != m.ReleaseID || part.ChunkManifest != index.ChunkManifest || part.Profile != index.Profile || part.Config != s.config || len(part.Rows) != len(declared.ChunkIDs) || part.Usage.PromptTokens < 0 || part.Usage.TotalTokens < part.Usage.PromptTokens {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: shard %d 一致性校验失败", ErrInvalid, len(snapshot.rows))
 		}
 		for i, r := range part.Rows {
 			c, ok := expected[r.Chunk.ID]
 			_, duplicate := snapshot.rows[r.Chunk.ID]
 			if !ok || duplicate || r.Chunk != c || r.Chunk.ID != declared.ChunkIDs[i] || !validVector(r.Vector, s.config.Contract) || r.VectorHash != vectorHash(r.Vector) {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: shard %d 一致性校验失败", ErrInvalid, len(snapshot.rows))
 			}
 			snapshot.rows[r.Chunk.ID] = r
 		}
@@ -533,7 +535,7 @@ func (s *Service) VerifyAndProbe(ctx context.Context, index corpus.LaneIndex, m 
 	for _, probe := range probes {
 		r, exists := snapshot.rows[probe.ID]
 		if !exists || r.Chunk != probe {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: shard %d 一致性校验失败", ErrInvalid, len(snapshot.rows))
 		}
 		result, err := snapshot.Search(ctx, Query{IndexRef: snapshot.ref, ModuleID: m.ModuleID, ReleaseID: m.ReleaseID, Generation: index.Generation, ValidRevisionIDs: revisions, Text: probe.Text, TopK: s.config.ProbeTopK})
 		if err != nil {
