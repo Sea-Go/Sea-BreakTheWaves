@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -22,13 +21,6 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/retrieval/sparse"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/runtime/httpclient"
 )
-
-// indexSettings 与 cmd/worker 的索引配置文件同构(/etc/sea-btw/search-index-config.json)。
-type indexSettings struct {
-	Dense       dense.Config       `json:"dense"`
-	Sparse      sparse.Config      `json:"sparse"`
-	MultiVector multivector.Config `json:"multivector"`
-}
 
 // Evidence 是一次检索的最终证据项:chunk 正文 + 稳定定位 + 版本身份。
 type Evidence struct {
@@ -47,17 +39,17 @@ type candPair struct {
 	chunk corpus.Chunk
 }
 
-// Searcher 持有三路 lane 服务;快照每次调用现取(RTW 指针为权威,
-// 不缓存 LaneIndex 以避免切版本后读到旧索引)。
+// Searcher 从 LaneIndex+shard 工件的自描述配置构建 lane 服务(请求时),
+// 不依赖静态索引配置文件:DC 的 configuration_id 按注册动态签发,
+// 静态文件必然过期(实测 bae3c088→598c09bd 漂移导致 Open 全拒)。
 type Searcher struct {
 	rtw     *ridethewind.Client
-	dense   *dense.Service
-	sparse  *sparse.Service
-	multi   *multivector.Service
+	dc      *datacenter.Client
+	objects artifacts.Store
 	maxTopK int
 }
 
-func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir, indexConfigFile string, maxTopK int) (*Searcher, error) {
+func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir string, maxTopK int) (*Searcher, error) {
 	rtw, err := ridethewind.New(httpclient.Config{
 		BaseURL: rtwBase, Token: rtwToken,
 		HTTPClient:       &http.Client{Timeout: 20 * time.Second},
@@ -78,27 +70,35 @@ func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir, indexConfigFil
 	if err != nil {
 		return nil, fmt.Errorf("open artifact dir: %w", err)
 	}
-	var settings indexSettings
-	raw, err := os.ReadFile(indexConfigFile)
+	return &Searcher{rtw: rtw, dc: dc, objects: objects, maxTopK: maxTopK}, nil
+}
+
+// loadLaneConfig 从 LaneIndex 的第一个 shard 工件读出构建时的 lane Config
+// (含 DC 当次签发的 configuration_id)——索引工件自描述。
+func loadLaneConfig[T any](ctx context.Context, objects artifacts.Store, ref corpus.Ref) (T, error) {
+	var cfg T
+	idxRaw, err := objects.Get(ctx, ref)
 	if err != nil {
-		return nil, fmt.Errorf("read index settings: %w", err)
+		return cfg, fmt.Errorf("load lane index: %w", err)
 	}
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return nil, fmt.Errorf("decode index settings: %w", err)
+	var idx corpus.LaneIndex
+	if err := json.Unmarshal(idxRaw, &idx); err != nil {
+		return cfg, fmt.Errorf("decode lane index: %w", err)
 	}
-	denseLane, err := dense.New(objects, dc, settings.Dense)
+	if len(idx.Shards) == 0 {
+		return cfg, fmt.Errorf("lane index 无 shard")
+	}
+	shardRaw, err := objects.Get(ctx, idx.Shards[0].Artifact)
 	if err != nil {
-		return nil, fmt.Errorf("construct dense lane: %w", err)
+		return cfg, fmt.Errorf("load shard artifact: %w", err)
 	}
-	sparseLane, err := sparse.New(objects, dc, settings.Sparse)
-	if err != nil {
-		return nil, fmt.Errorf("construct sparse lane: %w", err)
+	var shard struct {
+		Config T `json:"config"`
 	}
-	multiLane, err := multivector.New(objects, dc, settings.MultiVector)
-	if err != nil {
-		return nil, fmt.Errorf("construct multivector lane: %w", err)
+	if err := json.Unmarshal(shardRaw, &shard); err != nil {
+		return cfg, fmt.Errorf("decode shard config: %w", err)
 	}
-	return &Searcher{rtw: rtw, dense: denseLane, sparse: sparseLane, multi: multiLane, maxTopK: maxTopK}, nil
+	return shard.Config, nil
 }
 
 // SearchEvidence 执行三路检索并 RRF 融合;topK 由服务端钳制。
@@ -131,11 +131,15 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 
 	if ref, ok := snapshot.Indexes["dense"]; ok {
 		laneRef := corpus.Ref{Key: ref.Key, SHA256: ref.Sha256}
-		_, err := s.dense.Open(ctx, laneRef)
+		cfg, err := loadLaneConfig[dense.Config](ctx, s.objects, laneRef)
 		if err != nil {
-			return nil, "", fmt.Errorf("open dense lane: %w", err)
+			return nil, "", fmt.Errorf("dense config: %w", err)
 		}
-		res, err := s.dense.Search(ctx, dense.Query{IndexRef: laneRef, ModuleID: moduleID,
+		svc, err := dense.New(s.objects, s.dc, cfg)
+		if err != nil {
+			return nil, "", fmt.Errorf("construct dense lane: %w", err)
+		}
+		res, err := svc.Search(ctx, dense.Query{IndexRef: laneRef, ModuleID: moduleID,
 			ReleaseID: snapshot.ReleaseId, Generation: snapshot.Generation,
 			ValidRevisionIDs: snapshot.ValidRevisionIds, Text: query, TopK: topK})
 		if err != nil {
@@ -149,11 +153,15 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 	}
 	if ref, ok := snapshot.Indexes["sparse"]; ok {
 		laneRef := corpus.Ref{Key: ref.Key, SHA256: ref.Sha256}
-		_, err := s.sparse.Open(ctx, laneRef)
+		cfg, err := loadLaneConfig[sparse.Config](ctx, s.objects, laneRef)
 		if err != nil {
-			return nil, "", fmt.Errorf("open sparse lane: %w", err)
+			return nil, "", fmt.Errorf("sparse config: %w", err)
 		}
-		res, err := s.sparse.Search(ctx, sparse.Query{IndexRef: laneRef, ModuleID: moduleID,
+		svc, err := sparse.New(s.objects, s.dc, cfg)
+		if err != nil {
+			return nil, "", fmt.Errorf("construct sparse lane: %w", err)
+		}
+		res, err := svc.Search(ctx, sparse.Query{IndexRef: laneRef, ModuleID: moduleID,
 			ReleaseID: snapshot.ReleaseId, Generation: snapshot.Generation,
 			ValidRevisionIDs: snapshot.ValidRevisionIds, Text: query, TopK: topK})
 		if err != nil {
@@ -167,11 +175,15 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 	}
 	if ref, ok := snapshot.Indexes["multivector"]; ok {
 		laneRef := corpus.Ref{Key: ref.Key, SHA256: ref.Sha256}
-		_, err := s.multi.Open(ctx, laneRef)
+		cfg, err := loadLaneConfig[multivector.Config](ctx, s.objects, laneRef)
 		if err != nil {
-			return nil, "", fmt.Errorf("open multivector lane: %w", err)
+			return nil, "", fmt.Errorf("multivector config: %w", err)
 		}
-		res, err := s.multi.Search(ctx, multivector.Query{IndexRef: laneRef, ModuleID: moduleID,
+		svc, err := multivector.New(s.objects, s.dc, cfg)
+		if err != nil {
+			return nil, "", fmt.Errorf("construct multivector lane: %w", err)
+		}
+		res, err := svc.Search(ctx, multivector.Query{IndexRef: laneRef, ModuleID: moduleID,
 			ReleaseID: snapshot.ReleaseId, Generation: snapshot.Generation,
 			ValidRevisionIDs: snapshot.ValidRevisionIds, Text: query, TopK: topK})
 		if err != nil {

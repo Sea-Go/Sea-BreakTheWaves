@@ -26,7 +26,7 @@ type rpcRequest struct {
 }
 
 type rpcError struct {
-	JSONRPC string `json:"jsonrpc"`
+	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Error   struct {
 		Code    int    `json:"code"`
@@ -93,9 +93,9 @@ func handler(s *Searcher, mcpToken string) http.Handler {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"query":    map[string]any{"type": "string", "description": "检索词(概念名/主题/考点)"},
+							"query":     map[string]any{"type": "string", "description": "检索词(概念名/主题/考点)"},
 							"module_id": map[string]any{"type": "string", "description": "知识模块 id"},
-							"top_k":    map[string]any{"type": "integer", "description": "返回证据条数上限(默认 5,最大 8)"},
+							"top_k":     map[string]any{"type": "integer", "description": "返回证据条数上限(默认 5,最大 8)"},
 						},
 						"required": []string{"query", "module_id"},
 					},
