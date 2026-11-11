@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -39,17 +40,26 @@ type candPair struct {
 	chunk corpus.Chunk
 }
 
-// Searcher 从 LaneIndex+shard 工件的自描述配置构建 lane 服务(请求时),
-// 不依赖静态索引配置文件:DC 的 configuration_id 按注册动态签发,
-// 静态文件必然过期(实测 bae3c088→598c09bd 漂移导致 Open 全拒)。
+// Searcher 每次检索时从自动刷新的索引配置文件读取当前 lane 配置:
+// DC/BGE 运行时的 configuration_id 是会话句柄(~30 分钟轮换,文件由
+// sea-bge-publish-config 周期重写),查询编码必须用当前句柄;
+// 索引工件的语义校验(物理模型/契约/空间)由 lane 包的 semanticConfigEqual 放行。
 type Searcher struct {
-	rtw     *ridethewind.Client
-	dc      *datacenter.Client
-	objects artifacts.Store
-	maxTopK int
+	rtw             *ridethewind.Client
+	dc              *datacenter.Client
+	objects         artifacts.Store
+	maxTopK         int
+	indexConfigFile string
 }
 
-func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir string, maxTopK int) (*Searcher, error) {
+// indexSettings 与 cmd/worker 的索引配置文件同构(/etc/sea-btw/search-index-config.json)。
+type indexSettings struct {
+	Dense       dense.Config       `json:"dense"`
+	Sparse      sparse.Config      `json:"sparse"`
+	MultiVector multivector.Config `json:"multivector"`
+}
+
+func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir, indexConfigFile string, maxTopK int) (*Searcher, error) {
 	rtw, err := ridethewind.New(httpclient.Config{
 		BaseURL: rtwBase, Token: rtwToken,
 		HTTPClient:       &http.Client{Timeout: 20 * time.Second},
@@ -70,35 +80,23 @@ func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir string, maxTopK
 	if err != nil {
 		return nil, fmt.Errorf("open artifact dir: %w", err)
 	}
-	return &Searcher{rtw: rtw, dc: dc, objects: objects, maxTopK: maxTopK}, nil
+	if _, err := readIndexSettings(indexConfigFile); err != nil {
+		return nil, err
+	}
+	return &Searcher{rtw: rtw, dc: dc, objects: objects, indexConfigFile: indexConfigFile, maxTopK: maxTopK}, nil
 }
 
-// loadLaneConfig 从 LaneIndex 的第一个 shard 工件读出构建时的 lane Config
-// (含 DC 当次签发的 configuration_id)——索引工件自描述。
-func loadLaneConfig[T any](ctx context.Context, objects artifacts.Store, ref corpus.Ref) (T, error) {
-	var cfg T
-	idxRaw, err := objects.Get(ctx, ref)
+// readIndexSettings 每次调用现读文件——句柄每 ~30 分钟轮换,不缓存。
+func readIndexSettings(path string) (indexSettings, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, fmt.Errorf("load lane index: %w", err)
+		return indexSettings{}, fmt.Errorf("read index settings: %w", err)
 	}
-	var idx corpus.LaneIndex
-	if err := json.Unmarshal(idxRaw, &idx); err != nil {
-		return cfg, fmt.Errorf("decode lane index: %w", err)
+	var s indexSettings
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return indexSettings{}, fmt.Errorf("decode index settings: %w", err)
 	}
-	if len(idx.Shards) == 0 {
-		return cfg, fmt.Errorf("lane index 无 shard")
-	}
-	shardRaw, err := objects.Get(ctx, idx.Shards[0].Artifact)
-	if err != nil {
-		return cfg, fmt.Errorf("load shard artifact: %w", err)
-	}
-	var shard struct {
-		Config T `json:"config"`
-	}
-	if err := json.Unmarshal(shardRaw, &shard); err != nil {
-		return cfg, fmt.Errorf("decode shard config: %w", err)
-	}
-	return shard.Config, nil
+	return s, nil
 }
 
 // SearchEvidence 执行三路检索并 RRF 融合;topK 由服务端钳制。
@@ -112,6 +110,10 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 	snapshot, err := s.rtw.GetCurrentSearchSnapshot(ctx, moduleID)
 	if err != nil {
 		return nil, "", fmt.Errorf("read current search snapshot: %w", err)
+	}
+	settings, err := readIndexSettings(s.indexConfigFile)
+	if err != nil {
+		return nil, "", err
 	}
 
 	best := map[string]corpus.Chunk{}
@@ -131,11 +133,7 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 
 	if ref, ok := snapshot.Indexes["dense"]; ok {
 		laneRef := corpus.Ref{Key: ref.Key, SHA256: ref.Sha256}
-		cfg, err := loadLaneConfig[dense.Config](ctx, s.objects, laneRef)
-		if err != nil {
-			return nil, "", fmt.Errorf("dense config: %w", err)
-		}
-		svc, err := dense.New(s.objects, s.dc, cfg)
+		svc, err := dense.New(s.objects, s.dc, settings.Dense)
 		if err != nil {
 			return nil, "", fmt.Errorf("construct dense lane: %w", err)
 		}
@@ -153,11 +151,7 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 	}
 	if ref, ok := snapshot.Indexes["sparse"]; ok {
 		laneRef := corpus.Ref{Key: ref.Key, SHA256: ref.Sha256}
-		cfg, err := loadLaneConfig[sparse.Config](ctx, s.objects, laneRef)
-		if err != nil {
-			return nil, "", fmt.Errorf("sparse config: %w", err)
-		}
-		svc, err := sparse.New(s.objects, s.dc, cfg)
+		svc, err := sparse.New(s.objects, s.dc, settings.Sparse)
 		if err != nil {
 			return nil, "", fmt.Errorf("construct sparse lane: %w", err)
 		}
@@ -175,11 +169,7 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 	}
 	if ref, ok := snapshot.Indexes["multivector"]; ok {
 		laneRef := corpus.Ref{Key: ref.Key, SHA256: ref.Sha256}
-		cfg, err := loadLaneConfig[multivector.Config](ctx, s.objects, laneRef)
-		if err != nil {
-			return nil, "", fmt.Errorf("multivector config: %w", err)
-		}
-		svc, err := multivector.New(s.objects, s.dc, cfg)
+		svc, err := multivector.New(s.objects, s.dc, settings.MultiVector)
 		if err != nil {
 			return nil, "", fmt.Errorf("construct multivector lane: %w", err)
 		}

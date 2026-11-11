@@ -300,7 +300,9 @@ func TestCorruptArtifactsAndBindings(t *testing.T) {
 				case "foreign_revision":
 					part.Rows[0].Chunk.RevisionID = "foreign"
 				case "other_config":
-					part.Config.Query.ConfigurationID = "33333333-3333-3333-3333-333333333333"
+					// 语义身份(物理模型)被篡改必须拒绝;registration 句柄
+					// 轮换放行语义见 TestConfigurationHandleRotationIsAccepted。
+					part.Config.Query.PhysicalModel = "other-model"
 				case "shard_generation":
 					part.Generation++
 				case "unknown_json":
@@ -387,6 +389,25 @@ func TestSnapshotConcurrentQueries(t *testing.T) {
 	}
 	wg.Wait()
 }
+// TestConfigurationHandleRotationIsAccepted pins the rotation semantics:
+// a query-time service holding fresher DC registration handles (the provider
+// rotates them on its runtime cycle) may still serve an immutable shard built
+// under an earlier handle, as long as the semantic representation identity
+// (physical model, callpoint, contract, space, batching) is unchanged.
+func TestConfigurationHandleRotationIsAccepted(t *testing.T) {
+	s, _, _, b, _ := fixtureService(t)
+	cfg := fixtureConfig()
+	cfg.Document.ConfigurationID = "11111111-1111-1111-1111-111111111111"
+	cfg.Query.ConfigurationID = "22222222-2222-2222-2222-222222222222"
+	rotated, err := New(s.objects, fixtureEncoder(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotated.Open(context.Background(), b.Ref); err != nil {
+		t.Fatalf("rotated handles must be accepted: %v", err)
+	}
+}
+
 func TestProfileAndConfigurationArePinned(t *testing.T) {
 	s, _, _, b, _ := fixtureService(t)
 	for _, mutate := range []func(*corpus.Profile){func(p *corpus.Profile) { p.Space = "other" }, func(p *corpus.Profile) { p.Encoder = "other" }, func(p *corpus.Profile) { p.Tokenizer = "other" }, func(p *corpus.Profile) { p.Dimensions = 3 }} {
@@ -397,7 +418,7 @@ func TestProfileAndConfigurationArePinned(t *testing.T) {
 		}
 	}
 	cfg := fixtureConfig()
-	cfg.Query.ConfigurationID = "33333333-3333-3333-3333-333333333333"
+	cfg.Query.PhysicalModel = "other-model"
 	other, _ := New(s.objects, fixtureEncoder(), cfg)
 	if _, err := other.Open(context.Background(), b.Ref); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)

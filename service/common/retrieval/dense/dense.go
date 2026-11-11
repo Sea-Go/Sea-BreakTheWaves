@@ -63,6 +63,23 @@ func (c Config) profileMatches(p corpus.Profile) bool {
 	return p.Lane == "dense" && p.Encoder == c.Document.PhysicalModel && p.Tokenizer == c.Contract.TokenizerID && p.Space == c.Space && p.Dimensions == c.Contract.Dimensions && p.Mask == "" && p.Aggregation == ""
 }
 
+// semanticConfigEqual compares the representation-space identity of two
+// configs while ignoring the DC configuration registration handles
+// (Document/Query ConfigurationID). Those handles are session-scoped: the
+// provider rotates them on its ~30-minute runtime cycle, so a long-lived
+// query-time service legitimately holds fresher handles than the immutable
+// shard it verifies. Physical model, callpoint, typed contract, space and
+// batching — everything that determines which representation space the
+// embeddings live in — must still match exactly.
+func semanticConfigEqual(a, b Config) bool {
+	sameEncoding := func(x, y Encoding) bool {
+		return x.Callpoint == y.Callpoint && x.PhysicalModel == y.PhysicalModel
+	}
+	return sameEncoding(a.Document, b.Document) && sameEncoding(a.Query, b.Query) &&
+		a.Space == b.Space && a.BatchSize == b.BatchSize && a.ProbeTopK == b.ProbeTopK &&
+		a.Contract == b.Contract
+}
+
 type BuildRequest struct {
 	BuildID       string
 	Generation    int64
@@ -384,7 +401,7 @@ func (s *Service) open(ctx context.Context, ref corpus.Ref, index corpus.LaneInd
 		if err != nil {
 			return nil, err
 		}
-		if part.SchemaVersion != 1 || part.BuildID != index.BuildID || part.Generation != index.Generation || part.ModuleID != m.ModuleID || part.ReleaseID != m.ReleaseID || part.ChunkManifest != index.ChunkManifest || part.Profile != index.Profile || part.Config != s.config || len(part.Rows) != len(declared.ChunkIDs) || part.Usage.PromptTokens < 0 || part.Usage.TotalTokens < part.Usage.PromptTokens {
+		if part.SchemaVersion != 1 || part.BuildID != index.BuildID || part.Generation != index.Generation || part.ModuleID != m.ModuleID || part.ReleaseID != m.ReleaseID || part.ChunkManifest != index.ChunkManifest || part.Profile != index.Profile || !semanticConfigEqual(part.Config, s.config) || len(part.Rows) != len(declared.ChunkIDs) || part.Usage.PromptTokens < 0 || part.Usage.TotalTokens < part.Usage.PromptTokens {
 			return nil, fmt.Errorf("%w: shard %d 一致性校验失败", ErrInvalid, len(snapshot.rows))
 		}
 		for i, r := range part.Rows {
