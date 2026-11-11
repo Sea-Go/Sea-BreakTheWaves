@@ -72,6 +72,19 @@ type binding struct {
 	Space    string                  `json:"space"`
 }
 
+// semanticBindingEqual pins the representation-space identity while ignoring
+// the DC registration handles inside Document/Query Encoding: the provider
+// rotates those handles on its runtime cycle, so a query-time service holds
+// fresher handles than the immutable shard it verifies. Callpoint, physical
+// model, typed contract and space must still match exactly.
+func semanticBindingEqual(a, b binding) bool {
+	same := func(x, y Encoding) bool {
+		return x.Callpoint == y.Callpoint && x.PhysicalModel == y.PhysicalModel
+	}
+	return same(a.Document, b.Document) && same(a.Query, b.Query) &&
+		a.Contract == b.Contract && a.Space == b.Space
+}
+
 func (c Config) binding() binding { return binding{c.Document, c.Query, c.Contract, c.Space} }
 
 type BuildRequest struct {
@@ -383,7 +396,7 @@ func (s *Service) open(ctx context.Context, ref corpus.Ref, idx corpus.LaneIndex
 		if e != nil {
 			return nil, e
 		}
-		if part.SchemaVersion != 1 || part.BuildID != idx.BuildID || part.Generation != idx.Generation || part.ModuleID != m.ModuleID || part.ReleaseID != m.ReleaseID || part.ChunkManifest != idx.ChunkManifest || part.Profile != idx.Profile || part.Binding != s.config.binding() || len(part.Rows) != len(declared.ChunkIDs) || part.Usage.PromptTokens < 0 || part.Usage.TotalTokens < part.Usage.PromptTokens {
+		if part.SchemaVersion != 1 || part.BuildID != idx.BuildID || part.Generation != idx.Generation || part.ModuleID != m.ModuleID || part.ReleaseID != m.ReleaseID || part.ChunkManifest != idx.ChunkManifest || part.Profile != idx.Profile || !semanticBindingEqual(part.Binding, s.config.binding()) || len(part.Rows) != len(declared.ChunkIDs) || part.Usage.PromptTokens < 0 || part.Usage.TotalTokens < part.Usage.PromptTokens {
 			return nil, ErrInvalid
 		}
 		for i, r := range part.Rows {
