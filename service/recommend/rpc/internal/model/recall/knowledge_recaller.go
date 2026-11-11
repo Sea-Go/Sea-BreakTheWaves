@@ -24,16 +24,9 @@ type KnowledgeRecaller struct {
 	httpClient *http.Client
 }
 
+// knowledge-serving /graph/query 的节点是裸属性 map(直接含 node_id)。
 type knowledgeQueryResponse struct {
-	Nodes []struct {
-		Props map[string]any `json:"props"`
-	} `json:"nodes"`
-	Edges []struct {
-		Type string         `json:"type"`
-		From string         `json:"from"`
-		To   string         `json:"to"`
-		Props map[string]any `json:"props"`
-	} `json:"edges"`
+	Nodes []map[string]any `json:"nodes"`
 }
 
 func NewKnowledgeRecaller(endpoint, token, graphID string, topK int) *KnowledgeRecaller {
@@ -96,12 +89,8 @@ func (k *KnowledgeRecaller) Recall(ctx context.Context, req domain.RecallRequest
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&parsed); err != nil {
 		return result, err
 	}
-	for i, node := range parsed.Nodes {
-		props, err := mapFromProps(node.Props)
-		if err != nil {
-			continue
-		}
-		id := props.nodeID
+	for i, props := range parsed.Nodes {
+		id, _ := props["node_id"].(string)
 		if id == "" {
 			continue
 		}
@@ -114,9 +103,9 @@ func (k *KnowledgeRecaller) Recall(ctx context.Context, req domain.RecallRequest
 			Extra: map[string]any{
 				"knowledge_module": true,
 				"graph_id":         k.graphID,
-				"revision_id":      props.revisionID,
+				"revision_id":      props["revision_id"],
 				"node_type":        "unit",
-				"title":            props.title,
+				"title":            props["title"],
 			},
 		}
 		result.Candidates = append(result.Candidates, candidate)
@@ -127,16 +116,3 @@ func (k *KnowledgeRecaller) Recall(ctx context.Context, req domain.RecallRequest
 	return result, nil
 }
 
-type knowledgeNodeProps struct {
-	nodeID     string
-	revisionID any
-	title      any
-}
-
-func mapFromProps(props map[string]any) (knowledgeNodeProps, error) {
-	if props == nil {
-		return knowledgeNodeProps{}, fmt.Errorf("empty props")
-	}
-	id, _ := props["node_id"].(string)
-	return knowledgeNodeProps{nodeID: id, revisionID: props["revision_id"], title: props["title"]}, nil
-}

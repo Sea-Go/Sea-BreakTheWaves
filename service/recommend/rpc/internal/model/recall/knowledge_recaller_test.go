@@ -20,8 +20,8 @@ func knowledgeFixtureServer(t *testing.T, status int, body string) *httptest.Ser
 
 func TestKnowledgeRecallerReturnsRealUnits(t *testing.T) {
 	payload := `{"nodes":[
-		{"props":{"node_id":"U-tcp","type":"unit","title":"TCP 连接管理","revision_id":2}},
-		{"props":{"node_id":"U-congestion","type":"unit","title":"拥塞控制","revision_id":2}}
+		{"node_id":"U-tcp","type":"unit","title":"TCP 连接管理","revision_id":2},
+		{"node_id":"U-congestion","type":"unit","title":"拥塞控制","revision_id":2}
 	],"edges":[]}`
 	server := knowledgeFixtureServer(t, 200, payload)
 	defer server.Close()
