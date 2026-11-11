@@ -22,7 +22,7 @@ const (
 // WithProductionProviders wires the v2 recommendation runtime to existing Sea
 // storage and domain implementations. This is the production-oriented path used
 // by main.go; tests may still inject narrower providers directly.
-func WithProductionProviders(articleRepo *storage.ArticleRepo, poolRepo *storage.PoolRepo) Option {
+func WithProductionProviders(articleRepo *storage.ArticleRepo, poolRepo *storage.PoolRepo, extraRecallers ...domain.Recaller) Option {
 	return func(rt *RecommendationRuntime) {
 		if rt == nil {
 			return
@@ -35,6 +35,7 @@ func WithProductionProviders(articleRepo *storage.ArticleRepo, poolRepo *storage
 		if poolRepo != nil {
 			recallers = append(recallers, recall.NewChannelRecaller(newChannelPoolRepository(poolRepo), productionDefaultTopK))
 		}
+		recallers = append(recallers, extraRecallers...)
 		switch len(recallers) {
 		case 0:
 			// 装配不变量：生产路径必须提供至少一个真实召回依赖。
