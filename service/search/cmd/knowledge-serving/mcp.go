@@ -66,7 +66,7 @@ func writeRPCErr(w http.ResponseWriter, id json.RawMessage, code int, message st
 }
 
 // handler 返回 MCP 端点;mcpToken 为空时拒绝启动(由 main 校验)。
-func handler(s *Searcher, mcpToken string) http.Handler {
+func handler(s *Searcher, mcpToken string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

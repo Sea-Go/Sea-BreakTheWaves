@@ -13,8 +13,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 )
 
 func env(key, fallback string) string {
@@ -70,6 +72,27 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	root := handler(searcher, mcpToken)
+
+	// 图修订域(可选):CONTENT_DSN + NEO4J_* 齐备时启用 /graph/*。
+	if contentDSN := os.Getenv("CONTENT_DSN"); contentDSN != "" {
+		neoURI := env("NEO4J_URI", "bolt://127.0.0.1:7687")
+		neoUser := os.Getenv("NEO4J_USER")
+		neoPass := os.Getenv("NEO4J_PASSWORD")
+		if neoUser == "" || neoPass == "" {
+			return fmt.Errorf("CONTENT_DSN 已配置但 NEO4J_USER/NEO4J_PASSWORD 缺失")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		graphStore, err := NewGraphStore(ctx, contentDSN, neoURI, neoUser, neoPass, searcher.objects)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("graph store: %w", err)
+		}
+		defer graphStore.Close(context.Background())
+		root.Handle("/graph/", graphHandler(graphStore, searcher.rtw, mcpToken))
+		fmt.Printf("graph 域已启用(Neo4j %s)\n", neoURI)
+	}
+
 	fmt.Printf("knowledge-serving 监听 %s(RTW %s,DC %s,artifacts %s)\n", listen, rtwBase, dcBase, artifactDir)
-	return serve(listen, handler(searcher, mcpToken))
+	return serve(listen, root)
 }
