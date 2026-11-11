@@ -354,37 +354,38 @@ func (s *GraphStore) QueryCurrent(ctx context.Context, graphID, nodeType, keywor
 		}
 		frontier = next
 	}
-	// 3) 子图节点与边
+	// 3) 子图:节点按 id 直查(无边连接的种子也必须出现),边单独取。
 	all := ids(nodeSet)
-	res, err = session.Run(ctx,
-		"MATCH (a)-[r]->(b) WHERE a.node_id IN $all AND b.node_id IN $all AND a.graph_id = $gid "+
-			"RETURN properties(a) AS from_props, properties(b) AS to_props, type(r) AS rel, properties(r) AS rel_props, a.node_id AS from_id, b.node_id AS to_id LIMIT 2000",
+	out := &GraphQueryResult{Nodes: []map[string]any{}, Edges: []map[string]any{}}
+	nodeRes, err := session.Run(ctx,
+		"MATCH (n) WHERE n.node_id IN $all AND n.graph_id = $gid RETURN properties(n) AS p LIMIT 2000",
 		map[string]any{"all": all, "gid": graphID})
 	if err != nil {
 		return nil, err
 	}
-	out := &GraphQueryResult{Nodes: []map[string]any{}, Edges: []map[string]any{}}
-	seenNode := map[string]bool{}
+	for nodeRes.Next(ctx) {
+		if p, ok := nodeRes.Record().Get("p"); ok {
+			if m, ok := p.(map[string]any); ok {
+				out.Nodes = append(out.Nodes, m)
+			}
+		}
+	}
+	if err := nodeRes.Err(); err != nil {
+		return nil, err
+	}
+	res, err = session.Run(ctx,
+		"MATCH (a)-[r]->(b) WHERE a.node_id IN $all AND b.node_id IN $all AND a.graph_id = $gid "+
+			"RETURN type(r) AS rel, properties(r) AS rel_props, a.node_id AS from_id, b.node_id AS to_id LIMIT 2000",
+		map[string]any{"all": all, "gid": graphID})
+	if err != nil {
+		return nil, err
+	}
 	for res.Next(ctx) {
 		rec := res.Record()
-		fp, _ := rec.Get("from_props")
-		tp, _ := rec.Get("to_props")
 		rel, _ := rec.Get("rel")
 		rp, _ := rec.Get("rel_props")
 		fi, _ := rec.Get("from_id")
 		ti, _ := rec.Get("to_id")
-		if m, ok := fp.(map[string]any); ok {
-			if id := m["node_id"].(string); !seenNode[id] {
-				seenNode[id] = true
-				out.Nodes = append(out.Nodes, m)
-			}
-		}
-		if m, ok := tp.(map[string]any); ok {
-			if id := m["node_id"].(string); !seenNode[id] {
-				seenNode[id] = true
-				out.Nodes = append(out.Nodes, m)
-			}
-		}
 		edge := map[string]any{"type": rel, "from": fi, "to": ti}
 		if m, ok := rp.(map[string]any); ok {
 			edge["props"] = m
