@@ -297,48 +297,101 @@ func (s *GraphStore) QueryCurrent(ctx context.Context, graphID, nodeType, keywor
 		}
 		label = ":" + l
 	}
-	where := "n.graph_id=$gid"
+	where := "n.graph_id = $gid"
 	if keyword != "" {
-		where += " AND (coalesce(n.title,'')+coalesce(n.name,'')+coalesce(n.text,'')+'') CONTAINS $kw"
+		where += " AND (coalesce(n.title,'') + coalesce(n.name,'') + coalesce(n.text,'')) CONTAINS $kw"
 	}
-	// 起点集 → hop 扩展子图 → 收集节点与边
-	query := fmt.Sprintf(`
-		MATCH (n%s) WHERE %s
-		WITH collect(n) AS seeds
-		CALL { WITH seeds
-			UNWIND range(0, $hops) AS _
-			WITH seeds
-			MATCH (x)-[r]-(y) WHERE x IN seeds AND y.graph_id=$gid
-			RETURN seeds + collect(y) AS grown
+	// 三步式(避免聚合语法兼容问题):起点 → 逐跳扩展 → 子图内取节点+边。
+	// 1) 起点
+	frontier := map[string]bool{}
+	seedQuery := fmt.Sprintf("MATCH (n%s) WHERE %s RETURN n.node_id AS id LIMIT 500", label, where)
+	res, err := session.Run(ctx, seedQuery, map[string]any{"gid": graphID, "kw": keyword})
+	if err != nil {
+		return nil, err
+	}
+	for res.Next(ctx) {
+		if id, ok := res.Record().Get("id"); ok {
+			frontier[id.(string)] = true
 		}
-		WITH grown
-		MATCH (m) WHERE m IN grown
-		WITH collect(DISTINCT m) AS nodeset
-		MATCH (a)-[r]->(b) WHERE a IN nodeset AND b IN nodeset AND a.graph_id=$gid
-		RETURN nodeset AS nodes, collect(DISTINCT {type:type(r), from:a.node_id, to:b.node_id, props:properties(r)}) AS edges`,
-		label, where)
-	result, err := session.Run(ctx, query, map[string]any{"gid": graphID, "kw": keyword, "hops": hops})
+	}
+	if err := res.Err(); err != nil {
+		return nil, err
+	}
+	if len(frontier) == 0 {
+		return &GraphQueryResult{Nodes: []map[string]any{}, Edges: []map[string]any{}}, nil
+	}
+	ids := func(set map[string]bool) []string {
+		out := make([]string, 0, len(set))
+		for id := range set {
+			out = append(out, id)
+		}
+		return out
+	}
+	// 2) 逐跳扩展
+	nodeSet := map[string]bool{}
+	for id := range frontier {
+		nodeSet[id] = true
+	}
+	for hop := 0; hop < hops; hop++ {
+		res, err := session.Run(ctx,
+			"MATCH (a)-[r]-(b) WHERE a.node_id IN $frontier AND b.graph_id = $gid RETURN DISTINCT b.node_id AS id LIMIT 1000",
+			map[string]any{"frontier": ids(frontier), "gid": graphID})
+		if err != nil {
+			return nil, err
+		}
+		next := map[string]bool{}
+		for res.Next(ctx) {
+			if id, ok := res.Record().Get("id"); ok {
+				next[id.(string)] = true
+				nodeSet[id.(string)] = true
+			}
+		}
+		if err := res.Err(); err != nil {
+			return nil, err
+		}
+		if len(next) == 0 {
+			break
+		}
+		frontier = next
+	}
+	// 3) 子图节点与边
+	all := ids(nodeSet)
+	res, err = session.Run(ctx,
+		"MATCH (a)-[r]->(b) WHERE a.node_id IN $all AND b.node_id IN $all AND a.graph_id = $gid "+
+			"RETURN properties(a) AS from_props, properties(b) AS to_props, type(r) AS rel, properties(r) AS rel_props, a.node_id AS from_id, b.node_id AS to_id LIMIT 2000",
+		map[string]any{"all": all, "gid": graphID})
 	if err != nil {
 		return nil, err
 	}
 	out := &GraphQueryResult{Nodes: []map[string]any{}, Edges: []map[string]any{}}
-	for result.Next(ctx) {
-		if nodes, ok := result.Record().Get("nodes"); ok {
-			for _, n := range nodes.([]any) {
-				if props, ok := n.(neo4j.Node); ok {
-					out.Nodes = append(out.Nodes, props.Props)
-				}
+	seenNode := map[string]bool{}
+	for res.Next(ctx) {
+		rec := res.Record()
+		fp, _ := rec.Get("from_props")
+		tp, _ := rec.Get("to_props")
+		rel, _ := rec.Get("rel")
+		rp, _ := rec.Get("rel_props")
+		fi, _ := rec.Get("from_id")
+		ti, _ := rec.Get("to_id")
+		if m, ok := fp.(map[string]any); ok {
+			if id := m["node_id"].(string); !seenNode[id] {
+				seenNode[id] = true
+				out.Nodes = append(out.Nodes, m)
 			}
 		}
-		if edges, ok := result.Record().Get("edges"); ok {
-			for _, e := range edges.([]any) {
-				if m, ok := e.(map[string]any); ok {
-					out.Edges = append(out.Edges, m)
-				}
+		if m, ok := tp.(map[string]any); ok {
+			if id := m["node_id"].(string); !seenNode[id] {
+				seenNode[id] = true
+				out.Nodes = append(out.Nodes, m)
 			}
 		}
+		edge := map[string]any{"type": rel, "from": fi, "to": ti}
+		if m, ok := rp.(map[string]any); ok {
+			edge["props"] = m
+		}
+		out.Edges = append(out.Edges, edge)
 	}
-	return out, result.Err()
+	return out, res.Err()
 }
 
 func refFromKeySHA(key, sha string) corpus.Ref {

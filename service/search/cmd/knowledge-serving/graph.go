@@ -356,9 +356,14 @@ func ReplayGraph(manifestJSON []byte, graphID string) (*GraphContent, error) {
 		return out
 	}
 	addNodes := func(typ string, list []map[string]any) error {
+		// 边来源键(question.concept 等)不是节点属性,重放时丢弃。
+		drop := []string{}
+		if typ == "question" {
+			drop = append(drop, "concept")
+		}
 		for _, src := range list {
 			id, _ := src["id"].(string)
-			g.Nodes = append(g.Nodes, GraphNode{Type: typ, ID: id, Props: pick(src)})
+			g.Nodes = append(g.Nodes, GraphNode{Type: typ, ID: id, Props: pick(src, drop...)})
 		}
 		return nil
 	}
