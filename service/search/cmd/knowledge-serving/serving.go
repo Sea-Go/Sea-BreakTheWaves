@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -46,6 +47,8 @@ type candPair struct {
 // 索引工件的语义校验(物理模型/契约/空间)由 lane 包的 semanticConfigEqual 放行。
 type Searcher struct {
 	rtw             *ridethewind.Client
+	rtwBase         string
+	rtwToken        string
 	dc              *datacenter.Client
 	objects         artifacts.Store
 	maxTopK         int
@@ -83,7 +86,7 @@ func NewSearcher(rtwBase, rtwToken, dcBase, dcToken, artifactDir, indexConfigFil
 	if _, err := readIndexSettings(indexConfigFile); err != nil {
 		return nil, err
 	}
-	return &Searcher{rtw: rtw, dc: dc, objects: objects, indexConfigFile: indexConfigFile, maxTopK: maxTopK}, nil
+	return &Searcher{rtw: rtw, rtwBase: rtwBase, rtwToken: rtwToken, dc: dc, objects: objects, indexConfigFile: indexConfigFile, maxTopK: maxTopK}, nil
 }
 
 // readIndexSettings 每次调用现读文件——句柄每 ~30 分钟轮换,不缓存。
@@ -207,4 +210,49 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 		}
 	}
 	return out, snapshot.ReleaseId, nil
+}
+
+// ModuleSummary 是已发布知识模块的最小公开描述(模块发现用)。
+type ModuleSummary struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Category string `json:"category"`
+}
+
+// ListModules 列出 RTW 全部已发布知识模块(公开读,无需管理凭据)。
+func (s *Searcher) ListModules(ctx context.Context) ([]ModuleSummary, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.rtwBase+"/v1/knowledge/modules", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.rtwToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rtw modules status %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Data struct {
+			Items []struct {
+				ID       string `json:"id"`
+				Title    string `json:"title"`
+				Category string `json:"category"`
+				Release  string `json:"release"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	out := []ModuleSummary{}
+	for _, item := range parsed.Data.Items {
+		if item.Release == "" {
+			continue // 未发布模块不进入检索消费
+		}
+		out = append(out, ModuleSummary{ID: item.ID, Title: item.Title, Category: item.Category})
+	}
+	return out, nil
 }

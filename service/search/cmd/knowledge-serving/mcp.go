@@ -23,6 +23,7 @@ func randomHex(n int) string {
 const (
 	mcpProtocolVersion = "2025-03-26"
 	toolName           = "knowledge_search"
+	toolModulesName    = "knowledge_modules"
 )
 
 type rpcRequest struct {
@@ -101,6 +102,14 @@ func handler(s *Searcher, mcpToken string) *http.ServeMux {
 		case "tools/list":
 			writeJSON(w, http.StatusOK, rpcResult{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 				"tools": []map[string]any{{
+					"name":        toolModulesName,
+					"description": "列出全部已发布的知识模块(id/标题/类别),返回当前可检索消费的正式模块。学习类计划先用它发现模块 id,再用 knowledge_search 检索。",
+					"inputSchema": map[string]any{
+						"type":       "object",
+						"properties": map[string]any{},
+						"required":   []string{},
+					},
+				}, {
 					"name":        toolName,
 					"description": "在 RTW 知识模块的当前发布版本中执行三路检索(Dense/Sparse/Multi-vector + RRF 融合),返回带 locator/revision/release 的证据。学习计划制定前用此工具获取课程结构与考点。",
 					"inputSchema": map[string]any{
@@ -115,6 +124,21 @@ func handler(s *Searcher, mcpToken string) *http.ServeMux {
 				}},
 			}})
 		case "tools/call":
+			if req.Params.Name == toolModulesName {
+				modules, err := s.ListModules(r.Context())
+				if err != nil {
+					writeJSON(w, http.StatusOK, rpcResult{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+						"content": []map[string]any{{"type": "text", "text": fmt.Sprintf("模块列表获取失败: %v", err)}},
+						"isError": true,
+					}})
+					return
+				}
+				payload, _ := json.Marshal(map[string]any{"modules": modules})
+				writeJSON(w, http.StatusOK, rpcResult{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+					"content": []map[string]any{{"type": "text", "text": string(payload)}},
+				}})
+				return
+			}
 			if req.Params.Name != toolName {
 				writeRPCErr(w, req.ID, -32602, fmt.Sprintf("未知工具: %s", req.Params.Name))
 				return
