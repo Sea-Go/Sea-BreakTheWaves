@@ -3,12 +3,22 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 )
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "fallback-session"
+	}
+	return hex.EncodeToString(b)
+}
 
 const (
 	mcpProtocolVersion = "2025-03-26"
@@ -78,6 +88,9 @@ func handler(s *Searcher, mcpToken string) http.Handler {
 		}
 		switch req.Method {
 		case "initialize":
+			// DC mcpbridge 要求 initialize 响应携带非空 mcp-session-id 头;
+			// 本服务无会话状态,按握手生成一个标识即可。
+			w.Header().Set("Mcp-Session-Id", "kserve-"+randomHex(16))
 			writeJSON(w, http.StatusOK, rpcResult{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 				"protocolVersion": mcpProtocolVersion,
 				"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
