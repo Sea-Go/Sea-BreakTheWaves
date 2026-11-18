@@ -8,11 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # sea-guards 为仓内 replace 依赖（go.mod => ./sea-guards），CI 双 checkout
-      - uses: actions/checkout@v4
-        with:
-          repository: Sea-Go/sea-guards
-          path: sea-guards
+      # sea-guards 为仓内 replace 依赖（go.mod => ./sea-guards）。仓已迁自建
+      # GitLab（GitHub 上已删），CI 经 Cloudflare 入口用只读 PAT 拉取。
+      - name: Checkout sea-guards (self-hosted GitLab)
+        run: git clone --depth 1 "https://${{ secrets.GITLAB_GUARDS_USER }}:${{ secrets.GITLAB_GUARDS_TOKEN }}@gitlab-cf.sea-ridethewindbreakthewaves.xyz/whalehall/sea-guards.git" sea-guards
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
