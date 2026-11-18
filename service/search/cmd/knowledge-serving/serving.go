@@ -125,7 +125,9 @@ func (s *Searcher) SearchEvidence(ctx context.Context, moduleID, query string, t
 	addLane := func(name string, pairs []candPair) {
 		entries := make([]rrf.Entry, 0, len(pairs))
 		for rank, p := range pairs {
-			entries = append(entries, rrf.Entry{Key: p.chunk.ID, Score: float64(rank + 1)})
+			// rrf.RRF 内部按分数降序定名次;分数必须随相关性递减,
+			// 否则位次反转(最不相关的候选拿到最佳 RRF 名次)。
+			entries = append(entries, rrf.Entry{Key: p.chunk.ID, Score: float64(len(pairs) - rank)})
 			if _, seen := best[p.chunk.ID]; !seen {
 				best[p.chunk.ID] = p.chunk
 			}

@@ -94,12 +94,21 @@ func (k *KnowledgeRecaller) Recall(ctx context.Context, req domain.RecallRequest
 		if id == "" {
 			continue
 		}
+		score := 0.9 - float64(i)*0.02
 		candidate := domain.Candidate{
 			ArticleID: id,
 			// 召回分:按返回序递减(图谱顺序≈课程结构顺序),量级与其它源兼容。
-			Score:  0.9 - float64(i)*0.02,
+			Score:  score,
 			Source: k.Name(),
-			Scores: map[string]float64{"knowledge_score": 0.9 - float64(i)*0.02},
+			// 生产 WeightedRanker 只加权 recall_score/score/freshness/quality;
+			// 缺失特征按 0 计,知识候选会在排序阶段整体归零被淘汰。
+			Scores: map[string]float64{
+				"recall_score":    score,
+				"score":           score,
+				"freshness":       1.0,
+				"quality":         0.8,
+				"knowledge_score": score,
+			},
 			Extra: map[string]any{
 				"knowledge_module": true,
 				"graph_id":         k.graphID,
@@ -115,4 +124,3 @@ func (k *KnowledgeRecaller) Recall(ctx context.Context, req domain.RecallRequest
 	}
 	return result, nil
 }
-

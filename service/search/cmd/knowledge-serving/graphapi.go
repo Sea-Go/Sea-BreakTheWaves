@@ -38,6 +38,12 @@ func graphHandler(store *GraphStore, rtw *ridethewind.Client, bearer string) htt
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "读 RTW 修订失败: " + err.Error()})
 			return
 		}
+		if rev.ModuleId != req.ModuleID {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "source_revision_id 属于模块 " + rev.ModuleId + ",与请求的 module_id 不符",
+			})
+			return
+		}
 		graphID := "course:" + req.ModuleID
 		meta, g, err := store.SeedRevision(ctx, graphID, rev.ContentHash, rev.Content, "seed: replay from RTW manifest "+req.SourceRevisionID)
 		if err != nil {

@@ -166,17 +166,31 @@ func handler(s *Searcher, mcpToken string) *http.ServeMux {
 				}})
 				return
 			}
-			payload, _ := json.Marshal(map[string]any{
-				"module_id": args.ModuleID, "release_id": releaseID,
-				"evidence": evidence,
-				"note":     "引用时必须携带 locator 与 release_id;release_id 是本次证据的固定版本。",
-			})
-			text := string(payload)
-			if len(text) > 60_000 {
-				text = text[:60_000]
+			// 按完整证据对象装箱:截断序列化文本会撕裂内层 JSON,产生
+			// 携带成功标志的非法载荷;只保留装得下的完整对象。
+			const evidenceBudget = 60_000
+			keep := len(evidence)
+			for keep > 0 {
+				payload, _ := json.Marshal(map[string]any{
+					"module_id": args.ModuleID, "release_id": releaseID,
+					"evidence": evidence[:keep],
+					"note":     "引用时必须携带 locator 与 release_id;release_id 是本次证据的固定版本。",
+				})
+				if len(payload) <= evidenceBudget {
+					writeJSON(w, http.StatusOK, rpcResult{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+						"content": []map[string]any{{"type": "text", "text": string(payload)}},
+					}})
+					return
+				}
+				keep--
 			}
+			fallback, _ := json.Marshal(map[string]any{
+				"module_id": args.ModuleID, "release_id": releaseID,
+				"evidence": []Evidence{},
+				"note":    fmt.Sprintf("证据超出 %d 字节预算,全部截断;请减小 top_k 重试", evidenceBudget),
+			})
 			writeJSON(w, http.StatusOK, rpcResult{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-				"content": []map[string]any{{"type": "text", "text": text}},
+				"content": []map[string]any{{"type": "text", "text": string(fallback)}},
 			}})
 		default:
 			writeRPCErr(w, req.ID, -32601, fmt.Sprintf("未知方法: %s", req.Method))
