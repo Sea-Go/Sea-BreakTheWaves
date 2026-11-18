@@ -64,7 +64,7 @@ func (k *KnowledgeRecaller) Recall(ctx context.Context, req domain.RecallRequest
 		"graph_id":  k.graphID,
 		"node_type": "unit",
 		"keyword":   keyword,
-		"hops":      1,
+		"hops":      0,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
