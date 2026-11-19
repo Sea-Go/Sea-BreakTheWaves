@@ -3,10 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,18 +80,12 @@ func loadWikiCompileConfig(getenv func(string) string) (config, error) {
 	if c.HTTPTimeout, err = boundedDuration(getenv("BTW_HTTP_TIMEOUT"), "BTW_HTTP_TIMEOUT", time.Second, time.Minute); err != nil {
 		return c, err
 	}
-	for name, raw := range map[string]string{"BTW_DC_URL": c.DCURL, "BTW_RTW_URL": c.RTWURL,
-		"BTW_OTLP_TRACES_URL": c.OTLPTracesURL} {
-		if err := endpoint(raw); err != nil {
-			return c, fmt.Errorf("%s: %w", name, err)
-		}
+	if err := validateEndpoints(map[string]string{"BTW_DC_URL": c.DCURL, "BTW_RTW_URL": c.RTWURL,
+		"BTW_OTLP_TRACES_URL": c.OTLPTracesURL}); err != nil {
+		return c, err
 	}
-	host, port, splitErr := net.SplitHostPort(c.MetricsAddr)
-	if splitErr != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || port == "" {
-		return c, errors.New("BTW_METRICS_ADDR must bind a loopback IP and port")
-	}
-	if n, parseErr := strconv.Atoi(port); parseErr != nil || n < 1 || n > 65535 {
-		return c, errors.New("BTW_METRICS_ADDR port must be 1..65535")
+	if err := validateMetricsAddr(c.MetricsAddr); err != nil {
+		return c, err
 	}
 	c.Wiki.ObjectBackend = getenv("BTW_WIKI_OBJECT_BACKEND")
 	switch c.Wiki.ObjectBackend {

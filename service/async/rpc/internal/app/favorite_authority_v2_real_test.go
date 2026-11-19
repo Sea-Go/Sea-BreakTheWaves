@@ -114,14 +114,14 @@ func assertFactWorkerFavoriteAuthorityV2MixedUsers(t *testing.T) {
 		return binder
 	}
 	wrongToken := strings.Repeat("x", len(authorityToken))
-	noAuthority := favoriteAuthorityWorker(t, client, newBinder(authorityURL, wrongToken), graph, store, observed)
+	noAuthority := favoriteAuthorityWorker(t, client, newBinder(authorityURL, wrongToken), graph, observed)
 	if result, err := noAuthority.RunOnce(ctx); !errors.Is(err, ErrFactAuthorityUnavailable) ||
 		result.Count != 0 || result.AckedOffset != 0 {
 		t.Fatalf("invalid RTW authority token escaped Graph/ACK: %+v %v", result, err)
 	}
 	for _, mode := range []string{"missing", "hash", "subject"} {
 		proxy := favoriteAuthorityTamperProxy(t, authorityURL, mode)
-		worker := favoriteAuthorityWorker(t, client, newBinder(proxy.URL, authorityToken), graph, store, observed)
+		worker := favoriteAuthorityWorker(t, client, newBinder(proxy.URL, authorityToken), graph, observed)
 		expected := ErrFactDeliveryContract
 		if mode == "missing" {
 			expected = ErrFactAuthorityUnavailable
@@ -135,7 +135,7 @@ func assertFactWorkerFavoriteAuthorityV2MixedUsers(t *testing.T) {
 		t.Fatalf("failed RTW reads advanced DC cursor: %+v %v", before, err)
 	}
 	real := favoriteAuthorityWorker(t, &failFirstFactACK{Client: client, fail: true},
-		newBinder(authorityURL, authorityToken), graph, store, observed)
+		newBinder(authorityURL, authorityToken), graph, observed)
 	first, err := real.RunOnce(ctx)
 	if err == nil || first.Count != 3 || first.NewFacts != 3 || first.AckedOffset != 0 {
 		t.Fatalf("native Graph/PG did not commit before uncertain ACK: %+v %v", first, err)

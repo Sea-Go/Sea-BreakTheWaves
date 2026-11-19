@@ -113,7 +113,7 @@ func joinedEnv(t *testing.T, warehouseDSN, modelDSN, dcURL, dcToken, authorityUR
 	}
 	worker, err := app.NewFactWorker(app.FactWorkerConfig{Consumer: "btw-coverage-combined-fact", Producer: producer, BatchLimit: 1,
 		Bindings: []app.FactEventBinding{{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, EvidenceBinder: binder},
-			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: binder}}}, dc, nil, graph, store, observed)
+			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, EvidenceBinder: binder}}}, dc, nil, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}

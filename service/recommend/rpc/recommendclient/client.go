@@ -2,6 +2,7 @@ package recommendclient
 
 import (
 	"context"
+	"os"
 	"time"
 
 	trpcrunner "trpc.group/trpc-go/trpc-agent-go/runner"
@@ -9,8 +10,10 @@ import (
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/config"
 	"github.com/Sea-Go/Sea-BreakTheWaves/service/common/infra"
 	trpcmodel "github.com/Sea-Go/Sea-BreakTheWaves/service/common/trpcagent/model"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/domain"
 	logic "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/logic/legacy"
 	model "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model"
+	"github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/model/recall"
 	recommendagent "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/trpcagent/agent"
 	core "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/trpcagent/core"
 	recommendprompt "github.com/Sea-Go/Sea-BreakTheWaves/service/recommend/rpc/internal/trpcagent/prompt"
@@ -101,9 +104,17 @@ func NewRuntime(skillDir string) *Client {
 	if err != nil {
 		panic(err)
 	}
+	// 知识模块召回(可选):KNOWLEDGE_SERVING_URL 配置后,正式课程内容进入
+	// 推荐召回链(source=knowledge);未配置零行为变化。
+	var extraRecallers []domain.Recaller
+	if u := os.Getenv("KNOWLEDGE_SERVING_URL"); u != "" {
+		extraRecallers = append(extraRecallers, recall.NewKnowledgeRecaller(
+			u, os.Getenv("KNOWLEDGE_SERVING_TOKEN"),
+			os.Getenv("KNOWLEDGE_GRAPH_ID"), 10))
+	}
 	runtime := core.NewRecommendationRuntime(
 		core.WithSkillDirectory(skillDir),
-		core.WithProductionProviders(model.NewArticleRepo(db), model.NewPoolRepo(db)),
+		core.WithProductionProviders(model.NewArticleRepo(db), model.NewPoolRepo(db), extraRecallers...),
 		core.WithActivityAnalyzer(activityWorker),
 	)
 	var evaluation *logic.RecoEvaluationService

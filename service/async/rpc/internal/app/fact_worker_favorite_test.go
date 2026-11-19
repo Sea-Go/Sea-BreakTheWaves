@@ -157,7 +157,7 @@ func assertFactWorkerFavoriteRealDC(t *testing.T) {
 		Bindings: []FactEventBinding{
 			{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, Binder: favoriteFixtureBinder{action: usermodel.Assert}},
 			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, Binder: favoriteFixtureBinder{action: usermodel.Retract}},
-		}}, source, nil, graph, store, observed)
+		}}, source, nil, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func assertFactWorkerFavoriteRealDC(t *testing.T) {
 			{EventType: "rtw.favorite.assert", SchemaVersion: 1, Action: usermodel.Assert, Binder: favoriteWrongActionBinder{}},
 			{EventType: "rtw.favorite.retract", SchemaVersion: 1, Action: usermodel.Retract, Binder: favoriteFixtureBinder{action: usermodel.Retract}},
 		}}
-	wrong, err := NewFactWorker(badConfig, client, nil, graph, store, observed)
+	wrong, err := NewFactWorker(badConfig, client, nil, graph, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func assertFactWorkerFavoriteRealDC(t *testing.T) {
 		t.Fatalf("binder action mismatch escaped before commit/ACK: %+v %v", rejected, err)
 	}
 	badConfig.Bindings = append(badConfig.Bindings, badConfig.Bindings[0])
-	if _, err := NewFactWorker(badConfig, client, nil, graph, store, observed); !errors.Is(err, ErrFactDeliveryContract) {
+	if _, err := NewFactWorker(badConfig, client, nil, graph, observed); !errors.Is(err, ErrFactDeliveryContract) {
 		t.Fatalf("duplicate event type admitted: %v", err)
 	}
 	first, err := worker.RunOnce(ctx)

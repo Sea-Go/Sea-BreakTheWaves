@@ -134,7 +134,7 @@ func serveFactConsumer(ctx context.Context, cfg config, output io.Writer) (resul
 		return fmt.Errorf("construct tRPC fact Graph/Runner: %w", err)
 	}
 	worker, err := app.NewFactWorker(app.FactWorkerConfig{Consumer: cfg.FactConsumer, Producer: cfg.FactProducer,
-		BatchLimit: cfg.FactBatchLimit, Bindings: bindings}, dc, nil, graph, store, bundle)
+		BatchLimit: cfg.FactBatchLimit, Bindings: bindings}, dc, nil, graph, bundle)
 	if err != nil {
 		return fmt.Errorf("construct user fact consumer: %w", err)
 	}

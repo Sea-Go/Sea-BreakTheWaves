@@ -135,24 +135,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if !identifier.MatchString(c.ContentSchema) || !identifier.MatchString(c.SessionSchema) || !identifier.MatchString(c.SessionPrefix) {
 		return config{}, errors.New("content/session schema and session table prefix must be simple PostgreSQL identifiers")
 	}
-	if !revision.MatchString(c.Version) || (c.Environment != "local" && c.Environment != "test") {
-		return config{}, errors.New("BTW_SERVICE_VERSION must be a full commit SHA and BTW_ENVIRONMENT must be local or test")
+	if err := validateRuntimeIdentity(c.Version, c.Environment); err != nil {
+		return config{}, err
 	}
-	if err := endpoint(c.DCURL); err != nil {
-		return config{}, fmt.Errorf("BTW_DC_URL: %w", err)
+	if err := validateEndpoints(map[string]string{
+		"BTW_DC_URL": c.DCURL, "BTW_RTW_URL": c.RTWURL, "BTW_OTLP_TRACES_URL": c.OTLPTracesURL,
+	}); err != nil {
+		return config{}, err
 	}
-	if err := endpoint(c.RTWURL); err != nil {
-		return config{}, fmt.Errorf("BTW_RTW_URL: %w", err)
-	}
-	if err := endpoint(c.OTLPTracesURL); err != nil {
-		return config{}, fmt.Errorf("BTW_OTLP_TRACES_URL: %w", err)
-	}
-	host, port, err := net.SplitHostPort(c.MetricsAddr)
-	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || port == "" {
-		return config{}, errors.New("BTW_METRICS_ADDR must bind an explicit loopback IP and port")
-	}
-	if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
-		return config{}, errors.New("BTW_METRICS_ADDR port must be 1..65535")
+	if err := validateMetricsAddr(c.MetricsAddr); err != nil {
+		return config{}, err
 	}
 	if c.JobType == "content.build.v1" {
 		c.IndexSettings, err = readIndexSettings(c.IndexConfig)
@@ -213,23 +205,46 @@ func loadFactConfig(getenv func(string) string) (config, error) {
 	if len(c.AuthorityToken) < 32 {
 		return c, fmt.Errorf("%s must have at least 32 bytes", authorityTokenKey)
 	}
-	if !revision.MatchString(c.Version) || (c.Environment != "local" && c.Environment != "test") {
-		return c, errors.New("BTW_SERVICE_VERSION must be a full commit SHA and BTW_ENVIRONMENT must be local or test")
+	if err := validateRuntimeIdentity(c.Version, c.Environment); err != nil {
+		return c, err
 	}
-	for name, raw := range map[string]string{"BTW_DC_URL": c.DCURL,
-		authorityURLKey: c.AuthorityURL, "BTW_OTLP_TRACES_URL": c.OTLPTracesURL} {
-		if err := endpoint(raw); err != nil {
-			return c, fmt.Errorf("%s: %w", name, err)
-		}
+	if err := validateEndpoints(map[string]string{"BTW_DC_URL": c.DCURL,
+		authorityURLKey: c.AuthorityURL, "BTW_OTLP_TRACES_URL": c.OTLPTracesURL}); err != nil {
+		return c, err
 	}
-	host, port, err := net.SplitHostPort(c.MetricsAddr)
-	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || port == "" {
-		return c, errors.New("BTW_METRICS_ADDR must bind an explicit loopback IP and port")
-	}
-	if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
-		return c, errors.New("BTW_METRICS_ADDR port must be 1..65535")
+	if err := validateMetricsAddr(c.MetricsAddr); err != nil {
+		return c, err
 	}
 	return c, nil
+}
+
+// validateRuntimeIdentity, validateEndpoints and validateMetricsAddr are the
+// loader-independent tail shared by every worker shape.
+func validateRuntimeIdentity(version, environment string) error {
+	if !revision.MatchString(version) || (environment != "local" && environment != "test") {
+		return errors.New("BTW_SERVICE_VERSION must be a full commit SHA and BTW_ENVIRONMENT must be local or test")
+	}
+	return nil
+}
+
+func validateEndpoints(named map[string]string) error {
+	for name, raw := range named {
+		if err := endpoint(raw); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func validateMetricsAddr(raw string) error {
+	host, port, err := net.SplitHostPort(raw)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || port == "" {
+		return errors.New("BTW_METRICS_ADDR must bind an explicit loopback IP and port")
+	}
+	if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
+		return errors.New("BTW_METRICS_ADDR port must be 1..65535")
+	}
+	return nil
 }
 
 func positiveInt(raw, name string, min, max int) (int, error) {
